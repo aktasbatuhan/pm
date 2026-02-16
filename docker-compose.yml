@@ -1,0 +1,21 @@
+services:
+  pm-agent:
+    build: .
+    ports:
+      - "${PORT:-3000}:3000"
+    volumes:
+      - pm-agent-data:/data
+    environment:
+      - DATA_DIR=/data
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_ORG=${GITHUB_ORG}
+      - GITHUB_PROJECT_NUMBER=${GITHUB_PROJECT_NUMBER}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - AGENT_MODEL=${AGENT_MODEL:-}
+      - SLACK_WEBHOOK_URL=${SLACK_WEBHOOK_URL:-}
+      - AUTH_TOKEN=${AUTH_TOKEN:-}
+      - PORT=3000
+    restart: unless-stopped
+
+volumes:
+  pm-agent-data:

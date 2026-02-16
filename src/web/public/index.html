@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PM Agent</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Sidebar -->
+    <aside id="sidebar">
+      <div class="sidebar-header">
+        <h1>PM Agent</h1>
+        <span class="version">v0.1.0</span>
+      </div>
+      <button id="new-session" class="btn btn-primary">+ New Session</button>
+      <div id="sessions-list" class="sessions-list"></div>
+      <div class="sidebar-footer">
+        <button id="knowledge-hub-btn" class="btn-reconfigure">Knowledge Hub</button>
+        <button id="reconfigure-btn" class="btn-reconfigure">Reconfigure</button>
+        <div class="status-indicator">
+          <span class="dot dot-green"></span>
+          <span>Connected</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main id="main">
+      <header id="header">
+        <div class="header-title">
+          <h2 id="session-name">New Conversation</h2>
+        </div>
+        <div class="header-meta">
+          <span id="cost-display" class="meta-item"></span>
+        </div>
+      </header>
+
+      <div id="messages" class="messages">
+        <div class="welcome">
+          <h3>PM Agent</h3>
+          <p>Connected to your GitHub Project. Ask me about sprint status, estimates, or anything about your project.</p>
+          <div class="quick-actions">
+            <button class="btn btn-ghost" data-command="/standup">Sprint Standup</button>
+            <button class="btn btn-ghost" data-command="/analyze">Deep Analysis</button>
+            <button class="btn btn-ghost" data-command="What issues are in progress?">In Progress</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="input-area" class="input-area">
+        <div class="input-wrapper">
+          <textarea id="message-input" placeholder="Ask about your project..." rows="1"></textarea>
+          <button id="send-btn" class="btn btn-send" disabled>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M14 8L2 14L4 8L2 2L14 8Z" fill="currentColor"/>
+            </svg>
+          </button>
+        </div>
+        <div class="input-hint">
+          <span class="kbd">/standup</span>
+          <span class="kbd">/analyze</span>
+          <span class="kbd">/estimate #123</span>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Setup Wizard Overlay -->
+  <div id="setup-overlay" class="setup-overlay hidden">
+    <div class="setup-wizard">
+      <div class="setup-header">
+        <h2>PM Agent Setup</h2>
+        <p class="setup-subtitle">Connect your GitHub Project to get started.</p>
+      </div>
+
+      <div class="step-indicators">
+        <span class="step-dot active" data-step="1">1</span>
+        <span class="step-line"></span>
+        <span class="step-dot" data-step="2">2</span>
+        <span class="step-line"></span>
+        <span class="step-dot" data-step="3">3</span>
+        <span class="step-line"></span>
+        <span class="step-dot" data-step="4">4</span>
+      </div>
+
+      <!-- Step 1: Token -->
+      <div class="setup-step" id="setup-step-1">
+        <h3>GitHub Token</h3>
+        <p class="step-desc">Personal access token with <code>repo</code>, <code>project</code>, and <code>read:org</code> scopes.</p>
+        <input type="password" id="setup-token" placeholder="ghp_..." class="setup-input" autocomplete="off" />
+        <div id="token-status" class="step-status"></div>
+        <button class="btn btn-primary setup-btn" id="btn-validate-token">Validate</button>
+      </div>
+
+      <!-- Step 2: Org -->
+      <div class="setup-step hidden" id="setup-step-2">
+        <h3>Organization</h3>
+        <p class="step-desc">Select or enter the GitHub org / username that owns the project.</p>
+        <div id="org-options" class="org-options"></div>
+        <input type="text" id="setup-org" placeholder="your-org" class="setup-input" />
+        <button class="btn btn-primary setup-btn" id="btn-fetch-projects">Fetch Projects</button>
+      </div>
+
+      <!-- Step 3: Project -->
+      <div class="setup-step hidden" id="setup-step-3">
+        <h3>Select Project</h3>
+        <p class="step-desc">Choose the GitHub Project v2 board to connect.</p>
+        <div id="projects-list" class="projects-list"></div>
+        <label class="setup-checkbox">
+          <input type="checkbox" id="setup-gen-knowledge" checked />
+          <span>Auto-generate knowledge files</span>
+        </label>
+        <button class="btn btn-primary setup-btn" id="btn-complete-setup">Connect</button>
+      </div>
+
+      <!-- Step 4: Done -->
+      <div class="setup-step hidden" id="setup-step-4">
+        <h3>Setup Complete</h3>
+        <div id="setup-logs" class="setup-logs"></div>
+        <button class="btn btn-primary setup-btn" id="btn-start-chat">Start Chatting</button>
+      </div>
+
+      <div id="setup-loading" class="setup-loading hidden">
+        <div class="spinner"></div>
+        <span id="setup-loading-text">Working...</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Knowledge Hub Overlay -->
+  <div id="knowledge-overlay" class="knowledge-overlay hidden">
+    <div class="knowledge-panel">
+      <div class="knowledge-header">
+        <h2>Knowledge Hub</h2>
+        <button id="knowledge-close-btn" class="btn-icon" title="Close">&times;</button>
+      </div>
+      <div class="knowledge-body">
+        <div class="knowledge-sidebar">
+          <div class="knowledge-sidebar-header">
+            <span>Files</span>
+            <button id="knowledge-new-btn" class="btn-icon-sm" title="New file">+</button>
+          </div>
+          <div id="knowledge-file-list" class="knowledge-file-list"></div>
+        </div>
+        <div class="knowledge-editor">
+          <div id="knowledge-editor-empty" class="knowledge-editor-empty">
+            <p>Select a file to edit</p>
+          </div>
+          <div id="knowledge-editor-active" class="knowledge-editor-active hidden">
+            <div class="knowledge-editor-toolbar">
+              <span id="knowledge-file-path" class="knowledge-file-path"></span>
+              <div class="knowledge-editor-actions">
+                <span id="knowledge-status" class="knowledge-status"></span>
+                <button id="knowledge-save-btn" class="btn btn-primary btn-sm">Save</button>
+                <button id="knowledge-delete-btn" class="btn btn-sm btn-danger">Delete</button>
+              </div>
+            </div>
+            <textarea id="knowledge-textarea" class="knowledge-textarea" spellcheck="false"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

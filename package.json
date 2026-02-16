@@ -1,0 +1,33 @@
+{
+  "name": "pm-agent",
+  "version": "0.1.0",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "web": "bun run src/index.ts web",
+    "setup": "bun run src/index.ts setup",
+    "dev": "bun run --watch src/index.ts web",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.9"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.37",
+    "@inquirer/prompts": "^8.2.0",
+    "@octokit/rest": "^22.0.1",
+    "chalk": "^5.6.2",
+    "drizzle-orm": "^0.45.1",
+    "hono": "^4.11.9",
+    "marked": "^17.0.1",
+    "zod": "^4.3.6"
+  }
+}

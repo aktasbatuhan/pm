@@ -1,0 +1,10 @@
+node_modules
+.env
+pm-agent.db
+pm-agent.db-shm
+pm-agent.db-wal
+.git
+.claude
+*.md
+!knowledge/*.md
+!knowledge/**/*.md
