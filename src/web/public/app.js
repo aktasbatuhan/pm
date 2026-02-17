@@ -186,6 +186,9 @@ document.getElementById("btn-complete-setup").addEventListener("click", async ()
 // Step 4: Start
 document.getElementById("btn-start-chat").addEventListener("click", () => {
   hideSetup();
+  hideOnboardingBanner();
+  sessionStorage.removeItem("onboarding-dismissed");
+  setTimeout(() => checkKnowledgeOnboarding(), 1000);
 });
 
 // Reconfigure button — reset wizard and show it
@@ -222,7 +225,7 @@ const newSessionBtn = document.getElementById("new-session");
 const sessionNameEl = document.getElementById("session-name");
 const costDisplayEl = document.getElementById("cost-display");
 
-// Initialize — check setup status first
+// Initialize — check setup status + knowledge onboarding
 (async () => {
   try {
     const res = await fetch("/api/setup/status");
@@ -233,6 +236,13 @@ const costDisplayEl = document.getElementById("cost-display");
   } catch {
     // If check fails, continue to chat
   }
+
+  try {
+    await checkKnowledgeOnboarding();
+  } catch {
+    // Silently fail
+  }
+
   loadSessions();
 })();
 
@@ -355,6 +365,7 @@ async function loadSession(id) {
     }
 
     scrollToBottom();
+    updateSessionMeta();
   } catch (e) {
     console.error("Failed to load session:", e);
   }
@@ -453,7 +464,7 @@ async function sendMessage() {
             }
             if (data.costUsd) {
               totalCost += data.costUsd;
-              costDisplayEl.textContent = `$${totalCost.toFixed(4)}`;
+              costDisplayEl.textContent = `COST: $${totalCost.toFixed(4)}`;
             }
           } else if (eventType === "error") {
             assistantDiv.innerHTML += `<p style="color: var(--red)">Error: ${escapeHtml(data.message)}</p>`;
@@ -471,6 +482,7 @@ async function sendMessage() {
   isStreaming = false;
   sendBtn.disabled = !inputEl.value.trim();
   loadSessions();
+  updateSessionMeta();
 }
 
 function appendUserMessage(text) {
@@ -647,4 +659,51 @@ function setKnowledgeStatus(text, type) {
       if (knowledgeStatus.textContent === text) knowledgeStatus.textContent = "";
     }, 2000);
   }
+}
+
+// --- Onboarding Banner ---
+
+async function checkKnowledgeOnboarding() {
+  if (sessionStorage.getItem("onboarding-dismissed") === "true") return;
+
+  const res = await fetch("/api/knowledge");
+  const files = await res.json();
+
+  // Show banner if 0 files or only skills.md
+  const nonSkillFiles = files.filter((f) => f.path !== "skills.md");
+  if (nonSkillFiles.length === 0) {
+    showOnboardingBanner();
+  }
+}
+
+function showOnboardingBanner() {
+  document.getElementById("onboarding-banner").classList.remove("hidden");
+}
+
+function hideOnboardingBanner() {
+  document.getElementById("onboarding-banner").classList.add("hidden");
+}
+
+document.getElementById("banner-setup-btn").addEventListener("click", () => {
+  setupState.token = "";
+  setupState.username = "";
+  setupState.org = "";
+  setupState.selectedProject = null;
+  document.getElementById("setup-token").value = "";
+  document.getElementById("token-status").textContent = "";
+  document.getElementById("token-status").className = "step-status";
+  goToSetupStep(1);
+  showSetup();
+});
+
+document.getElementById("banner-dismiss-btn").addEventListener("click", () => {
+  hideOnboardingBanner();
+  sessionStorage.setItem("onboarding-dismissed", "true");
+});
+
+// --- Session Metadata ---
+
+function updateSessionMeta() {
+  const msgCount = messagesEl.querySelectorAll(".message").length;
+  document.getElementById("session-meta").textContent = `MSGS: ${msgCount}`;
 }

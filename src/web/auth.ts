@@ -109,19 +109,18 @@ const LOGIN_HTML = `<!DOCTYPE html>
   <title>PM Agent — Login</title>
   <style>
     :root {
-      --bg-primary: #0d1117;
-      --bg-secondary: #161b22;
-      --bg-tertiary: #1c2128;
-      --border: #30363d;
+      --bg-primary: #050a0f;
+      --bg-secondary: #0a0e13;
+      --bg-tertiary: #111519;
+      --border: #1e2328;
       --text-primary: #e6edf3;
       --text-secondary: #8b949e;
       --text-muted: #484f58;
-      --accent: #58a6ff;
-      --accent-dim: #1f6feb;
-      --red: #f85149;
-      --font-mono: "SF Mono", "Fira Code", Consolas, monospace;
-      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif;
-      --radius: 6px;
+      --accent: #e8912d;
+      --accent-dim: #b36d1a;
+      --red: #ff3d3d;
+      --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", Consolas, monospace;
+      --radius: 1px;
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -130,45 +129,49 @@ const LOGIN_HTML = `<!DOCTYPE html>
       align-items: center;
       justify-content: center;
       background: var(--bg-primary);
-      font-family: var(--font-sans);
+      font-family: var(--font-mono);
+      font-size: 12px;
       color: var(--text-primary);
     }
     .login-card {
-      width: 360px;
+      width: 340px;
       background: var(--bg-secondary);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 32px;
+      padding: 24px;
     }
-    h2 { font-size: 18px; margin-bottom: 4px; }
-    .subtitle { font-size: 13px; color: var(--text-secondary); margin-bottom: 24px; }
+    h2 { font-size: 14px; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .subtitle { font-size: 11px; color: var(--text-secondary); margin-bottom: 20px; }
     input {
       width: 100%;
       background: var(--bg-tertiary);
       border: 1px solid var(--border);
       color: var(--text-primary);
       font-family: var(--font-mono);
-      font-size: 13px;
-      padding: 10px 14px;
+      font-size: 11px;
+      padding: 8px 10px;
       border-radius: var(--radius);
       outline: none;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
     input:focus { border-color: var(--accent-dim); }
     input::placeholder { color: var(--text-muted); }
     button {
       width: 100%;
-      padding: 10px;
+      padding: 8px;
       background: var(--accent-dim);
       border: none;
       border-radius: var(--radius);
       color: var(--text-primary);
-      font-size: 14px;
+      font-family: var(--font-mono);
+      font-size: 11px;
       font-weight: 500;
       cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
     }
     button:hover { background: var(--accent); }
-    .error { color: var(--red); font-size: 12px; font-family: var(--font-mono); margin-bottom: 12px; min-height: 16px; }
+    .error { color: var(--red); font-size: 10px; font-family: var(--font-mono); margin-bottom: 10px; min-height: 14px; }
   </style>
 </head>
 <body>

@@ -33,9 +33,19 @@
           <h2 id="session-name">New Conversation</h2>
         </div>
         <div class="header-meta">
-          <span id="cost-display" class="meta-item"></span>
+          <span id="model-display" class="meta-item">MODEL: —</span>
+          <span id="session-meta" class="meta-item">MSGS: 0</span>
+          <span id="cost-display" class="meta-item">COST: $0.0000</span>
         </div>
       </header>
+
+      <div id="onboarding-banner" class="onboarding-banner hidden">
+        <span class="onboarding-text">KNOWLEDGE BASE EMPTY — Run setup to onboard your repos and context.</span>
+        <div class="onboarding-actions">
+          <button id="banner-setup-btn" class="btn btn-primary btn-sm">Run Setup</button>
+          <button id="banner-dismiss-btn" class="btn-icon" title="Dismiss">&times;</button>
+        </div>
+      </div>
 
       <div id="messages" class="messages">
         <div class="welcome">
