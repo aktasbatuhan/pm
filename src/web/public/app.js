@@ -587,6 +587,11 @@ async function sendMessage() {
   assistantDiv.style.display = "none";
   messagesEl.appendChild(assistantDiv);
 
+  // Create separate text container within assistant div
+  const textContainer = document.createElement("div");
+  textContainer.className = "assistant-text-content";
+  assistantDiv.appendChild(textContainer);
+
   isStreaming = true;
   let fullText = "";
 
@@ -629,7 +634,16 @@ async function sendMessage() {
               thinkingDiv.style.display = "none";
               assistantDiv.style.display = "";
               fullText += data.content;
-              assistantDiv.innerHTML = renderMarkdown(fullText);
+
+              // Update only the text container, leaving charts intact
+              const textContainer = assistantDiv.querySelector('.assistant-text-content');
+              if (textContainer) {
+                textContainer.innerHTML = renderMarkdown(fullText);
+              } else {
+                // Fallback if text container doesn't exist
+                assistantDiv.innerHTML = renderMarkdown(fullText);
+              }
+
               scrollToBottom();
             }
           } else if (eventType === "visualization") {
