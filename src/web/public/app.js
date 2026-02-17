@@ -592,6 +592,17 @@ async function sendMessage() {
   textContainer.className = "assistant-text-content";
   assistantDiv.appendChild(textContainer);
 
+  // Create collapsible tool container
+  const toolContainer = document.createElement("div");
+  toolContainer.className = "tool-container";
+  toolContainer.style.display = "none";
+  assistantDiv.appendChild(toolContainer);
+
+  // Tool tracking
+  const toolCalls = [];
+  let toolSummary = null;
+  let toolDetails = null;
+
   isStreaming = true;
   let fullText = "";
 
@@ -666,10 +677,52 @@ async function sendMessage() {
             }
             scrollToBottom();
           } else if (eventType === "tool") {
+            // Track tool call
+            toolCalls.push(data.tool);
+
+            // Create/update tool summary
+            if (!toolSummary) {
+              toolSummary = document.createElement("div");
+              toolSummary.className = "tool-summary";
+              toolSummary.innerHTML = `
+                <div class="tool-summary-header">
+                  <span class="tool-count">Used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}</span>
+                  <button class="tool-toggle-btn" data-expanded="false">▼ Show details</button>
+                </div>
+              `;
+              toolContainer.appendChild(toolSummary);
+
+              toolDetails = document.createElement("div");
+              toolDetails.className = "tool-details";
+              toolDetails.style.display = "none";
+              toolContainer.appendChild(toolDetails);
+
+              // Add toggle functionality
+              const toggleBtn = toolSummary.querySelector('.tool-toggle-btn');
+              toggleBtn.addEventListener('click', () => {
+                const expanded = toggleBtn.dataset.expanded === 'true';
+                if (expanded) {
+                  toolDetails.style.display = 'none';
+                  toggleBtn.textContent = '▼ Show details';
+                  toggleBtn.dataset.expanded = 'false';
+                } else {
+                  toolDetails.style.display = 'block';
+                  toggleBtn.textContent = '▲ Hide details';
+                  toggleBtn.dataset.expanded = 'true';
+                }
+              });
+
+              toolContainer.style.display = "block";
+            } else {
+              // Update count
+              toolSummary.querySelector('.tool-count').textContent = `Used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}`;
+            }
+
+            // Add individual tool indicator to details
             const toolEl = document.createElement("div");
             toolEl.className = "tool-indicator";
             toolEl.innerHTML = `<span class="spinner"></span> ${data.tool}`;
-            assistantDiv.appendChild(toolEl);
+            toolDetails.appendChild(toolEl);
             scrollToBottom();
           } else if (eventType === "done") {
             if (data.sessionId) {
