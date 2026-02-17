@@ -25,6 +25,11 @@ export async function authMiddleware(c: Context, next: Next) {
     return next();
   }
 
+  // Allow health check (needed for Railway/Docker health probes)
+  if (c.req.path === "/api/health") {
+    return next();
+  }
+
   // Allow login endpoint
   if (c.req.path === "/api/auth/login" && c.req.method === "POST") {
     return next();
@@ -78,9 +83,10 @@ export function createAuthRoutes(app: any) {
     const sessionId = crypto.randomUUID();
     validSessions.add(sessionId);
 
+    const isSecure = c.req.header("x-forwarded-proto") === "https";
     setCookie(c, SESSION_COOKIE, sessionId, {
       httpOnly: true,
-      secure: false, // Allow HTTP for localhost
+      secure: isSecure,
       sameSite: "Lax",
       maxAge: SESSION_MAX_AGE,
       path: "/",

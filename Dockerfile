@@ -20,9 +20,9 @@ RUN chmod +x entrypoint.sh
 # Default data directory (overridden by volume mount)
 ENV DATA_DIR=/data
 
-# Health check
+# Health check (use bun instead of curl which may not be installed)
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:3000/api/health || exit 1
+  CMD bun -e "const r = await fetch('http://localhost:' + (process.env.PORT || 3000) + '/api/health'); if (!r.ok) process.exit(1);" || exit 1
 
 EXPOSE 3000
 

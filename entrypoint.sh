@@ -4,6 +4,9 @@
 DATA_DIR="${DATA_DIR:-/data}"
 KNOWLEDGE_DIR="$DATA_DIR/knowledge"
 
+# Ensure data dir exists first
+mkdir -p "$DATA_DIR"
+
 # Seed knowledge files from image if not already present
 if [ ! -d "$KNOWLEDGE_DIR" ]; then
   echo "[init] Seeding knowledge files to $KNOWLEDGE_DIR..."
@@ -11,9 +14,6 @@ if [ ! -d "$KNOWLEDGE_DIR" ]; then
 else
   echo "[init] Knowledge directory exists at $KNOWLEDGE_DIR"
 fi
-
-# Ensure data dir is writable
-mkdir -p "$DATA_DIR"
 
 echo "[init] DATA_DIR=$DATA_DIR"
 echo "[init] Starting PM Agent..."
