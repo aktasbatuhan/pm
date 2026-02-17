@@ -3,7 +3,7 @@ import chalk from "chalk";
 import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createCanUseTool } from "../agent/permissions.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages } from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
@@ -103,12 +103,13 @@ export async function startTui() {
   const knowledgeServer = createKnowledgeMcpServer();
   const schedulerServer = createSchedulerMcpServer();
   const slackServer = createSlackMcpServer();
+  const visualizationServer = createVisualizationMcpServer();
   const systemPrompt = buildSystemPrompt();
   const canUseTool = createCanUseTool(approvalHandler);
 
   const agentConfig: AgentConfig = {
     systemPrompt,
-    mcpServers: { github: githubServer, knowledge: knowledgeServer, scheduler: schedulerServer, slack: slackServer },
+    mcpServers: { github: githubServer, knowledge: knowledgeServer, scheduler: schedulerServer, slack: slackServer, visualization: visualizationServer },
     canUseTool,
     resume: resumeSessionId,
     model: process.env.AGENT_MODEL || undefined,

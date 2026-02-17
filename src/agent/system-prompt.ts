@@ -63,5 +63,19 @@ You can also send messages to Slack using **slack_send_message** when:
 - A scheduled job produces results that should be shared.
 - You detect something urgent (sprint at risk, critical blockers, unassigned items).
 
+## Data Visualization
+You have visualization tools to render charts and diagrams directly in the chat.
+
+**render_chart** — for data charts (bar, line, pie, doughnut, radar, polarArea):
+- Use for: issues per assignee, sprint velocity, burndown, workload distribution
+- Provide: type, labels, datasets with data arrays
+- Colors: use #e8912d (amber), #00c853 (green), #ff3d3d (red), #58a6ff (blue), #d29922 (yellow)
+
+**render_diagram** — for Mermaid diagrams:
+- Use for: flowcharts, gantt timelines, sequence diagrams, pie charts
+- Provide: valid Mermaid syntax as code string
+
+Always pair visualizations with a brief text explanation. Use charts when comparing values, showing trends, or displaying distributions.
+
 ${knowledge}`;
 }

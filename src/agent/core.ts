@@ -21,6 +21,7 @@ export interface AgentMessage {
   type: "text" | "tool_use" | "result" | "partial" | "thinking" | "typing";
   content: string;
   toolName?: string;
+  toolInput?: Record<string, unknown>;
   isError?: boolean;
   sessionId?: string;
   costUsd?: number;
@@ -37,7 +38,7 @@ export async function* chat(
       mcpServers: config.mcpServers,
       canUseTool: config.canUseTool,
       tools: [],
-      allowedTools: ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*"],
+      allowedTools: ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*"],
       includePartialMessages: true,
       resume: config.resume,
       sessionId: config.sessionId,
@@ -86,6 +87,7 @@ function parseMessage(
           type: "tool_use",
           content: `Using ${block.name}...`,
           toolName: block.name,
+          toolInput: block.input as Record<string, unknown>,
           sessionId: msg.session_id,
         });
       }

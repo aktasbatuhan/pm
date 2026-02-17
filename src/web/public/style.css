@@ -425,6 +425,52 @@ html, body {
   margin: 6px 0;
 }
 
+/* Visualization containers */
+.chart-container {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin: 6px 0;
+  position: relative;
+  height: 300px;
+}
+
+.chart-container .chart-title {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.mermaid-container {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin: 6px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  overflow-x: auto;
+}
+
+.mermaid-container .diagram-title {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+  align-self: flex-start;
+}
+
+.mermaid-container svg {
+  max-width: 100%;
+}
+
 /* Tool indicator */
 .tool-indicator {
   display: inline-flex;

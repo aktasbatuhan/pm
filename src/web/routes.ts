@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages } from "../db/schema.ts";
@@ -25,6 +25,7 @@ let githubServer: ReturnType<typeof createGitHubMcpServer> | null = null;
 let knowledgeServer: ReturnType<typeof createKnowledgeMcpServer> | null = null;
 let schedulerServer: ReturnType<typeof createSchedulerMcpServer> | null = null;
 let slackServer: ReturnType<typeof createSlackMcpServer> | null = null;
+let visualizationServer: ReturnType<typeof createVisualizationMcpServer> | null = null;
 
 function getGitHubServer() {
   if (!githubServer) githubServer = createGitHubMcpServer();
@@ -44,6 +45,11 @@ function getSchedulerServer() {
 function getSlackServer() {
   if (!slackServer) slackServer = createSlackMcpServer();
   return slackServer;
+}
+
+function getVisualizationServer() {
+  if (!visualizationServer) visualizationServer = createVisualizationMcpServer();
+  return visualizationServer;
 }
 
 // Pending approval state (simple in-memory for localhost)
@@ -173,6 +179,7 @@ export function createRoutes() {
         knowledge: getKnowledgeServer(),
         scheduler: getSchedulerServer(),
         slack: getSlackServer(),
+        visualization: getVisualizationServer(),
       },
       canUseTool: async (toolName, input, _options) => {
         if (!WRITE_TOOL_NAMES.includes(toolName)) {
@@ -210,10 +217,20 @@ export function createRoutes() {
           } else if (msg.type === "text") {
             fullResponse += msg.content;
           } else if (msg.type === "tool_use") {
-            await stream.writeSSE({
-              event: "tool",
-              data: JSON.stringify({ tool: msg.toolName }),
-            });
+            if (msg.toolName?.startsWith("mcp__visualization__")) {
+              await stream.writeSSE({
+                event: "visualization",
+                data: JSON.stringify({
+                  tool: msg.toolName.replace("mcp__visualization__", ""),
+                  input: msg.toolInput,
+                }),
+              });
+            } else {
+              await stream.writeSSE({
+                event: "tool",
+                data: JSON.stringify({ tool: msg.toolName }),
+              });
+            }
           } else if (msg.type === "result") {
             await stream.writeSSE({
               event: "done",
@@ -370,6 +387,7 @@ export function createRoutes() {
     knowledgeServer = null;
     schedulerServer = null;
     slackServer = null;
+    visualizationServer = null;
 
     return c.json({ success: true, logs });
   });

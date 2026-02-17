@@ -2,6 +2,7 @@ export { createGitHubMcpServer, WRITE_TOOL_NAMES as GITHUB_WRITE_TOOL_NAMES } fr
 export { createKnowledgeMcpServer, KNOWLEDGE_WRITE_TOOL_NAMES } from "./knowledge.ts";
 export { createSchedulerMcpServer, SCHEDULER_WRITE_TOOL_NAMES } from "./scheduler.ts";
 export { createSlackMcpServer, SLACK_WRITE_TOOL_NAMES } from "./slack.ts";
+export { createVisualizationMcpServer } from "./visualization.ts";
 
 import { WRITE_TOOL_NAMES as _GH_WRITE } from "./github.ts";
 import { KNOWLEDGE_WRITE_TOOL_NAMES as _K_WRITE } from "./knowledge.ts";

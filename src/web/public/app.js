@@ -1,5 +1,130 @@
 // PM Agent — Frontend
 
+// --- Mermaid Initialization ---
+mermaid.initialize({
+  startOnLoad: false,
+  theme: "dark",
+  themeVariables: {
+    primaryColor: "#e8912d",
+    primaryTextColor: "#e6edf3",
+    primaryBorderColor: "#1e2328",
+    lineColor: "#484f58",
+    secondaryColor: "#111519",
+    tertiaryColor: "#0a0e13",
+    background: "#111519",
+    mainBkg: "#111519",
+    nodeBorder: "#1e2328",
+    fontFamily: "SF Mono, Fira Code, JetBrains Mono, Consolas, monospace",
+    fontSize: "12px",
+  },
+});
+
+// --- Chart.js Dark Theme Defaults ---
+const CHART_COLORS = ["#e8912d", "#00c853", "#ff3d3d", "#58a6ff", "#d29922", "#b36d1a", "#8b949e"];
+
+function getChartThemeDefaults() {
+  return {
+    color: "#8b949e",
+    borderColor: "#1e2328",
+    plugins: {
+      legend: {
+        labels: { color: "#8b949e", font: { family: "SF Mono, Fira Code, monospace", size: 10 } },
+      },
+      title: { color: "#e6edf3", font: { family: "SF Mono, Fira Code, monospace", size: 11 } },
+    },
+    scales: {
+      x: {
+        ticks: { color: "#484f58", font: { family: "SF Mono, Fira Code, monospace", size: 10 } },
+        grid: { color: "#1e2328" },
+        border: { color: "#1e2328" },
+      },
+      y: {
+        ticks: { color: "#484f58", font: { family: "SF Mono, Fira Code, monospace", size: 10 } },
+        grid: { color: "#1e2328" },
+        border: { color: "#1e2328" },
+      },
+    },
+  };
+}
+
+// --- Visualization Renderers ---
+
+function renderChartElement(container, input) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "chart-container";
+
+  if (input.title) {
+    const title = document.createElement("div");
+    title.className = "chart-title";
+    title.textContent = input.title;
+    wrapper.appendChild(title);
+  }
+
+  const canvas = document.createElement("canvas");
+  wrapper.appendChild(canvas);
+  container.appendChild(wrapper);
+
+  // Apply default colors if not provided
+  const datasets = input.data.datasets.map((ds, i) => {
+    const copy = { ...ds };
+    if (!copy.backgroundColor) {
+      if (["pie", "doughnut", "polarArea"].includes(input.type)) {
+        copy.backgroundColor = input.data.labels.map((_, j) => CHART_COLORS[j % CHART_COLORS.length]);
+      } else {
+        copy.backgroundColor = CHART_COLORS[i % CHART_COLORS.length];
+      }
+    }
+    if (input.type === "line" && !copy.borderColor) {
+      copy.borderColor = CHART_COLORS[i % CHART_COLORS.length];
+      copy.backgroundColor = copy.backgroundColor || "transparent";
+    }
+    return copy;
+  });
+
+  const themeDefaults = getChartThemeDefaults();
+  const noAxes = ["pie", "doughnut", "polarArea", "radar"].includes(input.type);
+
+  const config = {
+    type: input.type,
+    data: { labels: input.data.labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      color: themeDefaults.color,
+      borderColor: themeDefaults.borderColor,
+      plugins: themeDefaults.plugins,
+      ...(noAxes ? {} : { scales: themeDefaults.scales }),
+      ...(input.options || {}),
+    },
+  };
+
+  new Chart(canvas, config);
+}
+
+function renderMermaidElement(container, input) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "mermaid-container";
+
+  if (input.title) {
+    const title = document.createElement("div");
+    title.className = "diagram-title";
+    title.textContent = input.title;
+    wrapper.appendChild(title);
+  }
+
+  const mermaidDiv = document.createElement("div");
+  mermaidDiv.className = "mermaid";
+  mermaidDiv.textContent = input.code;
+  wrapper.appendChild(mermaidDiv);
+  container.appendChild(wrapper);
+
+  // Render asynchronously
+  mermaid.run({ nodes: [mermaidDiv] }).catch((err) => {
+    mermaidDiv.textContent = "Diagram render error: " + err.message;
+    mermaidDiv.style.color = "var(--red)";
+  });
+}
+
 // --- Setup Wizard ---
 
 const setupOverlay = document.getElementById("setup-overlay");
@@ -452,6 +577,15 @@ async function sendMessage() {
               assistantDiv.innerHTML = renderMarkdown(fullText);
               scrollToBottom();
             }
+          } else if (eventType === "visualization") {
+            thinkingDiv.style.display = "none";
+            assistantDiv.style.display = "";
+            if (data.tool === "render_chart") {
+              renderChartElement(assistantDiv, data.input);
+            } else if (data.tool === "render_diagram") {
+              renderMermaidElement(assistantDiv, data.input);
+            }
+            scrollToBottom();
           } else if (eventType === "tool") {
             const toolEl = document.createElement("div");
             toolEl.className = "tool-indicator";
