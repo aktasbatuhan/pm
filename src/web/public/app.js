@@ -98,7 +98,18 @@ function renderChartElement(container, input) {
     },
   };
 
-  new Chart(canvas, config);
+  try {
+    const chart = new Chart(canvas, config);
+    console.log("📊 [viz] Chart.js instance created:", chart);
+  } catch (error) {
+    console.error("❌ [viz] Chart.js error:", error);
+    canvas.style.display = "none";
+    const errorDiv = document.createElement("div");
+    errorDiv.style.color = "var(--red)";
+    errorDiv.style.padding = "10px";
+    errorDiv.textContent = "Chart render error: " + error.message;
+    wrapper.appendChild(errorDiv);
+  }
 }
 
 function renderMermaidElement(container, input) {
@@ -578,16 +589,21 @@ async function sendMessage() {
               scrollToBottom();
             }
           } else if (eventType === "visualization") {
+            console.log("📊 [viz] Received visualization event:", data);
             thinkingDiv.style.display = "none";
             assistantDiv.style.display = "";
             if (data.tool === "render_chart") {
               try {
+                console.log("📊 [viz] Parsing chart config:", data.input.config?.substring(0, 200) + "...");
                 const chartConfig = JSON.parse(data.input.config);
+                console.log("📊 [viz] Parsed chart config:", chartConfig);
                 renderChartElement(assistantDiv, chartConfig);
+                console.log("📊 [viz] Chart rendered successfully");
               } catch (e) {
-                console.error("Failed to parse chart config:", e);
+                console.error("❌ [viz] Failed to parse chart config:", e, data.input.config);
               }
             } else if (data.tool === "render_diagram") {
+              console.log("📊 [viz] Rendering diagram");
               renderMermaidElement(assistantDiv, data.input);
             }
             scrollToBottom();
