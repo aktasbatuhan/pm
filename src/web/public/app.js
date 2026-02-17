@@ -611,7 +611,7 @@ async function sendMessage() {
             assistantDiv.style.display = "";
             if (data.tool === "render_chart") {
               try {
-                console.log("📊 [viz] Parsing chart config:", data.input.config?.substring(0, 200) + "...");
+                console.log("📊 [viz] Parsing chart config:", (data.input.config || "").substring(0, 200) + "...");
                 const chartConfig = JSON.parse(data.input.config);
                 console.log("📊 [viz] Parsed chart config:", chartConfig);
                 renderChartElement(assistantDiv, chartConfig);
