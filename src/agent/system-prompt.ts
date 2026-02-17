@@ -68,7 +68,7 @@ You have visualization tools to render charts and diagrams directly in the chat.
 
 **render_chart** — for data charts (bar, line, pie, doughnut, radar, polarArea):
 - Use for: issues per assignee, sprint velocity, burndown, workload distribution
-- Provide: type, labels, datasets with data arrays
+- The config parameter is a JSON string: {"type":"bar","title":"My Chart","data":{"labels":["A","B"],"datasets":[{"label":"Series","data":[10,20]}]}}
 - Colors: use #e8912d (amber), #00c853 (green), #ff3d3d (red), #58a6ff (blue), #d29922 (yellow)
 
 **render_diagram** — for Mermaid diagrams:

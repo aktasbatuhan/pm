@@ -581,7 +581,12 @@ async function sendMessage() {
             thinkingDiv.style.display = "none";
             assistantDiv.style.display = "";
             if (data.tool === "render_chart") {
-              renderChartElement(assistantDiv, data.input);
+              try {
+                const chartConfig = JSON.parse(data.input.config);
+                renderChartElement(assistantDiv, chartConfig);
+              } catch (e) {
+                console.error("Failed to parse chart config:", e);
+              }
             } else if (data.tool === "render_diagram") {
               renderMermaidElement(assistantDiv, data.input);
             }

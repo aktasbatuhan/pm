@@ -7,27 +7,40 @@ import {
 
 const renderChartTool = tool(
   "render_chart",
-  "Render a Chart.js chart inline in the chat. Use for data comparisons, trends, and distributions.",
+  `Render a Chart.js chart inline in the chat. Use for data comparisons, trends, and distributions.
+
+The config parameter must be a valid JSON string with this structure:
+{
+  "type": "bar"|"line"|"pie"|"doughnut"|"radar"|"polarArea",
+  "title": "optional title",
+  "data": {
+    "labels": ["Label1", "Label2"],
+    "datasets": [{ "label": "Series", "data": [10, 20], "backgroundColor": "#e8912d" }]
+  }
+}
+
+Colors: #e8912d (amber), #00c853 (green), #ff3d3d (red), #58a6ff (blue), #d29922 (yellow)`,
   {
-    type: z.enum(["bar", "line", "pie", "doughnut", "radar", "polarArea"]).describe("Chart type"),
-    title: z.string().optional().describe("Chart title"),
-    data: z.object({
-      labels: z.array(z.string()).describe("Axis labels or category names"),
-      datasets: z.array(z.object({
-        label: z.string().describe("Dataset label"),
-        data: z.array(z.number()).describe("Numeric data points"),
-        backgroundColor: z.union([z.string(), z.array(z.string())]).optional().describe("Color(s) for bars/segments"),
-      })).describe("One or more datasets to plot"),
-    }),
-    options: z.record(z.string(), z.any()).optional().describe("Extra Chart.js options"),
+    config: z.string().describe("JSON string containing Chart.js chart configuration"),
   },
-  async ({ type, title, data, options }) => {
-    return {
-      content: [{
-        type: "text" as const,
-        text: `Chart rendered: ${title || type} (${data.labels.length} labels, ${data.datasets.length} datasets)`,
-      }],
-    };
+  async ({ config }) => {
+    try {
+      const parsed = JSON.parse(config);
+      const type = parsed.type || "bar";
+      const title = parsed.title || type;
+      const labelCount = parsed.data?.labels?.length || 0;
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Chart rendered: ${title} (${labelCount} labels)`,
+        }],
+      };
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: "Error: Invalid JSON in config parameter" }],
+        isError: true,
+      };
+    }
   },
   { annotations: { readOnly: true, destructive: false } }
 );
