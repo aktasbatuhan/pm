@@ -51,6 +51,14 @@ function getChartThemeDefaults() {
 
 function renderChartElement(container, input) {
   console.log("📊 [viz] Creating chart container");
+  console.log("📊 [viz] Container element:", container, {
+    tagName: container?.tagName,
+    className: container?.className,
+    id: container?.id,
+    parentNode: container?.parentNode,
+    isConnected: container?.isConnected
+  });
+
   const wrapper = document.createElement("div");
   wrapper.className = "chart-container";
   wrapper.style.backgroundColor = "var(--bg-tertiary)";
@@ -73,13 +81,32 @@ function renderChartElement(container, input) {
   wrapper.appendChild(canvas);
   container.appendChild(wrapper);
 
-  console.log("📊 [viz] Chart container added to DOM", {
-    wrapper: wrapper,
-    canvas: canvas,
-    container: container,
-    containerHeight: wrapper.offsetHeight,
-    canvasSize: { width: canvas.width, height: canvas.height }
-  });
+  console.log("📊 [viz] About to append wrapper to container");
+  console.log("📊 [viz] Wrapper before append:", wrapper, "Parent:", wrapper.parentNode);
+
+  try {
+    container.appendChild(wrapper);
+    console.log("📊 [viz] ✅ Wrapper appended successfully");
+    console.log("📊 [viz] Wrapper after append:", wrapper, "Parent:", wrapper.parentNode);
+    console.log("📊 [viz] Container now has children:", container.children.length);
+    console.log("📊 [viz] Chart container added to DOM", {
+      wrapper: wrapper,
+      canvas: canvas,
+      container: container,
+      containerHeight: wrapper.offsetHeight,
+      canvasSize: { width: canvas.width, height: canvas.height }
+    });
+
+    // Force a repaint
+    wrapper.style.display = 'none';
+    wrapper.offsetHeight; // trigger reflow
+    wrapper.style.display = 'block';
+
+  } catch (error) {
+    console.error("❌ [viz] Failed to append wrapper to container:", error);
+    console.error("❌ [viz] Container:", container);
+    console.error("❌ [viz] Wrapper:", wrapper);
+  }
 
   // Apply default colors if not provided
   const datasets = input.data.datasets.map((ds, i) => {
