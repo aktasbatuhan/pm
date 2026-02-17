@@ -50,19 +50,36 @@ function getChartThemeDefaults() {
 // --- Visualization Renderers ---
 
 function renderChartElement(container, input) {
+  console.log("📊 [viz] Creating chart container");
   const wrapper = document.createElement("div");
   wrapper.className = "chart-container";
+  wrapper.style.backgroundColor = "var(--bg-tertiary)";
+  wrapper.style.border = "2px solid var(--accent)"; // Make it obvious for debugging
+  wrapper.style.height = "300px";
+  wrapper.style.margin = "10px 0";
 
   if (input.title) {
     const title = document.createElement("div");
     title.className = "chart-title";
     title.textContent = input.title;
     wrapper.appendChild(title);
+    console.log("📊 [viz] Added chart title:", input.title);
   }
 
   const canvas = document.createElement("canvas");
+  canvas.style.width = "100%";
+  canvas.style.height = "280px";
+  canvas.style.display = "block";
   wrapper.appendChild(canvas);
   container.appendChild(wrapper);
+
+  console.log("📊 [viz] Chart container added to DOM", {
+    wrapper: wrapper,
+    canvas: canvas,
+    container: container,
+    containerHeight: wrapper.offsetHeight,
+    canvasSize: { width: canvas.width, height: canvas.height }
+  });
 
   // Apply default colors if not provided
   const datasets = input.data.datasets.map((ds, i) => {

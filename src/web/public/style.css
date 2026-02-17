@@ -434,6 +434,14 @@ html, body {
   margin: 6px 0;
   position: relative;
   height: 300px;
+  width: 100%;
+  display: block !important;
+}
+
+.chart-container canvas {
+  width: 100% !important;
+  height: 280px !important;
+  display: block !important;
 }
 
 .chart-container .chart-title {
