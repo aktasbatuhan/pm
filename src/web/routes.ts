@@ -192,6 +192,8 @@ export function createRoutes() {
       model: process.env.AGENT_MODEL || undefined,
     };
 
+    console.log(`[agent] chat request: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
+
     return streamSSE(c, async (stream) => {
       let fullResponse = "";
       let sdkSessionId: string | undefined;
@@ -217,7 +219,9 @@ export function createRoutes() {
           } else if (msg.type === "text") {
             fullResponse += msg.content;
           } else if (msg.type === "tool_use") {
+            console.log(`[agent] tool_use: ${msg.toolName}`, msg.toolInput ? JSON.stringify(msg.toolInput).slice(0, 200) : "(no input)");
             if (msg.toolName?.startsWith("mcp__visualization__")) {
+              console.log(`[agent] >> sending visualization SSE event`);
               await stream.writeSSE({
                 event: "visualization",
                 data: JSON.stringify({
