@@ -371,8 +371,10 @@ const inputEl = document.getElementById("message-input");
 const sendBtn = document.getElementById("send-btn");
 const sessionsListEl = document.getElementById("sessions-list");
 const newSessionBtn = document.getElementById("new-session");
-const sessionNameEl = document.getElementById("session-name");
 const costDisplayEl = document.getElementById("cost-display");
+const chatDrawer = document.getElementById("chat-drawer");
+const chatBackdrop = document.getElementById("chat-backdrop");
+const chatDrawerTitle = document.getElementById("chat-drawer-title");
 
 // Initialize — check setup status + knowledge onboarding
 (async () => {
@@ -393,6 +395,7 @@ const costDisplayEl = document.getElementById("cost-display");
   }
 
   loadSessions();
+  loadDashboard();
 })();
 
 // Event listeners
@@ -412,9 +415,10 @@ sendBtn.addEventListener("click", sendMessage);
 
 newSessionBtn.addEventListener("click", () => {
   currentSessionId = null;
-  sessionNameEl.textContent = "New Conversation";
+  chatDrawerTitle.textContent = "New Chat";
   messagesEl.innerHTML = getWelcomeHTML();
   attachQuickActions();
+  openChatDrawer();
 });
 
 // Quick action buttons
@@ -470,6 +474,7 @@ function renderSessions(sessions) {
     el.addEventListener("click", (e) => {
       if (e.target.closest(".session-delete-btn")) return;
       loadSession(el.dataset.id);
+      openChatDrawer();
     });
   });
 
@@ -482,9 +487,10 @@ function renderSessions(sessions) {
         await fetch(`/api/sessions/${id}`, { method: "DELETE" });
         if (currentSessionId === id) {
           currentSessionId = null;
-          sessionNameEl.textContent = "New Conversation";
+          chatDrawerTitle.textContent = "New Chat";
           messagesEl.innerHTML = getWelcomeHTML();
           attachQuickActions();
+          closeChatDrawer();
         }
         loadSessions();
       } catch (err) {
@@ -498,6 +504,10 @@ async function loadSession(id) {
   currentSessionId = id;
   document.querySelectorAll(".session-item").forEach((el) => {
     el.classList.toggle("active", el.dataset.id === id);
+    if (el.dataset.id === id) {
+      const nameEl = el.querySelector(".session-info span");
+      if (nameEl) chatDrawerTitle.textContent = nameEl.textContent;
+    }
   });
 
   try {
@@ -1085,39 +1095,25 @@ function setSettingsStatus(text, type) {
   }
 }
 
+// --- Chat Drawer ---
+
+function openChatDrawer() {
+  chatDrawer.classList.add("open");
+  chatBackdrop.classList.remove("hidden");
+  requestAnimationFrame(() => chatBackdrop.classList.add("open"));
+  inputEl.focus();
+}
+
+function closeChatDrawer() {
+  chatDrawer.classList.remove("open");
+  chatBackdrop.classList.remove("open");
+  setTimeout(() => chatBackdrop.classList.add("hidden"), 250);
+}
+
+document.getElementById("chat-drawer-close").addEventListener("click", closeChatDrawer);
+chatBackdrop.addEventListener("click", closeChatDrawer);
+
 // --- Dashboard ---
-
-let dashboardLoaded = false;
-
-document.querySelectorAll(".header-tab").forEach((tab) => {
-  tab.addEventListener("click", () => {
-    const view = tab.dataset.tab;
-
-    document.querySelectorAll(".header-tab").forEach((t) => t.classList.remove("active"));
-    tab.classList.add("active");
-
-    // Toggle header meta items
-    document.querySelectorAll("[data-view]").forEach((el) => {
-      el.style.display = el.dataset.view === view ? "" : "none";
-    });
-
-    const dashboardView = document.getElementById("dashboard-view");
-    const sessionName = document.getElementById("session-name");
-
-    if (view === "dashboard") {
-      messagesEl.classList.add("hidden");
-      document.getElementById("input-area").classList.add("hidden");
-      dashboardView.classList.remove("hidden");
-      sessionName.style.display = "none";
-      if (!dashboardLoaded) loadDashboard();
-    } else {
-      messagesEl.classList.remove("hidden");
-      document.getElementById("input-area").classList.remove("hidden");
-      dashboardView.classList.add("hidden");
-      sessionName.style.display = "";
-    }
-  });
-});
 
 document.getElementById("dashboard-refresh-btn").addEventListener("click", loadDashboard);
 
@@ -1140,7 +1136,6 @@ async function loadDashboard() {
     }
 
     const data = await res.json();
-    dashboardLoaded = true;
 
     const fetchedAt = new Date(data.fetchedAt);
     document.getElementById("dashboard-fetched-at").textContent =

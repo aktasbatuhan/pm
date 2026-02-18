@@ -31,18 +31,9 @@
     <main id="main">
       <header id="header">
         <div class="header-left">
-          <div class="header-tabs">
-            <button class="header-tab active" data-tab="chat">Chat</button>
-            <button class="header-tab" data-tab="dashboard">Dashboard</button>
-          </div>
-          <h2 id="session-name">New Conversation</h2>
-        </div>
-        <div class="header-meta">
-          <span id="model-display" class="meta-item" data-view="chat">MODEL: —</span>
-          <span id="session-meta" class="meta-item" data-view="chat">MSGS: 0</span>
-          <span id="cost-display" class="meta-item" data-view="chat">COST: $0.0000</span>
-          <span id="dashboard-fetched-at" class="meta-item" data-view="dashboard" style="display:none">FETCHED: —</span>
-          <button id="dashboard-refresh-btn" class="btn btn-sm" data-view="dashboard" style="display:none">Refresh</button>
+          <span class="header-title">Dashboard</span>
+          <span id="dashboard-fetched-at" class="meta-item">FETCHED: —</span>
+          <button id="dashboard-refresh-btn" class="btn btn-sm">Refresh</button>
         </div>
       </header>
 
@@ -54,8 +45,8 @@
         </div>
       </div>
 
-      <!-- Dashboard View -->
-      <div id="dashboard-view" class="dashboard-view hidden">
+      <!-- Dashboard View (homepage) -->
+      <div id="dashboard-view" class="dashboard-view">
         <div class="dashboard-stats-bar" id="dashboard-stats-bar">
           <div class="stat-card">
             <span class="stat-label">Total Items</span>
@@ -98,11 +89,24 @@
         </div>
         <div id="dashboard-error" class="dashboard-error hidden"></div>
       </div>
+    </main>
 
+    <!-- Chat Drawer (slides from right) -->
+    <div id="chat-backdrop" class="chat-backdrop hidden"></div>
+    <div id="chat-drawer" class="chat-drawer">
+      <div class="chat-drawer-header">
+        <div class="chat-drawer-meta">
+          <h3 id="chat-drawer-title">New Chat</h3>
+          <span id="model-display" class="meta-item">MODEL: —</span>
+          <span id="session-meta" class="meta-item">MSGS: 0</span>
+          <span id="cost-display" class="meta-item">COST: $0.0000</span>
+        </div>
+        <button id="chat-drawer-close" class="btn-icon" title="Close">&times;</button>
+      </div>
       <div id="messages" class="messages">
         <div class="welcome">
           <h3>PM Agent</h3>
-          <p>Connected to your GitHub Project. Ask me about sprint status, estimates, or anything about your project.</p>
+          <p>Ask me about sprint status, estimates, or anything about your project.</p>
           <div class="quick-actions">
             <button class="btn btn-ghost" data-command="/standup">Sprint Standup</button>
             <button class="btn btn-ghost" data-command="/analyze">Deep Analysis</button>
@@ -110,7 +114,6 @@
           </div>
         </div>
       </div>
-
       <div id="input-area" class="input-area">
         <div class="input-wrapper">
           <textarea id="message-input" placeholder="Ask about your project..." rows="1"></textarea>
@@ -126,7 +129,7 @@
           <span class="kbd">/estimate #123</span>
         </div>
       </div>
-    </main>
+    </div>
   </div>
 
   <!-- Setup Wizard Overlay -->
