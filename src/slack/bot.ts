@@ -146,12 +146,17 @@ async function processAgentRequest(
 
     // Run agent
     let fullResponse = "";
+    let hasPartials = false;
     let sdkSessionId: string | undefined;
     let lastUpdateTime = 0;
 
     try {
       for await (const msg of chat(userText, config)) {
-        if (msg.type === "text" || msg.type === "partial") {
+        if (msg.type === "partial") {
+          fullResponse += msg.content;
+          hasPartials = true;
+        } else if (msg.type === "text" && !hasPartials) {
+          // Only use finalized text if no streaming deltas were received
           fullResponse += msg.content;
         }
 
