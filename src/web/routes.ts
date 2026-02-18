@@ -6,6 +6,7 @@ import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
+import { fetchProjectItems, type ProjectItem } from "../tools/github.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import {
   getAllSettings,
@@ -79,6 +80,53 @@ function resolveKnowledgePath(filePath: string): string | null {
   }
   if (!resolved.endsWith(".md")) return null;
   return resolved;
+}
+
+function computeDashboardStats(items: ProjectItem[]) {
+  const statusCounts: Record<string, number> = {};
+  const assigneeWorkload: Record<string, Record<string, number>> = {};
+  const priorityCounts: Record<string, number> = {};
+  const inProgress: ProjectItem[] = [];
+
+  for (const item of items) {
+    const status = item.status || "No Status";
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+
+    if (status.toLowerCase() === "in progress") {
+      inProgress.push(item);
+    }
+
+    const priority = (item.priority as string) || "No Priority";
+    priorityCounts[priority] = (priorityCounts[priority] || 0) + 1;
+
+    const assignees = item.assignees.length > 0 ? item.assignees : ["Unassigned"];
+    for (const a of assignees) {
+      if (!assigneeWorkload[a]) assigneeWorkload[a] = {};
+      assigneeWorkload[a][status] = (assigneeWorkload[a][status] || 0) + 1;
+    }
+  }
+
+  const total = items.length;
+  const done = items.filter(
+    (i) => (i.status || "").toLowerCase() === "done" || i.state === "CLOSED",
+  ).length;
+  const blocked = items.filter(
+    (i) => (i.status || "").toLowerCase() === "blocked",
+  ).length;
+
+  return {
+    statusCounts,
+    assigneeWorkload,
+    inProgress,
+    priorityCounts,
+    overview: {
+      total,
+      done,
+      completionPct: total > 0 ? Math.round((done / total) * 100) : 0,
+      inProgressCount: inProgress.length,
+      blocked,
+    },
+  };
 }
 
 export function createRoutes() {
@@ -404,6 +452,28 @@ export function createRoutes() {
     visualizationServer = null;
 
     return c.json({ success: true, logs });
+  });
+
+  // --- Dashboard API ---
+
+  app.get("/dashboard", async (c) => {
+    const org = process.env.GITHUB_ORG;
+    const projectNumber = parseInt(process.env.GITHUB_PROJECT_NUMBER || "0", 10);
+
+    if (!org || !projectNumber) {
+      return c.json({ error: "GITHUB_ORG and GITHUB_PROJECT_NUMBER must be set" }, 400);
+    }
+
+    try {
+      const items = await fetchProjectItems(org, projectNumber);
+      const stats = computeDashboardStats(items);
+      return c.json({ stats, fetchedAt: new Date().toISOString() });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        500,
+      );
+    }
   });
 
   // --- Settings API ---

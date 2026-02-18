@@ -229,6 +229,152 @@ const getIssueTool = tool(
   { annotations: { readOnly: true } }
 );
 
+// --- Shared Project Items Fetcher (used by MCP tool + dashboard API) ---
+
+export interface ProjectItem {
+  title: string;
+  number: number | null;
+  state: string | null;
+  status: string | null;
+  priority: string | null;
+  size: string | number | null;
+  estimate: string | number | null;
+  repository: string | null;
+  issue_url: string | null;
+  assignees: string[];
+  custom_fields: Record<string, string | number | null>;
+}
+
+export async function fetchProjectItems(owner: string, projectNumber: number): Promise<ProjectItem[]> {
+  const query_str = `
+    query($owner: String!, $projectNumber: Int!, $cursor: String) {
+      organization(login: $owner) {
+        projectV2(number: $projectNumber) {
+          items(first: 100, after: $cursor) {
+            pageInfo { hasNextPage endCursor }
+            nodes {
+              content {
+                ... on Issue {
+                  title
+                  url
+                  number
+                  state
+                  repository { name }
+                  assignees(first: 5) { nodes { login } }
+                }
+                ... on PullRequest {
+                  title
+                  url
+                  number
+                  state
+                  repository { name }
+                }
+                ... on DraftIssue { title }
+              }
+              fieldValues(first: 15) {
+                nodes {
+                  ... on ProjectV2ItemFieldSingleSelectValue {
+                    field { ... on ProjectV2SingleSelectField { name } }
+                    name
+                  }
+                  ... on ProjectV2ItemFieldNumberValue {
+                    field { ... on ProjectV2Field { name } }
+                    number
+                  }
+                  ... on ProjectV2ItemFieldIterationValue {
+                    field { ... on ProjectV2IterationField { name } }
+                    title
+                  }
+                  ... on ProjectV2ItemFieldTextValue {
+                    field { ... on ProjectV2Field { name } }
+                    text
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  interface GQLResponse {
+    organization: {
+      projectV2: {
+        items: {
+          pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          nodes: Array<{
+            content: {
+              title?: string;
+              url?: string;
+              number?: number;
+              state?: string;
+              repository?: { name: string };
+              assignees?: { nodes: Array<{ login: string }> };
+            } | null;
+            fieldValues: {
+              nodes: Array<{
+                field?: { name: string };
+                name?: string;
+                number?: number;
+                title?: string;
+                text?: string;
+              }>;
+            };
+          }>;
+        };
+      };
+    };
+  }
+
+  const items: ProjectItem[] = [];
+  let cursor: string | null = null;
+
+  while (true) {
+    const result: GQLResponse = await graphql<GQLResponse>(query_str, {
+      owner,
+      projectNumber,
+      cursor,
+    });
+
+    const projectItems = result.organization.projectV2.items;
+
+    for (const node of projectItems.nodes) {
+      if (!node.content) continue;
+
+      const fields: Record<string, string | number | null> = {};
+      for (const fv of node.fieldValues.nodes) {
+        if (fv.field?.name) {
+          fields[fv.field.name.toLowerCase()] =
+            fv.name ?? fv.number ?? fv.title ?? fv.text ?? null;
+        }
+      }
+
+      const { status, priority, size, estimate, ...customFields } = fields;
+
+      items.push({
+        title: node.content.title || "Untitled",
+        number: node.content.number ?? null,
+        state: node.content.state ?? null,
+        status: (status as string) ?? null,
+        priority: (priority as string) ?? null,
+        size: size ?? null,
+        estimate: estimate ?? null,
+        repository: node.content.repository?.name || null,
+        issue_url: node.content.url || null,
+        assignees:
+          node.content.assignees?.nodes.map((a: { login: string }) => a.login) ?? [],
+        custom_fields: customFields,
+      });
+    }
+
+    if (!projectItems.pageInfo.hasNextPage) break;
+    cursor = projectItems.pageInfo.endCursor;
+  }
+
+  return items;
+}
+
 const listProjectItemsTool = tool(
   "github_list_project_items",
   "List items from a GitHub Project v2 with all field values (status, priority, size, sprint, etc.)",
@@ -237,132 +383,7 @@ const listProjectItemsTool = tool(
     project_number: z.number().describe("The project number"),
   },
   async ({ owner, project_number }) => {
-    const query_str = `
-      query($owner: String!, $projectNumber: Int!, $cursor: String) {
-        organization(login: $owner) {
-          projectV2(number: $projectNumber) {
-            items(first: 100, after: $cursor) {
-              pageInfo { hasNextPage endCursor }
-              nodes {
-                content {
-                  ... on Issue {
-                    title
-                    url
-                    number
-                    state
-                    repository { name }
-                    assignees(first: 5) { nodes { login } }
-                  }
-                  ... on PullRequest {
-                    title
-                    url
-                    number
-                    state
-                    repository { name }
-                  }
-                  ... on DraftIssue { title }
-                }
-                fieldValues(first: 15) {
-                  nodes {
-                    ... on ProjectV2ItemFieldSingleSelectValue {
-                      field { ... on ProjectV2SingleSelectField { name } }
-                      name
-                    }
-                    ... on ProjectV2ItemFieldNumberValue {
-                      field { ... on ProjectV2Field { name } }
-                      number
-                    }
-                    ... on ProjectV2ItemFieldIterationValue {
-                      field { ... on ProjectV2IterationField { name } }
-                      title
-                    }
-                    ... on ProjectV2ItemFieldTextValue {
-                      field { ... on ProjectV2Field { name } }
-                      text
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    `;
-
-    interface GQLResponse {
-      organization: {
-        projectV2: {
-          items: {
-            pageInfo: { hasNextPage: boolean; endCursor: string | null };
-            nodes: Array<{
-              content: {
-                title?: string;
-                url?: string;
-                number?: number;
-                state?: string;
-                repository?: { name: string };
-                assignees?: { nodes: Array<{ login: string }> };
-              } | null;
-              fieldValues: {
-                nodes: Array<{
-                  field?: { name: string };
-                  name?: string;
-                  number?: number;
-                  title?: string;
-                  text?: string;
-                }>;
-              };
-            }>;
-          };
-        };
-      };
-    }
-
-    const items: Array<Record<string, unknown>> = [];
-    let cursor: string | null = null;
-
-    while (true) {
-      const result: GQLResponse = await graphql<GQLResponse>(query_str, {
-        owner,
-        projectNumber: project_number,
-        cursor,
-      });
-
-      const projectItems: GQLResponse["organization"]["projectV2"]["items"] = result.organization.projectV2.items;
-
-      for (const node of projectItems.nodes) {
-        if (!node.content) continue;
-
-        const fields: Record<string, string | number | null> = {};
-        for (const fv of node.fieldValues.nodes) {
-          if (fv.field?.name) {
-            fields[fv.field.name.toLowerCase()] =
-              fv.name ?? fv.number ?? fv.title ?? fv.text ?? null;
-          }
-        }
-
-        const { status, priority, size, estimate, ...customFields } = fields;
-
-        items.push({
-          title: node.content.title || "Untitled",
-          number: node.content.number ?? null,
-          state: node.content.state ?? null,
-          status: status ?? null,
-          priority: priority ?? null,
-          size: size ?? null,
-          estimate: estimate ?? null,
-          repository: node.content.repository?.name || null,
-          issue_url: node.content.url || null,
-          assignees:
-            node.content.assignees?.nodes.map((a: { login: string }) => a.login) ?? [],
-          custom_fields: customFields,
-        });
-      }
-
-      if (!projectItems.pageInfo.hasNextPage) break;
-      cursor = projectItems.pageInfo.endCursor;
-    }
-
+    const items = await fetchProjectItems(owner, project_number);
     return { content: [{ type: "text" as const, text: JSON.stringify(items, null, 2) }] };
   },
   { annotations: { readOnly: true } }

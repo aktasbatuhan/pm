@@ -30,13 +30,19 @@
     <!-- Main -->
     <main id="main">
       <header id="header">
-        <div class="header-title">
+        <div class="header-left">
+          <div class="header-tabs">
+            <button class="header-tab active" data-tab="chat">Chat</button>
+            <button class="header-tab" data-tab="dashboard">Dashboard</button>
+          </div>
           <h2 id="session-name">New Conversation</h2>
         </div>
         <div class="header-meta">
-          <span id="model-display" class="meta-item">MODEL: —</span>
-          <span id="session-meta" class="meta-item">MSGS: 0</span>
-          <span id="cost-display" class="meta-item">COST: $0.0000</span>
+          <span id="model-display" class="meta-item" data-view="chat">MODEL: —</span>
+          <span id="session-meta" class="meta-item" data-view="chat">MSGS: 0</span>
+          <span id="cost-display" class="meta-item" data-view="chat">COST: $0.0000</span>
+          <span id="dashboard-fetched-at" class="meta-item" data-view="dashboard" style="display:none">FETCHED: —</span>
+          <button id="dashboard-refresh-btn" class="btn btn-sm" data-view="dashboard" style="display:none">Refresh</button>
         </div>
       </header>
 
@@ -46,6 +52,51 @@
           <button id="banner-setup-btn" class="btn btn-primary btn-sm">Run Setup</button>
           <button id="banner-dismiss-btn" class="btn-icon" title="Dismiss">&times;</button>
         </div>
+      </div>
+
+      <!-- Dashboard View -->
+      <div id="dashboard-view" class="dashboard-view hidden">
+        <div class="dashboard-stats-bar" id="dashboard-stats-bar">
+          <div class="stat-card">
+            <span class="stat-label">Total Items</span>
+            <span class="stat-value" id="stat-total">--</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Completion</span>
+            <span class="stat-value" id="stat-completion">--%</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">In Progress</span>
+            <span class="stat-value" id="stat-in-progress">--</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Blocked</span>
+            <span class="stat-value stat-blocked" id="stat-blocked">--</span>
+          </div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="dashboard-card">
+            <div class="dashboard-card-title">Status Distribution</div>
+            <div class="dashboard-card-body" id="chart-status-body"></div>
+          </div>
+          <div class="dashboard-card">
+            <div class="dashboard-card-title">Priority Breakdown</div>
+            <div class="dashboard-card-body" id="chart-priority-body"></div>
+          </div>
+          <div class="dashboard-card dashboard-card-wide">
+            <div class="dashboard-card-title">Assignee Workload</div>
+            <div class="dashboard-card-body" id="chart-workload-body"></div>
+          </div>
+          <div class="dashboard-card dashboard-card-wide">
+            <div class="dashboard-card-title">In Progress Items</div>
+            <div class="dashboard-card-body" id="stuck-issues-body"></div>
+          </div>
+        </div>
+        <div id="dashboard-loading" class="dashboard-loading hidden">
+          <div class="spinner"></div>
+          <span>Loading dashboard...</span>
+        </div>
+        <div id="dashboard-error" class="dashboard-error hidden"></div>
       </div>
 
       <div id="messages" class="messages">

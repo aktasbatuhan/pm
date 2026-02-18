@@ -89,6 +89,15 @@ function renderChartElement(container, input) {
   const themeDefaults = getChartThemeDefaults();
   const noAxes = ["pie", "doughnut", "polarArea", "radar"].includes(input.type);
 
+  const inputOpts = input.options || {};
+  const { scales: inputScales, plugins: inputPlugins, ...restOpts } = inputOpts;
+  const mergedScales = noAxes ? {} : {
+    scales: {
+      x: { ...themeDefaults.scales.x, ...(inputScales?.x || {}) },
+      y: { ...themeDefaults.scales.y, ...(inputScales?.y || {}) },
+    },
+  };
+
   const config = {
     type: input.type,
     data: { labels: input.data.labels, datasets },
@@ -97,9 +106,9 @@ function renderChartElement(container, input) {
       maintainAspectRatio: false,
       color: themeDefaults.color,
       borderColor: themeDefaults.borderColor,
-      plugins: themeDefaults.plugins,
-      ...(noAxes ? {} : { scales: themeDefaults.scales }),
-      ...(input.options || {}),
+      plugins: { ...themeDefaults.plugins, ...(inputPlugins || {}) },
+      ...mergedScales,
+      ...restOpts,
     },
   };
 
@@ -1073,6 +1082,175 @@ function setSettingsStatus(text, type) {
   el.className = "settings-save-status" + (type ? " " + type : "");
   if (type === "success") {
     setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 3000);
+  }
+}
+
+// --- Dashboard ---
+
+let dashboardLoaded = false;
+
+document.querySelectorAll(".header-tab").forEach((tab) => {
+  tab.addEventListener("click", () => {
+    const view = tab.dataset.tab;
+
+    document.querySelectorAll(".header-tab").forEach((t) => t.classList.remove("active"));
+    tab.classList.add("active");
+
+    // Toggle header meta items
+    document.querySelectorAll("[data-view]").forEach((el) => {
+      el.style.display = el.dataset.view === view ? "" : "none";
+    });
+
+    const dashboardView = document.getElementById("dashboard-view");
+    const sessionName = document.getElementById("session-name");
+
+    if (view === "dashboard") {
+      messagesEl.classList.add("hidden");
+      document.getElementById("input-area").classList.add("hidden");
+      dashboardView.classList.remove("hidden");
+      sessionName.style.display = "none";
+      if (!dashboardLoaded) loadDashboard();
+    } else {
+      messagesEl.classList.remove("hidden");
+      document.getElementById("input-area").classList.remove("hidden");
+      dashboardView.classList.add("hidden");
+      sessionName.style.display = "";
+    }
+  });
+});
+
+document.getElementById("dashboard-refresh-btn").addEventListener("click", loadDashboard);
+
+async function loadDashboard() {
+  const loading = document.getElementById("dashboard-loading");
+  const error = document.getElementById("dashboard-error");
+  const statsBar = document.getElementById("dashboard-stats-bar");
+  const grid = document.querySelector(".dashboard-grid");
+
+  loading.classList.remove("hidden");
+  error.classList.add("hidden");
+  statsBar.style.opacity = "0.4";
+  grid.style.opacity = "0.4";
+
+  try {
+    const res = await fetch("/api/dashboard");
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    dashboardLoaded = true;
+
+    const fetchedAt = new Date(data.fetchedAt);
+    document.getElementById("dashboard-fetched-at").textContent =
+      `FETCHED: ${fetchedAt.toLocaleTimeString()}`;
+
+    renderDashboard(data.stats);
+  } catch (err) {
+    error.textContent = `Dashboard error: ${err.message}`;
+    error.classList.remove("hidden");
+  } finally {
+    loading.classList.add("hidden");
+    statsBar.style.opacity = "";
+    grid.style.opacity = "";
+  }
+}
+
+const STATUS_COLORS = {
+  "Done": "#00c853",
+  "In Progress": "#e8912d",
+  "In progress": "#e8912d",
+  "Todo": "#58a6ff",
+  "Blocked": "#ff3d3d",
+  "blocked": "#ff3d3d",
+  "No Status": "#484f58",
+};
+
+function renderDashboard(stats) {
+  // Overview stats
+  document.getElementById("stat-total").textContent = stats.overview.total;
+  document.getElementById("stat-completion").textContent = `${stats.overview.completionPct}%`;
+  document.getElementById("stat-in-progress").textContent = stats.overview.inProgressCount;
+  document.getElementById("stat-blocked").textContent = stats.overview.blocked;
+
+  // Status distribution (doughnut)
+  const statusBody = document.getElementById("chart-status-body");
+  statusBody.innerHTML = "";
+  const statusLabels = Object.keys(stats.statusCounts);
+  const statusData = Object.values(stats.statusCounts);
+  const statusColors = statusLabels.map((l, i) => STATUS_COLORS[l] || CHART_COLORS[i % CHART_COLORS.length]);
+
+  renderChartElement(statusBody, {
+    type: "doughnut",
+    data: {
+      labels: statusLabels,
+      datasets: [{ label: "Items", data: statusData, backgroundColor: statusColors }],
+    },
+  });
+
+  // Priority breakdown (bar)
+  const priorityBody = document.getElementById("chart-priority-body");
+  priorityBody.innerHTML = "";
+  const priorityLabels = Object.keys(stats.priorityCounts);
+  const priorityData = Object.values(stats.priorityCounts);
+
+  renderChartElement(priorityBody, {
+    type: "bar",
+    data: {
+      labels: priorityLabels,
+      datasets: [{ label: "Items", data: priorityData }],
+    },
+  });
+
+  // Assignee workload (stacked bar)
+  const workloadBody = document.getElementById("chart-workload-body");
+  workloadBody.innerHTML = "";
+  const assignees = Object.keys(stats.assigneeWorkload);
+  const allStatuses = [...new Set(assignees.flatMap((a) => Object.keys(stats.assigneeWorkload[a])))];
+
+  const workloadDatasets = allStatuses.map((status, i) => ({
+    label: status,
+    data: assignees.map((a) => stats.assigneeWorkload[a][status] || 0),
+    backgroundColor: STATUS_COLORS[status] || CHART_COLORS[i % CHART_COLORS.length],
+  }));
+
+  renderChartElement(workloadBody, {
+    type: "bar",
+    data: { labels: assignees, datasets: workloadDatasets },
+    options: {
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true },
+      },
+    },
+  });
+
+  // In-progress items table
+  const stuckBody = document.getElementById("stuck-issues-body");
+  if (stats.inProgress.length === 0) {
+    stuckBody.innerHTML = '<div style="color: var(--text-muted); padding: 8px; font-size: 11px;">No items in progress.</div>';
+  } else {
+    stuckBody.innerHTML = `
+      <table class="stuck-table">
+        <thead>
+          <tr><th>#</th><th>Title</th><th>Assignees</th><th>Repo</th><th>Priority</th></tr>
+        </thead>
+        <tbody>
+          ${stats.inProgress.map((item) => `
+            <tr>
+              <td>${item.number || "--"}</td>
+              <td>${item.issue_url
+                ? `<a href="${escapeHtml(item.issue_url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>`
+                : escapeHtml(item.title)}</td>
+              <td>${item.assignees.length ? escapeHtml(item.assignees.join(", ")) : "Unassigned"}</td>
+              <td>${escapeHtml(item.repository || "--")}</td>
+              <td>${escapeHtml(String(item.priority || "--"))}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    `;
   }
 }
 
