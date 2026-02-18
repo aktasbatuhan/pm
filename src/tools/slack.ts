@@ -5,8 +5,10 @@ import {
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
 
+import { getSettingString } from "../db/settings.ts";
+
 function getWebhookUrl(): string | null {
-  return process.env.SLACK_WEBHOOK_URL || null;
+  return getSettingString("integration.slack_webhook_url") || null;
 }
 
 const sendMessageTool = tool(

@@ -12,9 +12,28 @@ import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages } from "../db/schema.ts";
 import { eq, and } from "drizzle-orm";
 import { toSlackMarkdown, splitMessage } from "./formatter.ts";
+import { getSettingArray } from "../db/settings.ts";
 
 // Track active threads to prevent concurrent processing
 const activeThreads = new Set<string>();
+
+/**
+ * Check if a Slack user/channel is allowed to interact with the bot.
+ * Defaults to allow all if no restrictions configured.
+ */
+function isSlackAccessAllowed(userId: string, channelId: string): boolean {
+  const allowedUsers = getSettingArray("slack.allowed_users");
+  const allowedChannels = getSettingArray("slack.allowed_channels");
+
+  const hasUserRestriction = allowedUsers.length > 0 && allowedUsers[0] !== "all";
+  const hasChannelRestriction = allowedChannels.length > 0 && allowedChannels[0] !== "all";
+
+  if (!hasUserRestriction && !hasChannelRestriction) return true;
+  if (hasUserRestriction && !allowedUsers.includes(userId)) return false;
+  if (hasChannelRestriction && !allowedChannels.includes(channelId)) return false;
+
+  return true;
+}
 
 /**
  * Build a system prompt adapted for Slack (no visualization, Slack formatting hints).
@@ -270,9 +289,11 @@ export function startSlackBot(): void {
 
   // Handle DMs
   app.message(async ({ message, client }) => {
-    // Ignore bot messages and subtypes (edits, deletes, etc.)
     if ("bot_id" in message || message.subtype) return;
     if (!("text" in message) || !message.text) return;
+
+    const userId = ("user" in message) ? message.user as string : undefined;
+    if (!userId || !isSlackAccessAllowed(userId, message.channel)) return;
 
     const threadTs = ("thread_ts" in message ? message.thread_ts : undefined) || message.ts;
     await processAgentRequest(client, message.channel, threadTs!, message.text);
@@ -280,8 +301,9 @@ export function startSlackBot(): void {
 
   // Handle @mentions in channels
   app.event("app_mention", async ({ event, client }) => {
+    if (!event.user || !isSlackAccessAllowed(event.user, event.channel)) return;
+
     const threadTs = event.thread_ts || event.ts;
-    // Strip @mention from text
     const userText = event.text.replace(/<@[A-Z0-9]+>/gi, "").trim() || "Hello!";
     await processAgentRequest(client, event.channel, threadTs, userText);
   });

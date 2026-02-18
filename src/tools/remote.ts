@@ -1,11 +1,12 @@
 import type { McpServerConfig } from "@anthropic-ai/claude-agent-sdk";
+import { getSettingString } from "../db/settings.ts";
 
 /**
  * Create an Exa web search MCP server config (remote HTTP).
  * Returns null if EXA_API_KEY is not set.
  */
 export function createExaMcpServer(): McpServerConfig | null {
-  const apiKey = process.env.EXA_API_KEY;
+  const apiKey = getSettingString("integration.exa_api_key");
   if (!apiKey) return null;
   return {
     type: "http",
@@ -18,7 +19,7 @@ export function createExaMcpServer(): McpServerConfig | null {
  * Returns null if GRANOLA_API_KEY is not set.
  */
 export function createGranolaMcpServer(): McpServerConfig | null {
-  const apiKey = process.env.GRANOLA_API_KEY;
+  const apiKey = getSettingString("integration.granola_api_key");
   if (!apiKey) return null;
   return {
     type: "http",

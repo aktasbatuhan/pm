@@ -7,6 +7,14 @@ import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
+import {
+  getAllSettings,
+  setSetting,
+  deleteSetting,
+  maskApiKey,
+  SETTING_KEYS,
+  SENSITIVE_KEYS,
+} from "../db/settings.ts";
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages } from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
@@ -396,6 +404,32 @@ export function createRoutes() {
     visualizationServer = null;
 
     return c.json({ success: true, logs });
+  });
+
+  // --- Settings API ---
+
+  app.get("/settings", (c) => {
+    const all = getAllSettings();
+    const masked = { ...all };
+    for (const key of SENSITIVE_KEYS) {
+      if (masked[key]) {
+        masked[key] = maskApiKey(String(masked[key]));
+      }
+    }
+    return c.json(masked);
+  });
+
+  app.put("/settings", async (c) => {
+    const body = await c.req.json<Record<string, unknown>>();
+    for (const [key, value] of Object.entries(body)) {
+      if (!SETTING_KEYS.includes(key)) continue;
+      if (value === null || value === "") {
+        deleteSetting(key);
+      } else {
+        setSetting(key, value);
+      }
+    }
+    return c.json({ success: true });
   });
 
   // Approve pending action

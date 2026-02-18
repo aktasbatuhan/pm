@@ -18,6 +18,7 @@
       <div id="sessions-list" class="sessions-list"></div>
       <div class="sidebar-footer">
         <button id="knowledge-hub-btn" class="btn-reconfigure">Knowledge Hub</button>
+        <button id="settings-btn" class="btn-reconfigure">Settings</button>
         <button id="reconfigure-btn" class="btn-reconfigure">Reconfigure</button>
         <div class="status-indicator">
           <span class="dot dot-green"></span>
@@ -169,6 +170,56 @@
             </div>
             <textarea id="knowledge-textarea" class="knowledge-textarea" spellcheck="false"></textarea>
           </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings Overlay -->
+  <div id="settings-overlay" class="settings-overlay hidden">
+    <div class="settings-panel">
+      <div class="settings-header">
+        <h2>Settings</h2>
+        <button id="settings-close-btn" class="btn-icon" title="Close">&times;</button>
+      </div>
+      <div class="settings-body">
+        <div class="settings-section">
+          <h3 class="settings-section-title">Integrations</h3>
+          <div class="settings-field">
+            <label>Exa API Key <span class="settings-hint">(web search)</span></label>
+            <input type="password" id="setting-exa-key" class="settings-input" placeholder="Enter API key..." />
+          </div>
+          <div class="settings-field">
+            <label>Granola API Key <span class="settings-hint">(meeting notes)</span></label>
+            <input type="password" id="setting-granola-key" class="settings-input" placeholder="Enter API key..." />
+          </div>
+          <div class="settings-field">
+            <label>PostHog API Key <span class="settings-hint">(analytics — coming soon)</span></label>
+            <input type="password" id="setting-posthog-key" class="settings-input" placeholder="Enter API key..." disabled />
+          </div>
+          <div class="settings-field">
+            <label>PostHog Host</label>
+            <input type="text" id="setting-posthog-host" class="settings-input" placeholder="https://app.posthog.com" disabled />
+          </div>
+          <div class="settings-field">
+            <label>Slack Webhook URL <span class="settings-hint">(for broadcast notifications)</span></label>
+            <input type="password" id="setting-slack-webhook" class="settings-input" placeholder="https://hooks.slack.com/services/..." />
+          </div>
+        </div>
+        <div class="settings-section">
+          <h3 class="settings-section-title">Slack Bot Access</h3>
+          <div class="settings-field">
+            <label>Allowed Users <span class="settings-hint">(comma-separated Slack user IDs, or leave empty for all)</span></label>
+            <input type="text" id="setting-slack-users" class="settings-input" placeholder="all" />
+          </div>
+          <div class="settings-field">
+            <label>Allowed Channels <span class="settings-hint">(comma-separated channel IDs, or leave empty for all)</span></label>
+            <input type="text" id="setting-slack-channels" class="settings-input" placeholder="all" />
+          </div>
+        </div>
+        <div class="settings-actions">
+          <span id="settings-status" class="settings-save-status"></span>
+          <button id="settings-save-btn" class="btn btn-primary">Save Settings</button>
         </div>
       </div>
     </div>

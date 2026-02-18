@@ -960,6 +960,122 @@ document.getElementById("banner-dismiss-btn").addEventListener("click", () => {
   sessionStorage.setItem("onboarding-dismissed", "true");
 });
 
+// --- Settings ---
+
+const SETTINGS_FIELDS = {
+  "integration.exa_api_key": "setting-exa-key",
+  "integration.granola_api_key": "setting-granola-key",
+  "integration.posthog_api_key": "setting-posthog-key",
+  "integration.posthog_host": "setting-posthog-host",
+  "integration.slack_webhook_url": "setting-slack-webhook",
+  "slack.allowed_users": "setting-slack-users",
+  "slack.allowed_channels": "setting-slack-channels",
+};
+
+const SENSITIVE_SETTINGS = [
+  "integration.exa_api_key",
+  "integration.granola_api_key",
+  "integration.posthog_api_key",
+  "integration.slack_webhook_url",
+];
+
+const ARRAY_SETTINGS = ["slack.allowed_users", "slack.allowed_channels"];
+
+let maskedOriginals = {};
+
+document.getElementById("settings-btn").addEventListener("click", () => {
+  document.getElementById("settings-overlay").classList.remove("hidden");
+  loadSettings();
+});
+
+document.getElementById("settings-close-btn").addEventListener("click", () => {
+  document.getElementById("settings-overlay").classList.add("hidden");
+});
+
+async function loadSettings() {
+  try {
+    const res = await fetch("/api/settings");
+    const data = await res.json();
+    maskedOriginals = {};
+
+    for (const [key, elId] of Object.entries(SETTINGS_FIELDS)) {
+      const el = document.getElementById(elId);
+      if (!el) continue;
+
+      let value = data[key];
+      if (value === null || value === undefined) value = "";
+
+      if (ARRAY_SETTINGS.includes(key) && Array.isArray(value)) {
+        el.value = value.join(", ");
+      } else {
+        el.value = String(value);
+      }
+
+      if (SENSITIVE_SETTINGS.includes(key) && String(value).startsWith("****")) {
+        maskedOriginals[key] = String(value);
+      }
+    }
+  } catch (err) {
+    setSettingsStatus("Failed to load: " + err.message, "error");
+  }
+}
+
+document.getElementById("settings-save-btn").addEventListener("click", async () => {
+  const payload = {};
+
+  for (const [key, elId] of Object.entries(SETTINGS_FIELDS)) {
+    const el = document.getElementById(elId);
+    if (!el || el.disabled) continue;
+
+    let value = el.value.trim();
+
+    // Skip unchanged masked fields
+    if (SENSITIVE_SETTINGS.includes(key) && maskedOriginals[key] && value === maskedOriginals[key]) {
+      continue;
+    }
+
+    // Convert array fields
+    if (ARRAY_SETTINGS.includes(key)) {
+      if (value === "" || value.toLowerCase() === "all") {
+        value = null; // delete = revert to default (allow all)
+      } else {
+        value = value.split(",").map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    // Empty = delete (revert to env)
+    if (value === "") value = null;
+
+    payload[key] = value;
+  }
+
+  try {
+    const res = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (res.ok) {
+      setSettingsStatus("Settings saved", "success");
+      setTimeout(() => loadSettings(), 500);
+    } else {
+      setSettingsStatus("Save failed", "error");
+    }
+  } catch (err) {
+    setSettingsStatus("Save failed: " + err.message, "error");
+  }
+});
+
+function setSettingsStatus(text, type) {
+  const el = document.getElementById("settings-status");
+  el.textContent = text;
+  el.className = "settings-save-status" + (type ? " " + type : "");
+  if (type === "success") {
+    setTimeout(() => { if (el.textContent === text) el.textContent = ""; }, 3000);
+  }
+}
+
 // --- Session Metadata ---
 
 function updateSessionMeta() {
