@@ -50,19 +50,8 @@ function getChartThemeDefaults() {
 // --- Visualization Renderers ---
 
 function renderChartElement(container, input) {
-  console.log("📊 [viz] Creating chart container");
-  console.log("📊 [viz] Container element:", container, {
-    tagName: container?.tagName,
-    className: container?.className,
-    id: container?.id,
-    parentNode: container?.parentNode,
-    isConnected: container?.isConnected
-  });
-
   const wrapper = document.createElement("div");
   wrapper.className = "chart-container";
-  wrapper.style.backgroundColor = "var(--bg-tertiary)";
-  wrapper.style.border = "2px solid var(--accent)"; // Make it obvious for debugging
   wrapper.style.height = "300px";
   wrapper.style.margin = "10px 0";
 
@@ -71,7 +60,6 @@ function renderChartElement(container, input) {
     title.className = "chart-title";
     title.textContent = input.title;
     wrapper.appendChild(title);
-    console.log("📊 [viz] Added chart title:", input.title);
   }
 
   const canvas = document.createElement("canvas");
@@ -80,33 +68,6 @@ function renderChartElement(container, input) {
   canvas.style.display = "block";
   wrapper.appendChild(canvas);
   container.appendChild(wrapper);
-
-  console.log("📊 [viz] About to append wrapper to container");
-  console.log("📊 [viz] Wrapper before append:", wrapper, "Parent:", wrapper.parentNode);
-
-  try {
-    container.appendChild(wrapper);
-    console.log("📊 [viz] ✅ Wrapper appended successfully");
-    console.log("📊 [viz] Wrapper after append:", wrapper, "Parent:", wrapper.parentNode);
-    console.log("📊 [viz] Container now has children:", container.children.length);
-    console.log("📊 [viz] Chart container added to DOM", {
-      wrapper: wrapper,
-      canvas: canvas,
-      container: container,
-      containerHeight: wrapper.offsetHeight,
-      canvasSize: { width: canvas.width, height: canvas.height }
-    });
-
-    // Force a repaint
-    wrapper.style.display = 'none';
-    wrapper.offsetHeight; // trigger reflow
-    wrapper.style.display = 'block';
-
-  } catch (error) {
-    console.error("❌ [viz] Failed to append wrapper to container:", error);
-    console.error("❌ [viz] Container:", container);
-    console.error("❌ [viz] Wrapper:", wrapper);
-  }
 
   // Apply default colors if not provided
   const datasets = input.data.datasets.map((ds, i) => {
@@ -143,10 +104,9 @@ function renderChartElement(container, input) {
   };
 
   try {
-    const chart = new Chart(canvas, config);
-    console.log("📊 [viz] Chart.js instance created:", chart);
+    new Chart(canvas, config);
   } catch (error) {
-    console.error("❌ [viz] Chart.js error:", error);
+    console.error("[viz] Chart.js error:", error);
     canvas.style.display = "none";
     const errorDiv = document.createElement("div");
     errorDiv.style.color = "var(--red)";
@@ -658,22 +618,21 @@ async function sendMessage() {
               scrollToBottom();
             }
           } else if (eventType === "visualization") {
-            console.log("📊 [viz] Received visualization event:", data);
             thinkingDiv.style.display = "none";
             assistantDiv.style.display = "";
             if (data.tool === "render_chart") {
               try {
-                console.log("📊 [viz] Parsing chart config:", (data.input.config || "").substring(0, 200) + "...");
                 const chartConfig = JSON.parse(data.input.config);
-                console.log("📊 [viz] Parsed chart config:", chartConfig);
                 renderChartElement(assistantDiv, chartConfig);
-                console.log("📊 [viz] Chart rendered successfully");
+                // Embed marker in fullText so it persists in DB
+                fullText += `\n<!--CHART:${data.input.config}-->\n`;
               } catch (e) {
-                console.error("❌ [viz] Failed to parse chart config:", e, data.input.config);
+                console.error("[viz] Failed to parse chart config:", e);
               }
             } else if (data.tool === "render_diagram") {
-              console.log("📊 [viz] Rendering diagram");
               renderMermaidElement(assistantDiv, data.input);
+              // Embed marker in fullText so it persists in DB
+              fullText += `\n<!--DIAGRAM:${JSON.stringify(data.input)}-->\n`;
             }
             scrollToBottom();
           } else if (eventType === "tool") {
@@ -762,8 +721,42 @@ function appendUserMessage(text) {
 function appendAssistantMessage(text) {
   const div = document.createElement("div");
   div.className = "message message-assistant";
-  div.innerHTML = renderMarkdown(text);
+
+  // Extract visualization markers before rendering markdown
+  const chartMarkers = [];
+  const diagramMarkers = [];
+  const cleanText = text.replace(/\n?<!--CHART:([\s\S]*?)-->\n?/g, (_, config) => {
+    chartMarkers.push(config);
+    return "";
+  }).replace(/\n?<!--DIAGRAM:([\s\S]*?)-->\n?/g, (_, config) => {
+    diagramMarkers.push(config);
+    return "";
+  });
+
+  // Render the text content
+  div.innerHTML = renderMarkdown(cleanText);
   messagesEl.appendChild(div);
+
+  // Re-render embedded charts
+  for (const configStr of chartMarkers) {
+    try {
+      const chartConfig = JSON.parse(configStr);
+      renderChartElement(div, chartConfig);
+    } catch (e) {
+      console.error("[viz] Failed to restore chart:", e);
+    }
+  }
+
+  // Re-render embedded diagrams
+  for (const configStr of diagramMarkers) {
+    try {
+      const diagramConfig = JSON.parse(configStr);
+      renderMermaidElement(div, diagramConfig);
+    } catch (e) {
+      console.error("[viz] Failed to restore diagram:", e);
+    }
+  }
+
   scrollToBottom();
 }
 
