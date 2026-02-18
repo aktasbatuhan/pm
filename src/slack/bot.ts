@@ -7,6 +7,7 @@ import {
   createSchedulerMcpServer,
   createSlackMcpServer,
 } from "../tools/index.ts";
+import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages } from "../db/schema.ts";
 import { eq, and } from "drizzle-orm";
@@ -132,12 +133,15 @@ async function processAgentRequest(
         knowledge: createKnowledgeMcpServer(),
         scheduler: createSchedulerMcpServer(),
         slack: createSlackMcpServer(),
+        ...getRemoteMcpServers(),
       },
       allowedTools: [
         "mcp__github__*",
         "mcp__knowledge__*",
         "mcp__scheduler__*",
         "mcp__slack__*",
+        "mcp__exa__*",
+        "mcp__granola__*",
       ],
       canUseTool: async () => ({ behavior: "allow" as const }),
       resume: sdkResumeId,

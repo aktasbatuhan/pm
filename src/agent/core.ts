@@ -5,12 +5,13 @@ import {
   type SDKResultMessage,
   type SDKPartialAssistantMessage,
   type McpSdkServerConfigWithInstance,
+  type McpServerConfig,
   type CanUseTool,
 } from "@anthropic-ai/claude-agent-sdk";
 
 export interface AgentConfig {
   systemPrompt: string;
-  mcpServers: Record<string, McpSdkServerConfigWithInstance>;
+  mcpServers: Record<string, McpServerConfig>;
   canUseTool?: CanUseTool;
   sessionId?: string;
   resume?: string;
@@ -39,7 +40,7 @@ export async function* chat(
       mcpServers: config.mcpServers,
       canUseTool: config.canUseTool,
       tools: [],
-      allowedTools: config.allowedTools ?? ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*"],
+      allowedTools: config.allowedTools ?? ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*", "mcp__exa__*", "mcp__granola__*"],
       includePartialMessages: true,
       resume: config.resume,
       sessionId: config.sessionId,

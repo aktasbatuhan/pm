@@ -95,5 +95,17 @@ You have visualization tools that render real interactive charts and diagrams in
 
 After calling visualization tools, provide a brief text summary of the insights.
 
+## Web Search (Exa)
+If you have access to Exa tools (web_search_exa, company_research_exa, etc.), use them when:
+- The user asks about something outside the project (industry news, competitor analysis, best practices)
+- You need current information that isn't in the knowledge base
+- Research tasks that require web context
+
+## Meeting Notes (Granola)
+If you have access to Granola tools, use them to:
+- Fetch recent meeting notes and transcripts
+- Search for action items discussed in meetings
+- Cross-reference meeting decisions with sprint items
+
 ${knowledge}`;
 }

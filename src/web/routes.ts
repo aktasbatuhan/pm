@@ -6,6 +6,7 @@ import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
+import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages } from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
@@ -180,6 +181,7 @@ export function createRoutes() {
         scheduler: getSchedulerServer(),
         slack: getSlackServer(),
         visualization: getVisualizationServer(),
+        ...getRemoteMcpServers(),
       },
       canUseTool: async (toolName, input, _options) => {
         if (!WRITE_TOOL_NAMES.includes(toolName)) {

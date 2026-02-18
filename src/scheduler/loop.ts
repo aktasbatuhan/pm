@@ -5,6 +5,7 @@ import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
+import { getRemoteMcpServers } from "../tools/remote.ts";
 import { sendSlackMessage } from "../tools/slack.ts";
 import { chatSessions, messages } from "../db/schema.ts";
 
@@ -24,6 +25,7 @@ function buildJobAgentConfig(): AgentConfig {
       scheduler: createSchedulerMcpServer(),
       slack: createSlackMcpServer(),
       visualization: createVisualizationMcpServer(),
+      ...getRemoteMcpServers(),
     },
     canUseTool: async (toolName) => {
       // Auto-allow all tools for scheduled jobs
