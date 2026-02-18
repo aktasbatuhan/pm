@@ -375,6 +375,75 @@ export async function fetchProjectItems(owner: string, projectNumber: number): P
   return items;
 }
 
+export interface ActivityItem {
+  type: "pr" | "commit";
+  title: string;
+  author: string;
+  repo: string;
+  url: string;
+  status?: string;
+  createdAt: string;
+}
+
+export async function fetchRecentActivity(
+  org: string,
+  repos: string[],
+  limit: number = 20,
+): Promise<ActivityItem[]> {
+  const octokit = getOctokit();
+  const activities: ActivityItem[] = [];
+  const perRepo = Math.max(5, Math.ceil(limit / repos.length));
+
+  await Promise.all(
+    repos.slice(0, 10).map(async (repo) => {
+      try {
+        const { data: prs } = await octokit.rest.pulls.list({
+          owner: org,
+          repo,
+          state: "all",
+          sort: "updated",
+          direction: "desc",
+          per_page: perRepo,
+        });
+
+        for (const pr of prs) {
+          activities.push({
+            type: "pr",
+            title: pr.title,
+            author: pr.user?.login || "unknown",
+            repo,
+            url: pr.html_url,
+            status: pr.merged_at ? "merged" : pr.state,
+            createdAt: pr.updated_at || pr.created_at,
+          });
+        }
+
+        const { data: commits } = await octokit.rest.repos.listCommits({
+          owner: org,
+          repo,
+          per_page: perRepo,
+        });
+
+        for (const commit of commits) {
+          activities.push({
+            type: "commit",
+            title: (commit.commit.message || "").split("\n")[0],
+            author: commit.author?.login || commit.commit.author?.name || "unknown",
+            repo,
+            url: commit.html_url,
+            createdAt: commit.commit.author?.date || "",
+          });
+        }
+      } catch {
+        // Skip repos that fail (permissions, empty, etc.)
+      }
+    }),
+  );
+
+  activities.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  return activities.slice(0, limit);
+}
+
 const listProjectItemsTool = tool(
   "github_list_project_items",
   "List items from a GitHub Project v2 with all field values (status, priority, size, sprint, etc.)",
@@ -520,6 +589,228 @@ const listDirectoryTool = tool(
   { annotations: { readOnly: true } }
 );
 
+const listProjectFieldsTool = tool(
+  "github_list_project_fields",
+  "List all custom fields configured on a GitHub Project V2 board. Returns field names, types, options (for single-select), and iterations (for iteration/sprint fields). Use this to discover what fields exist and their possible values before filtering project items.",
+  {
+    owner: z.string().describe("GitHub organization or user that owns the project"),
+    project_number: z.number().describe("The project number"),
+  },
+  async ({ owner, project_number }) => {
+    const query_str = `
+      query($owner: String!, $projectNumber: Int!) {
+        organization(login: $owner) {
+          projectV2(number: $projectNumber) {
+            title
+            fields(first: 50) {
+              nodes {
+                ... on ProjectV2Field {
+                  name
+                  dataType
+                }
+                ... on ProjectV2SingleSelectField {
+                  name
+                  dataType
+                  options { id name }
+                }
+                ... on ProjectV2IterationField {
+                  name
+                  dataType
+                  configuration {
+                    iterations { title startDate duration }
+                    completedIterations { title startDate duration }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    `;
+
+    interface FieldNode {
+      name: string;
+      dataType: string;
+      options?: Array<{ id: string; name: string }>;
+      configuration?: {
+        iterations: Array<{ title: string; startDate: string; duration: number }>;
+        completedIterations: Array<{ title: string; startDate: string; duration: number }>;
+      };
+    }
+
+    interface GQLResponse {
+      organization: {
+        projectV2: {
+          title: string;
+          fields: { nodes: FieldNode[] };
+        };
+      };
+    }
+
+    const result = await graphql<GQLResponse>(query_str, {
+      owner,
+      projectNumber: project_number,
+    });
+
+    const project = result.organization.projectV2;
+    const fields = project.fields.nodes.map((f) => {
+      const field: Record<string, unknown> = {
+        name: f.name,
+        type: f.dataType,
+      };
+      if (f.options) {
+        field.options = f.options.map((o) => o.name);
+      }
+      if (f.configuration) {
+        field.active_iterations = f.configuration.iterations.map((i) => ({
+          title: i.title,
+          start_date: i.startDate,
+          duration_days: i.duration,
+        }));
+        field.completed_iterations = f.configuration.completedIterations.map((i) => ({
+          title: i.title,
+          start_date: i.startDate,
+          duration_days: i.duration,
+        }));
+      }
+      return field;
+    });
+
+    return {
+      content: [{
+        type: "text" as const,
+        text: JSON.stringify({ project_title: project.title, fields }, null, 2),
+      }],
+    };
+  },
+  { annotations: { readOnly: true } }
+);
+
+const listPullsTool = tool(
+  "github_list_pulls",
+  "List pull requests for a repository with optional filters",
+  {
+    owner: z.string().describe("Repository owner"),
+    repo: z.string().describe("Repository name"),
+    state: z.enum(["open", "closed", "all"]).optional().describe("Filter by state (default: open)"),
+    sort: z.enum(["created", "updated", "popularity"]).optional().describe("Sort field (default: created)"),
+    limit: z.number().optional().describe("Maximum PRs to return (default: 30)"),
+  },
+  async ({ owner, repo, state, sort, limit }) => {
+    const octokit = getOctokit();
+    const maxResults = limit ?? 30;
+    const pulls: Array<{
+      number: number;
+      title: string;
+      state: string;
+      author: string;
+      draft: boolean;
+      labels: string[];
+      created_at: string;
+      updated_at: string;
+      url: string;
+    }> = [];
+    let page = 1;
+
+    while (pulls.length < maxResults) {
+      const { data } = await octokit.rest.pulls.list({
+        owner,
+        repo,
+        state: state ?? "open",
+        sort: sort ?? "created",
+        direction: "desc",
+        per_page: Math.min(100, maxResults - pulls.length),
+        page,
+      });
+
+      for (const pr of data) {
+        pulls.push({
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          author: pr.user?.login || "unknown",
+          draft: pr.draft || false,
+          labels: pr.labels.map((l) => l.name).filter((n): n is string => !!n),
+          created_at: pr.created_at,
+          updated_at: pr.updated_at,
+          url: pr.html_url,
+        });
+        if (pulls.length >= maxResults) break;
+      }
+
+      if (data.length < 100) break;
+      page++;
+    }
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(pulls, null, 2) }] };
+  },
+  { annotations: { readOnly: true } }
+);
+
+const getPullTool = tool(
+  "github_get_pull",
+  "Get detailed information about a specific pull request including diff stats, changed files, and review comments",
+  {
+    owner: z.string().describe("Repository owner"),
+    repo: z.string().describe("Repository name"),
+    pull_number: z.number().describe("The pull request number"),
+  },
+  async ({ owner, repo, pull_number }) => {
+    const octokit = getOctokit();
+
+    const [{ data: pr }, { data: files }, { data: reviews }, { data: comments }] = await Promise.all([
+      octokit.rest.pulls.get({ owner, repo, pull_number }),
+      octokit.rest.pulls.listFiles({ owner, repo, pull_number, per_page: 50 }),
+      octokit.rest.pulls.listReviews({ owner, repo, pull_number, per_page: 20 }),
+      octokit.rest.pulls.listReviewComments({ owner, repo, pull_number, per_page: 30 }),
+    ]);
+
+    const result = {
+      number: pr.number,
+      title: pr.title,
+      body: pr.body ?? null,
+      state: pr.state,
+      merged: pr.merged,
+      draft: pr.draft,
+      author: pr.user?.login || "unknown",
+      base: pr.base.ref,
+      head: pr.head.ref,
+      labels: pr.labels.map((l) => l.name).filter((n): n is string => !!n),
+      created_at: pr.created_at,
+      updated_at: pr.updated_at,
+      merged_at: pr.merged_at,
+      url: pr.html_url,
+      diff_stats: {
+        additions: pr.additions,
+        deletions: pr.deletions,
+        changed_files: pr.changed_files,
+      },
+      files: files.map((f) => ({
+        filename: f.filename,
+        status: f.status,
+        additions: f.additions,
+        deletions: f.deletions,
+      })),
+      reviews: reviews.map((r) => ({
+        author: r.user?.login || "unknown",
+        state: r.state,
+        body: r.body || null,
+        submitted_at: r.submitted_at,
+      })),
+      review_comments: comments.map((c) => ({
+        author: c.user?.login || "unknown",
+        body: c.body,
+        path: c.path,
+        line: c.line ?? c.original_line ?? null,
+        created_at: c.created_at,
+      })),
+    };
+
+    return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+  },
+  { annotations: { readOnly: true } }
+);
+
 // --- Write Tools ---
 
 const createIssueTool = tool(
@@ -651,6 +942,9 @@ const READ_TOOLS = [
   listIssuesTool,
   getIssueTool,
   listProjectItemsTool,
+  listProjectFieldsTool,
+  listPullsTool,
+  getPullTool,
   getReadmeTool,
   getFileTool,
   listDirectoryTool,
