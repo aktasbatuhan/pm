@@ -4,6 +4,8 @@ export const chatSessions = sqliteTable("chat_sessions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   sessionId: text("session_id"), // SDK session ID for resume
+  slackChannelId: text("slack_channel_id"),
+  slackThreadTs: text("slack_thread_ts"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });

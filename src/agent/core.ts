@@ -15,6 +15,7 @@ export interface AgentConfig {
   sessionId?: string;
   resume?: string;
   model?: string;
+  allowedTools?: string[];
 }
 
 export interface AgentMessage {
@@ -38,7 +39,7 @@ export async function* chat(
       mcpServers: config.mcpServers,
       canUseTool: config.canUseTool,
       tools: [],
-      allowedTools: ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*"],
+      allowedTools: config.allowedTools ?? ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*"],
       includePartialMessages: true,
       resume: config.resume,
       sessionId: config.sessionId,

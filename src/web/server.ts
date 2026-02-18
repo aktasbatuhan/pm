@@ -3,6 +3,7 @@ import { serveStatic } from "hono/bun";
 import { createRoutes } from "./routes.ts";
 import { authMiddleware, createAuthRoutes } from "./auth.ts";
 import { startJobLoop } from "../scheduler/loop.ts";
+import { startSlackBot } from "../slack/bot.ts";
 
 export function createServer() {
   const app = new Hono();
@@ -31,6 +32,9 @@ export function startServer(port: number = 3000) {
 
   // Start background job loop
   startJobLoop();
+
+  // Start Slack bot if configured
+  startSlackBot();
 
   return Bun.serve({
     port,

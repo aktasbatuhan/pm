@@ -46,6 +46,11 @@ function migrate() {
     )
   `);
 
+  // Slack bot columns (safe to re-run — ALTER TABLE throws if column exists)
+  try { getDb().run(sql`ALTER TABLE chat_sessions ADD COLUMN slack_channel_id TEXT`); } catch {}
+  try { getDb().run(sql`ALTER TABLE chat_sessions ADD COLUMN slack_thread_ts TEXT`); } catch {}
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_slack_thread ON chat_sessions(slack_channel_id, slack_thread_ts)`);
+
   getDb().run(sql`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
