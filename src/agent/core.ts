@@ -40,7 +40,7 @@ export async function* chat(
       mcpServers: config.mcpServers,
       canUseTool: config.canUseTool,
       tools: [],
-      allowedTools: config.allowedTools ?? ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*", "mcp__exa__*", "mcp__granola__*"],
+      allowedTools: config.allowedTools ?? ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*", "mcp__exa__*", "mcp__granola__*"],
       includePartialMessages: true,
       resume: config.resume,
       sessionId: config.sessionId,

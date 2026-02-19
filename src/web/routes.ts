@@ -4,9 +4,9 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
-import { fetchProjectItems, type ProjectItem } from "../tools/github.ts";
+import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import {
   getAllSettings,
@@ -17,7 +17,7 @@ import {
   SENSITIVE_KEYS,
 } from "../db/settings.ts";
 import { getDb, newId } from "../db/index.ts";
-import { chatSessions, messages } from "../db/schema.ts";
+import { chatSessions, messages, users, invites } from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
 import { KNOWLEDGE_DIR } from "../paths.ts";
 import {
@@ -36,6 +36,7 @@ let knowledgeServer: ReturnType<typeof createKnowledgeMcpServer> | null = null;
 let schedulerServer: ReturnType<typeof createSchedulerMcpServer> | null = null;
 let slackServer: ReturnType<typeof createSlackMcpServer> | null = null;
 let visualizationServer: ReturnType<typeof createVisualizationMcpServer> | null = null;
+let posthogServer: ReturnType<typeof createPostHogMcpServer> | null = null;
 
 function getGitHubServer() {
   if (!githubServer) githubServer = createGitHubMcpServer();
@@ -60,6 +61,11 @@ function getSlackServer() {
 function getVisualizationServer() {
   if (!visualizationServer) visualizationServer = createVisualizationMcpServer();
   return visualizationServer;
+}
+
+function getPostHogServer() {
+  if (!posthogServer) posthogServer = createPostHogMcpServer();
+  return posthogServer;
 }
 
 // Pending approval state (simple in-memory for localhost)
@@ -106,6 +112,17 @@ function computeDashboardStats(items: ProjectItem[]) {
     }
   }
 
+  // Sprint progress: status breakdown per sprint
+  const sprintBreakdown: Record<string, Record<string, number>> = {};
+  for (const item of items) {
+    const sprint = item.custom_fields?.sprint;
+    if (sprint == null) continue;
+    const sprintKey = String(sprint);
+    const st = item.status || "No Status";
+    if (!sprintBreakdown[sprintKey]) sprintBreakdown[sprintKey] = {};
+    sprintBreakdown[sprintKey][st] = (sprintBreakdown[sprintKey][st] || 0) + 1;
+  }
+
   const total = items.length;
   const done = items.filter(
     (i) => (i.status || "").toLowerCase() === "done" || i.state === "CLOSED",
@@ -119,6 +136,7 @@ function computeDashboardStats(items: ProjectItem[]) {
     assigneeWorkload,
     inProgress,
     priorityCounts,
+    sprintBreakdown,
     overview: {
       total,
       done,
@@ -126,6 +144,31 @@ function computeDashboardStats(items: ProjectItem[]) {
       inProgressCount: inProgress.length,
       blocked,
     },
+  };
+}
+
+function extractFilters(items: ProjectItem[]) {
+  const sprints = new Set<string>();
+  const assignees = new Set<string>();
+  const priorities = new Set<string>();
+  const statuses = new Set<string>();
+  const repositories = new Set<string>();
+
+  for (const item of items) {
+    if (item.status) statuses.add(item.status);
+    if (item.priority) priorities.add(String(item.priority));
+    if (item.repository) repositories.add(item.repository);
+    for (const a of item.assignees) assignees.add(a);
+    const sprint = item.custom_fields?.sprint;
+    if (sprint != null) sprints.add(String(sprint));
+  }
+
+  return {
+    sprints: [...sprints].sort((a, b) => Number(b) - Number(a)),
+    assignees: [...assignees].sort(),
+    priorities: [...priorities],
+    statuses: [...statuses],
+    repositories: [...repositories].sort(),
   };
 }
 
@@ -137,15 +180,15 @@ export function createRoutes() {
     c.json({ status: "ok", timestamp: new Date().toISOString() })
   );
 
-  // List sessions
+  // List sessions (filtered by user)
   app.get("/sessions", (c) => {
     const db = getDb();
-    const sessions = db
-      .select()
-      .from(chatSessions)
-      .orderBy(desc(chatSessions.updatedAt))
-      .limit(50)
-      .all();
+    const userId = c.get("userId");
+    let query = db.select().from(chatSessions).orderBy(desc(chatSessions.updatedAt)).limit(50);
+    if (userId) {
+      query = query.where(eq(chatSessions.userId, userId)) as typeof query;
+    }
+    const sessions = query.all();
     return c.json(sessions);
   });
 
@@ -153,11 +196,13 @@ export function createRoutes() {
   app.post("/sessions", async (c) => {
     const db = getDb();
     const id = newId();
+    const userId = c.get("userId") || null;
     const name = `Session ${new Date().toLocaleString()}`;
     db.insert(chatSessions)
       .values({
         id,
         name,
+        userId,
         createdAt: new Date(),
         updatedAt: new Date(),
       })
@@ -199,10 +244,12 @@ export function createRoutes() {
     // Create session if needed
     if (!sessionId) {
       sessionId = newId();
+      const userId = c.get("userId") || null;
       db.insert(chatSessions)
         .values({
           id: sessionId,
           name: `Session ${new Date().toLocaleString()}`,
+          userId,
           createdAt: new Date(),
           updatedAt: new Date(),
         })
@@ -237,14 +284,11 @@ export function createRoutes() {
         scheduler: getSchedulerServer(),
         slack: getSlackServer(),
         visualization: getVisualizationServer(),
+        posthog: getPostHogServer(),
         ...getRemoteMcpServers(),
       },
-      canUseTool: async (toolName, input, _options) => {
-        if (!WRITE_TOOL_NAMES.includes(toolName)) {
-          return { behavior: "allow" as const };
-        }
-        // For web: auto-allow for now (approval UI can be added later)
-        return { behavior: "allow" as const };
+      canUseTool: async (_toolName, input, _options) => {
+        return { behavior: "allow" as const, updatedInput: input };
       },
       resume: session?.sessionId ?? undefined,
       model: process.env.AGENT_MODEL || undefined,
@@ -450,6 +494,7 @@ export function createRoutes() {
     schedulerServer = null;
     slackServer = null;
     visualizationServer = null;
+    posthogServer = null;
 
     return c.json({ success: true, logs });
   });
@@ -467,7 +512,34 @@ export function createRoutes() {
     try {
       const items = await fetchProjectItems(org, projectNumber);
       const stats = computeDashboardStats(items);
-      return c.json({ stats, fetchedAt: new Date().toISOString() });
+      const filters = extractFilters(items);
+      return c.json({ items, stats, filters, fetchedAt: new Date().toISOString() });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        500,
+      );
+    }
+  });
+
+  app.get("/dashboard/activity", async (c) => {
+    const org = process.env.GITHUB_ORG;
+    const projectNumber = parseInt(process.env.GITHUB_PROJECT_NUMBER || "0", 10);
+
+    if (!org || !projectNumber) {
+      return c.json({ error: "GITHUB_ORG and GITHUB_PROJECT_NUMBER must be set" }, 400);
+    }
+
+    try {
+      const items = await fetchProjectItems(org, projectNumber);
+      const repos = [...new Set(items.map((i) => i.repository).filter(Boolean))] as string[];
+
+      if (repos.length === 0) {
+        return c.json({ activities: [], fetchedAt: new Date().toISOString() });
+      }
+
+      const activities = await fetchRecentActivity(org, repos, 30);
+      return c.json({ activities, fetchedAt: new Date().toISOString() });
     } catch (err) {
       return c.json(
         { error: err instanceof Error ? err.message : String(err) },
@@ -499,6 +571,58 @@ export function createRoutes() {
         setSetting(key, value);
       }
     }
+    return c.json({ success: true });
+  });
+
+  // --- Team API ---
+
+  function getRequestUser(c: any) {
+    const userId = c.get("userId");
+    if (!userId) return null;
+    return getDb().select().from(users).where(eq(users.id, userId)).get() || null;
+  }
+
+  // List team members (admin only)
+  app.get("/team", (c) => {
+    const user = getRequestUser(c);
+    if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+
+    const members = getDb().select({
+      id: users.id,
+      name: users.name,
+      role: users.role,
+      createdAt: users.createdAt,
+    }).from(users).all();
+
+    return c.json(members);
+  });
+
+  // Create invite (admin only)
+  app.post("/team/invites", async (c) => {
+    const user = getRequestUser(c);
+    if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+
+    const token = crypto.randomUUID();
+    const id = newId();
+    getDb().insert(invites).values({
+      id,
+      token,
+      createdBy: user.id,
+      createdAt: new Date(),
+    }).run();
+
+    return c.json({ token, link: `/join/${token}` });
+  });
+
+  // Remove team member (admin only)
+  app.delete("/team/:id", (c) => {
+    const user = getRequestUser(c);
+    if (!user || user.role !== "admin") return c.json({ error: "Forbidden" }, 403);
+
+    const targetId = c.req.param("id");
+    if (targetId === user.id) return c.json({ error: "Cannot remove yourself" }, 400);
+
+    getDb().delete(users).where(eq(users.id, targetId)).run();
     return c.json({ success: true });
   });
 

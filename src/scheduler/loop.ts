@@ -27,9 +27,8 @@ function buildJobAgentConfig(): AgentConfig {
       visualization: createVisualizationMcpServer(),
       ...getRemoteMcpServers(),
     },
-    canUseTool: async (toolName) => {
-      // Auto-allow all tools for scheduled jobs
-      return { behavior: "allow" as const };
+    canUseTool: async (_toolName, input) => {
+      return { behavior: "allow" as const, updatedInput: input };
     },
     model: process.env.AGENT_MODEL || undefined,
   };

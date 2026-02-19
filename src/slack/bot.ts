@@ -162,7 +162,7 @@ async function processAgentRequest(
         "mcp__exa__*",
         "mcp__granola__*",
       ],
-      canUseTool: async () => ({ behavior: "allow" as const }),
+      canUseTool: async (_toolName, input) => ({ behavior: "allow" as const, updatedInput: input }),
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || undefined,
     };
