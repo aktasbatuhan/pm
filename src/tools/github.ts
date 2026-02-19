@@ -1,10 +1,14 @@
 import { Octokit } from "@octokit/rest";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { z } from "zod/v4";
 import {
   createSdkMcpServer,
   tool,
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
+
+const execFileAsync = promisify(execFile);
 
 function getOctokit() {
   const token = process.env.GITHUB_TOKEN;
@@ -934,6 +938,81 @@ const addCommentTool = tool(
   { annotations: { readOnly: false, destructive: false } }
 );
 
+// --- GitHub CLI Tool ---
+
+function parseCommandArgs(command: string): string[] {
+  const args: string[] = [];
+  let current = "";
+  let inQuote = false;
+  let quoteChar = "";
+
+  for (const char of command) {
+    if (!inQuote && (char === '"' || char === "'")) {
+      inQuote = true;
+      quoteChar = char;
+    } else if (inQuote && char === quoteChar) {
+      inQuote = false;
+    } else if (!inQuote && char === " ") {
+      if (current) args.push(current);
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  if (current) args.push(current);
+  return args;
+}
+
+const githubCliTool = tool(
+  "github_cli",
+  `Execute a GitHub CLI (gh) command. Authenticated with the project's GitHub token.
+
+Common commands:
+- pr list --repo owner/repo
+- pr create --repo owner/repo --title "Title" --body "Body" --base main --head branch-name
+- pr view 123 --repo owner/repo
+- pr merge 123 --repo owner/repo --squash
+- workflow list --repo owner/repo
+- workflow run ci.yml --repo owner/repo
+- api repos/owner/repo/contents/path (raw GitHub API calls)
+- repo clone owner/repo /tmp/repo (clone for multi-file operations)
+
+For multi-file code changes: clone the repo, make changes with git, push, then create a PR.`,
+  {
+    command: z.string().describe("The gh command to execute (without the 'gh' prefix). Example: 'pr list --repo owner/repo'"),
+  },
+  async ({ command }) => {
+    const args = parseCommandArgs(command);
+    if (args.length === 0) {
+      return {
+        content: [{ type: "text" as const, text: "Error: Empty command" }],
+        isError: true,
+      };
+    }
+
+    try {
+      const { stdout, stderr } = await execFileAsync("gh", args, {
+        env: { ...process.env, GH_TOKEN: process.env.GITHUB_TOKEN },
+        timeout: 120000,
+        maxBuffer: 5 * 1024 * 1024,
+        cwd: "/tmp",
+      });
+
+      const output = (stdout + stderr).trim();
+      return {
+        content: [{ type: "text" as const, text: output || "(no output)" }],
+      };
+    } catch (error: unknown) {
+      const err = error as { stderr?: string; message?: string };
+      return {
+        content: [{ type: "text" as const, text: `Error: ${err.stderr || err.message}` }],
+        isError: true,
+      };
+    }
+  },
+  { annotations: { readOnly: false, destructive: false } }
+);
+
 // --- Export MCP Server ---
 
 const READ_TOOLS = [
@@ -950,7 +1029,7 @@ const READ_TOOLS = [
   listDirectoryTool,
 ];
 
-const WRITE_TOOLS = [createIssueTool, updateIssueTool, addCommentTool];
+const WRITE_TOOLS = [createIssueTool, updateIssueTool, addCommentTool, githubCliTool];
 
 export const WRITE_TOOL_NAMES = WRITE_TOOLS.map((t) => t.name);
 
