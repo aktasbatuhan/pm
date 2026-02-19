@@ -359,6 +359,9 @@ const SLASH_COMMANDS = {
   "/standup": "Analyze the current sprint and give me a daily standup report. Focus on: what's in progress, what's blocked, what was completed recently, and any risks.",
   "/analyze": "Deep analysis of the current sprint: health, risks, blockers, progress, team workload, and actionable recommendations.",
   "/estimate": "Estimate effort for the specified issue using the Fibonacci scale (1, 2, 3, 5, 8, 13). Provide reasoning, breakdown, assumptions, and risks.",
+  "/review": "Review the specified pull request. Get the PR details, read the key changed files, analyze for correctness, security, performance, and architecture issues, then post a review comment on the PR via GitHub CLI. If no PR number is specified, list all open PRs across the project's repositories and summarize them.",
+  "/alerts": "I want to set up proactive sprint monitoring alerts. Show me the available alert types (stuck PRs, unassigned items, sprint completion risk, stale issues, daily standup) and help me activate the ones I want. Each alert should be a recurring scheduled job that posts to Slack when issues are detected.",
+  "/digest": "Generate a weekly project digest covering the last 7 days. Include: what shipped (merged PRs), what's in progress, blockers and risks, upcoming items, and sprint health metrics. Show charts for status distribution and completion progress.",
 };
 
 let currentSessionId = null;
