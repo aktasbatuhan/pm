@@ -376,8 +376,29 @@ const chatDrawer = document.getElementById("chat-drawer");
 const chatBackdrop = document.getElementById("chat-backdrop");
 const chatDrawerTitle = document.getElementById("chat-drawer-title");
 
-// Initialize — check setup status + knowledge onboarding
+let currentUser = null;
+
+// Initialize — check setup status + knowledge onboarding + user info
 (async () => {
+  // Fetch current user
+  try {
+    const meRes = await fetch("/api/auth/me");
+    const meData = await meRes.json();
+    if (meData.user) {
+      currentUser = meData.user;
+      document.getElementById("user-name").textContent = meData.user.name;
+      document.getElementById("user-role").textContent = meData.user.role.toUpperCase();
+      document.getElementById("user-info").style.display = "flex";
+
+      if (meData.user.role === "admin") {
+        document.getElementById("team-btn").style.display = "";
+      } else {
+        document.getElementById("settings-btn").style.display = "none";
+        document.getElementById("reconfigure-btn").style.display = "none";
+      }
+    }
+  } catch {}
+
   try {
     const res = await fetch("/api/setup/status");
     const status = await res.json();
@@ -986,6 +1007,7 @@ const SETTINGS_FIELDS = {
   "integration.granola_api_key": "setting-granola-key",
   "integration.posthog_api_key": "setting-posthog-key",
   "integration.posthog_host": "setting-posthog-host",
+  "integration.posthog_project_id": "setting-posthog-project-id",
   "integration.slack_webhook_url": "setting-slack-webhook",
   "slack.allowed_users": "setting-slack-users",
   "slack.allowed_channels": "setting-slack-channels",
@@ -1095,6 +1117,67 @@ function setSettingsStatus(text, type) {
   }
 }
 
+// --- Team Panel ---
+
+document.getElementById("team-btn")?.addEventListener("click", () => {
+  document.getElementById("team-overlay").classList.remove("hidden");
+  loadTeamMembers();
+});
+
+document.getElementById("team-close-btn")?.addEventListener("click", () => {
+  document.getElementById("team-overlay").classList.add("hidden");
+});
+
+async function loadTeamMembers() {
+  try {
+    const res = await fetch("/api/team");
+    if (!res.ok) return;
+    const members = await res.json();
+    const listEl = document.getElementById("team-members-list");
+    listEl.innerHTML = members.map((m) => `
+      <div class="team-member-item">
+        <div class="team-member-info">
+          <span class="team-member-name">${escapeHtml(m.name)}</span>
+          <span class="team-member-role">${m.role.toUpperCase()}</span>
+        </div>
+        ${m.id !== currentUser?.id && m.role !== "admin"
+          ? `<button class="team-remove-btn" data-id="${m.id}" title="Remove">&times;</button>`
+          : ""}
+      </div>
+    `).join("");
+
+    listEl.querySelectorAll(".team-remove-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!confirm("Remove this team member?")) return;
+        await fetch(`/api/team/${btn.dataset.id}`, { method: "DELETE" });
+        loadTeamMembers();
+      });
+    });
+  } catch (err) {
+    console.error("Failed to load team:", err);
+  }
+}
+
+document.getElementById("team-invite-btn")?.addEventListener("click", async () => {
+  try {
+    const res = await fetch("/api/team/invites", { method: "POST" });
+    const data = await res.json();
+    const link = window.location.origin + data.link;
+    document.getElementById("invite-link").value = link;
+    document.getElementById("invite-result").style.display = "flex";
+  } catch (err) {
+    alert("Failed to create invite: " + err.message);
+  }
+});
+
+document.getElementById("invite-copy-btn")?.addEventListener("click", () => {
+  const input = document.getElementById("invite-link");
+  navigator.clipboard.writeText(input.value);
+  const btn = document.getElementById("invite-copy-btn");
+  btn.textContent = "Copied!";
+  setTimeout(() => { btn.textContent = "Copy"; }, 2000);
+});
+
 // --- Chat Drawer ---
 
 function openChatDrawer() {
@@ -1113,9 +1196,153 @@ function closeChatDrawer() {
 document.getElementById("chat-drawer-close").addEventListener("click", closeChatDrawer);
 chatBackdrop.addEventListener("click", closeChatDrawer);
 
+// --- Chat Drawer Resize ---
+
+(function initDrawerResize() {
+  const handle = document.getElementById("chat-resize-handle");
+  if (!handle) return;
+
+  let isResizing = false;
+
+  handle.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    isResizing = true;
+    chatDrawer.classList.add("resizing");
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!isResizing) return;
+    const newWidth = window.innerWidth - e.clientX;
+    const clamped = Math.max(360, Math.min(newWidth, window.innerWidth * 0.8));
+    chatDrawer.style.width = clamped + "px";
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!isResizing) return;
+    isResizing = false;
+    chatDrawer.classList.remove("resizing");
+    document.body.style.cursor = "";
+    document.body.style.userSelect = "";
+    // Persist width
+    try { localStorage.setItem("chat-drawer-width", chatDrawer.style.width); } catch {}
+  });
+
+  // Restore saved width
+  try {
+    const saved = localStorage.getItem("chat-drawer-width");
+    if (saved) chatDrawer.style.width = saved;
+  } catch {}
+})();
+
 // --- Dashboard ---
 
+let dashboardItems = [];
+
 document.getElementById("dashboard-refresh-btn").addEventListener("click", loadDashboard);
+
+const filterEls = {
+  sprint: document.getElementById("filter-sprint"),
+  assignee: document.getElementById("filter-assignee"),
+  priority: document.getElementById("filter-priority"),
+  status: document.getElementById("filter-status"),
+  repo: document.getElementById("filter-repo"),
+};
+
+Object.values(filterEls).forEach((sel) =>
+  sel.addEventListener("change", applyDashboardFilters)
+);
+
+function populateFilters(filters) {
+  const populate = (sel, values) => {
+    sel.innerHTML = '<option value="">All</option>';
+    for (const v of values) {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = v;
+      sel.appendChild(opt);
+    }
+  };
+  populate(filterEls.sprint, filters.sprints || []);
+  populate(filterEls.assignee, filters.assignees || []);
+  populate(filterEls.priority, filters.priorities || []);
+  populate(filterEls.status, filters.statuses || []);
+  populate(filterEls.repo, filters.repositories || []);
+}
+
+function computeClientStats(items) {
+  const statusCounts = {};
+  const assigneeWorkload = {};
+  const priorityCounts = {};
+  const inProgress = [];
+
+  for (const item of items) {
+    const status = item.status || "No Status";
+    statusCounts[status] = (statusCounts[status] || 0) + 1;
+    if (status.toLowerCase() === "in progress") inProgress.push(item);
+
+    const priority = item.priority || "No Priority";
+    priorityCounts[priority] = (priorityCounts[priority] || 0) + 1;
+
+    const assignees = item.assignees && item.assignees.length > 0 ? item.assignees : ["Unassigned"];
+    for (const a of assignees) {
+      if (!assigneeWorkload[a]) assigneeWorkload[a] = {};
+      assigneeWorkload[a][status] = (assigneeWorkload[a][status] || 0) + 1;
+    }
+  }
+
+  // Sprint progress
+  const sprintBreakdown = {};
+  for (const item of items) {
+    const sprint = item.custom_fields?.sprint;
+    if (sprint == null) continue;
+    const sprintKey = String(sprint);
+    const st = item.status || "No Status";
+    if (!sprintBreakdown[sprintKey]) sprintBreakdown[sprintKey] = {};
+    sprintBreakdown[sprintKey][st] = (sprintBreakdown[sprintKey][st] || 0) + 1;
+  }
+
+  const total = items.length;
+  const done = items.filter(
+    (i) => (i.status || "").toLowerCase() === "done" || i.state === "CLOSED"
+  ).length;
+  const blocked = items.filter(
+    (i) => (i.status || "").toLowerCase() === "blocked"
+  ).length;
+
+  return {
+    statusCounts,
+    assigneeWorkload,
+    inProgress,
+    priorityCounts,
+    sprintBreakdown,
+    overview: {
+      total,
+      done,
+      completionPct: total > 0 ? Math.round((done / total) * 100) : 0,
+      inProgressCount: inProgress.length,
+      blocked,
+    },
+  };
+}
+
+function applyDashboardFilters() {
+  const sprint = filterEls.sprint.value;
+  const assignee = filterEls.assignee.value;
+  const priority = filterEls.priority.value;
+  const status = filterEls.status.value;
+  const repo = filterEls.repo.value;
+
+  let filtered = dashboardItems;
+  if (sprint) filtered = filtered.filter((i) => String(i.custom_fields?.sprint) === sprint);
+  if (assignee) filtered = filtered.filter((i) => i.assignees && i.assignees.includes(assignee));
+  if (priority) filtered = filtered.filter((i) => String(i.priority) === priority);
+  if (status) filtered = filtered.filter((i) => i.status === status);
+  if (repo) filtered = filtered.filter((i) => i.repository === repo);
+
+  renderDashboard(computeClientStats(filtered));
+}
 
 async function loadDashboard() {
   const loading = document.getElementById("dashboard-loading");
@@ -1137,11 +1364,15 @@ async function loadDashboard() {
 
     const data = await res.json();
 
+    dashboardItems = data.items || [];
+    populateFilters(data.filters || {});
+
     const fetchedAt = new Date(data.fetchedAt);
     document.getElementById("dashboard-fetched-at").textContent =
       `FETCHED: ${fetchedAt.toLocaleTimeString()}`;
 
     renderDashboard(data.stats);
+    loadActivity();
   } catch (err) {
     error.textContent = `Dashboard error: ${err.message}`;
     error.classList.remove("hidden");
@@ -1221,6 +1452,38 @@ function renderDashboard(stats) {
     },
   });
 
+  // Sprint progress (horizontal stacked bar)
+  const sprintCard = document.getElementById("sprint-progress-card");
+  const sprintBody = document.getElementById("chart-sprint-body");
+
+  if (stats.sprintBreakdown && Object.keys(stats.sprintBreakdown).length > 0) {
+    sprintCard.style.display = "";
+    sprintBody.innerHTML = "";
+
+    const sprints = Object.keys(stats.sprintBreakdown).sort((a, b) => Number(a) - Number(b));
+    const allSprintStatuses = [...new Set(sprints.flatMap((s) => Object.keys(stats.sprintBreakdown[s])))];
+
+    const sprintDatasets = allSprintStatuses.map((status, i) => ({
+      label: status,
+      data: sprints.map((s) => stats.sprintBreakdown[s][status] || 0),
+      backgroundColor: STATUS_COLORS[status] || CHART_COLORS[i % CHART_COLORS.length],
+    }));
+
+    renderChartElement(sprintBody, {
+      type: "bar",
+      data: { labels: sprints.map((s) => `Sprint ${s}`), datasets: sprintDatasets },
+      options: {
+        indexAxis: "y",
+        scales: {
+          x: { stacked: true },
+          y: { stacked: true },
+        },
+      },
+    });
+  } else {
+    sprintCard.style.display = "none";
+  }
+
   // In-progress items table
   const stuckBody = document.getElementById("stuck-issues-body");
   if (stats.inProgress.length === 0) {
@@ -1247,6 +1510,82 @@ function renderDashboard(stats) {
       </table>
     `;
   }
+}
+
+// --- Activity Feed ---
+
+async function loadActivity() {
+  const body = document.getElementById("activity-feed-body");
+  if (!body) return;
+
+  body.innerHTML = '<div style="color: var(--text-muted); padding: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em;">Loading activity...</div>';
+
+  try {
+    const res = await fetch("/api/dashboard/activity");
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    renderActivity(data.activities || []);
+  } catch (err) {
+    body.innerHTML = `<div style="color: var(--red); padding: 8px; font-size: 11px;">Activity error: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderActivity(activities) {
+  const body = document.getElementById("activity-feed-body");
+  if (!activities.length) {
+    body.innerHTML = '<div style="color: var(--text-muted); padding: 8px; font-size: 11px;">No recent activity.</div>';
+    return;
+  }
+
+  body.innerHTML = `
+    <div class="activity-feed">
+      ${activities.map((a) => {
+        const timeAgo = formatTimeAgo(new Date(a.createdAt));
+        const icon = a.type === "pr" ? prIcon(a.status) : commitIcon();
+        const statusBadge = a.type === "pr" && a.status
+          ? `<span class="activity-status activity-status-${a.status}">${a.status}</span>`
+          : "";
+        return `
+          <div class="activity-item">
+            <div class="activity-icon">${icon}</div>
+            <div class="activity-content">
+              <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" class="activity-title">${escapeHtml(a.title)}</a>
+              <div class="activity-meta">
+                <span>${escapeHtml(a.author)}</span>
+                <span class="activity-repo">${escapeHtml(a.repo)}</span>
+                ${statusBadge}
+                <span class="activity-time">${timeAgo}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function prIcon(status) {
+  const color = status === "merged" ? "#00c853" : status === "open" ? "#e8912d" : "#ff3d3d";
+  return `<svg width="14" height="14" viewBox="0 0 16 16" fill="${color}"><path d="M7.177 3.073L9.573.677A.25.25 0 0110 .854v4.792a.25.25 0 01-.427.177L7.177 3.427a.25.25 0 010-.354zM3.75 2.5a.75.75 0 100 1.5.75.75 0 000-1.5zm-2.25.75a2.25 2.25 0 113 2.122v5.256a2.251 2.251 0 11-1.5 0V5.372A2.25 2.25 0 011.5 3.25zM11 2.5h-1V4h1a1 1 0 011 1v5.628a2.251 2.251 0 101.5 0V5A2.5 2.5 0 0011 2.5zm1 10.25a.75.75 0 111.5 0 .75.75 0 01-1.5 0zM3.75 12a.75.75 0 100 1.5.75.75 0 000-1.5z"/></svg>`;
+}
+
+function commitIcon() {
+  return `<svg width="14" height="14" viewBox="0 0 16 16" fill="#8b949e"><path d="M11.93 8.5a4.002 4.002 0 01-7.86 0H.75a.75.75 0 010-1.5h3.32a4.002 4.002 0 017.86 0h3.32a.75.75 0 010 1.5h-3.32zm-1.43-.75a2.5 2.5 0 10-5 0 2.5 2.5 0 005 0z"/></svg>`;
+}
+
+function formatTimeAgo(date) {
+  const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return date.toLocaleDateString();
 }
 
 // --- Session Metadata ---

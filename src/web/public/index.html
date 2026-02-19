@@ -17,7 +17,12 @@
       <button id="new-session" class="btn btn-primary">+ New Session</button>
       <div id="sessions-list" class="sessions-list"></div>
       <div class="sidebar-footer">
+        <div id="user-info" class="user-info" style="display:none;">
+          <span id="user-name" class="user-name"></span>
+          <span id="user-role" class="user-role"></span>
+        </div>
         <button id="knowledge-hub-btn" class="btn-reconfigure">Knowledge Hub</button>
+        <button id="team-btn" class="btn-reconfigure" style="display:none;">Team</button>
         <button id="settings-btn" class="btn-reconfigure">Settings</button>
         <button id="reconfigure-btn" class="btn-reconfigure">Reconfigure</button>
         <div class="status-indicator">
@@ -47,6 +52,28 @@
 
       <!-- Dashboard View (homepage) -->
       <div id="dashboard-view" class="dashboard-view">
+        <div id="dashboard-filters" class="dashboard-filters">
+          <div class="filter-group">
+            <label>Sprint</label>
+            <select id="filter-sprint"><option value="">All</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Assignee</label>
+            <select id="filter-assignee"><option value="">All</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Priority</label>
+            <select id="filter-priority"><option value="">All</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Status</label>
+            <select id="filter-status"><option value="">All</option></select>
+          </div>
+          <div class="filter-group">
+            <label>Repository</label>
+            <select id="filter-repo"><option value="">All</option></select>
+          </div>
+        </div>
         <div class="dashboard-stats-bar" id="dashboard-stats-bar">
           <div class="stat-card">
             <span class="stat-label">Total Items</span>
@@ -78,9 +105,17 @@
             <div class="dashboard-card-title">Assignee Workload</div>
             <div class="dashboard-card-body" id="chart-workload-body"></div>
           </div>
+          <div class="dashboard-card dashboard-card-wide" id="sprint-progress-card" style="display: none;">
+            <div class="dashboard-card-title">Sprint Progress</div>
+            <div class="dashboard-card-body" id="chart-sprint-body"></div>
+          </div>
           <div class="dashboard-card dashboard-card-wide">
             <div class="dashboard-card-title">In Progress Items</div>
             <div class="dashboard-card-body" id="stuck-issues-body"></div>
+          </div>
+          <div class="dashboard-card dashboard-card-wide">
+            <div class="dashboard-card-title">Recent Activity</div>
+            <div class="dashboard-card-body" id="activity-feed-body"></div>
           </div>
         </div>
         <div id="dashboard-loading" class="dashboard-loading hidden">
@@ -94,6 +129,7 @@
     <!-- Chat Drawer (slides from right) -->
     <div id="chat-backdrop" class="chat-backdrop hidden"></div>
     <div id="chat-drawer" class="chat-drawer">
+      <div id="chat-resize-handle" class="chat-resize-handle"></div>
       <div class="chat-drawer-header">
         <div class="chat-drawer-meta">
           <h3 id="chat-drawer-title">New Chat</h3>
@@ -248,12 +284,16 @@
             <input type="password" id="setting-granola-key" class="settings-input" placeholder="Enter API key..." />
           </div>
           <div class="settings-field">
-            <label>PostHog API Key <span class="settings-hint">(analytics — coming soon)</span></label>
-            <input type="password" id="setting-posthog-key" class="settings-input" placeholder="Enter API key..." disabled />
+            <label>PostHog API Key <span class="settings-hint">(analytics)</span></label>
+            <input type="password" id="setting-posthog-key" class="settings-input" placeholder="Enter API key..." />
           </div>
           <div class="settings-field">
             <label>PostHog Host</label>
-            <input type="text" id="setting-posthog-host" class="settings-input" placeholder="https://app.posthog.com" disabled />
+            <input type="text" id="setting-posthog-host" class="settings-input" placeholder="https://us.posthog.com" />
+          </div>
+          <div class="settings-field">
+            <label>PostHog Project ID <span class="settings-hint">(numeric project ID)</span></label>
+            <input type="text" id="setting-posthog-project-id" class="settings-input" placeholder="12345" />
           </div>
           <div class="settings-field">
             <label>Slack Webhook URL <span class="settings-hint">(for broadcast notifications)</span></label>
@@ -274,6 +314,30 @@
         <div class="settings-actions">
           <span id="settings-status" class="settings-save-status"></span>
           <button id="settings-save-btn" class="btn btn-primary">Save Settings</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Team Panel Overlay -->
+  <div id="team-overlay" class="team-overlay hidden">
+    <div class="team-panel">
+      <div class="team-header">
+        <h2>Team</h2>
+        <button id="team-close-btn" class="btn-icon" title="Close">&times;</button>
+      </div>
+      <div class="team-body">
+        <div class="team-section">
+          <h3 class="settings-section-title">Members</h3>
+          <div id="team-members-list" class="team-members-list"></div>
+        </div>
+        <div class="team-section">
+          <h3 class="settings-section-title">Invite</h3>
+          <button id="team-invite-btn" class="btn btn-primary btn-sm">Create Invite Link</button>
+          <div id="invite-result" class="invite-result" style="display:none;">
+            <input id="invite-link" class="settings-input" readonly />
+            <button id="invite-copy-btn" class="btn btn-sm">Copy</button>
+          </div>
         </div>
       </div>
     </div>

@@ -324,13 +324,20 @@ export function createRoutes() {
             console.log(`[agent] tool_use: ${msg.toolName}`, msg.toolInput ? JSON.stringify(msg.toolInput).slice(0, 200) : "(no input)");
             if (msg.toolName?.startsWith("mcp__visualization__")) {
               console.log(`[agent] >> sending visualization SSE event`);
+              const vizTool = msg.toolName.replace("mcp__visualization__", "");
               await stream.writeSSE({
                 event: "visualization",
                 data: JSON.stringify({
-                  tool: msg.toolName.replace("mcp__visualization__", ""),
+                  tool: vizTool,
                   input: msg.toolInput,
                 }),
               });
+              // Embed markers in fullResponse so charts persist in DB
+              if (vizTool === "render_chart" && msg.toolInput?.config) {
+                fullResponse += `\n<!--CHART:${typeof msg.toolInput.config === "string" ? msg.toolInput.config : JSON.stringify(msg.toolInput.config)}-->\n`;
+              } else if (vizTool === "render_diagram") {
+                fullResponse += `\n<!--DIAGRAM:${JSON.stringify(msg.toolInput)}-->\n`;
+              }
             } else {
               await stream.writeSSE({
                 event: "tool",
