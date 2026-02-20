@@ -334,6 +334,92 @@ export function startSlackBot(): void {
     );
   });
 
+  // App Home tab
+  app.event("app_home_opened", async ({ event, client }) => {
+    await client.views.publish({
+      user_id: event.user,
+      view: {
+        type: "home",
+        blocks: [
+          {
+            type: "header",
+            text: { type: "plain_text", text: "PM Agent", emoji: true },
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "Your AI-powered project management assistant. I can help with GitHub issues, PRs, standups, analytics, and more — right from Slack.",
+            },
+          },
+          { type: "divider" },
+          {
+            type: "header",
+            text: { type: "plain_text", text: "How It Works", emoji: true },
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "*1. DM me directly*\nSend me a message in this DM to start a conversation. I'll maintain context across the thread.",
+            },
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "*2. @mention me in channels*\nTag me in any channel I'm added to and I'll respond in a thread.",
+            },
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "*3. Share images*\nAttach screenshots or images to your message — I can analyze them and answer questions about what you share.",
+            },
+          },
+          { type: "divider" },
+          {
+            type: "header",
+            text: { type: "plain_text", text: "What I Can Do", emoji: true },
+          },
+          {
+            type: "section",
+            fields: [
+              { type: "mrkdwn", text: ":mag:  *Search GitHub*\nIssues, PRs, code, projects" },
+              { type: "mrkdwn", text: ":bar_chart:  *Standup & Digest*\nDaily summaries of activity" },
+              { type: "mrkdwn", text: ":hammer_and_wrench:  *Run Commands*\nExecute scripts in a sandbox" },
+              { type: "mrkdwn", text: ":page_facing_up:  *Generate Reports*\nCSV exports, analysis files" },
+              { type: "mrkdwn", text: ":brain:  *Knowledge Base*\nLearn about your repos & team" },
+              { type: "mrkdwn", text: ":calendar:  *Scheduled Jobs*\nAutomate recurring tasks" },
+            ],
+          },
+          { type: "divider" },
+          {
+            type: "header",
+            text: { type: "plain_text", text: "Example Messages", emoji: true },
+          },
+          {
+            type: "section",
+            text: {
+              type: "mrkdwn",
+              text: "```What PRs were merged this week?\nGive me a standup summary\nWhat's the status of issue #42?\nAnalyze open bugs and export to CSV\nWhat is the team working on right now?```",
+            },
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "Powered by PM Agent  •  Responses use AI and may not always be accurate",
+              },
+            ],
+          },
+        ],
+      },
+    });
+  });
+
   // Handle @mentions in channels
   app.event("app_mention", async ({ event, client }) => {
     if (!event.user || !isSlackAccessAllowed(event.user, event.channel)) return;
