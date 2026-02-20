@@ -678,6 +678,8 @@ async function sendMessage() {
               fullText += `\n<!--DIAGRAM:${JSON.stringify(data.input)}-->\n`;
             }
             scrollToBottom();
+          } else if (eventType === "dashboard_update") {
+            handleDashboardUpdate(data);
           } else if (eventType === "tool") {
             // Track tool call
             toolCalls.push(data.tool);
@@ -1011,7 +1013,6 @@ const SETTINGS_FIELDS = {
   "integration.posthog_api_key": "setting-posthog-key",
   "integration.posthog_host": "setting-posthog-host",
   "integration.posthog_project_id": "setting-posthog-project-id",
-  "integration.slack_webhook_url": "setting-slack-webhook",
   "slack.allowed_users": "setting-slack-users",
   "slack.allowed_channels": "setting-slack-channels",
 };
@@ -1020,7 +1021,6 @@ const SENSITIVE_SETTINGS = [
   "integration.exa_api_key",
   "integration.granola_api_key",
   "integration.posthog_api_key",
-  "integration.slack_webhook_url",
 ];
 
 const ARRAY_SETTINGS = ["slack.allowed_users", "slack.allowed_channels"];
@@ -1242,6 +1242,8 @@ chatBackdrop.addEventListener("click", closeChatDrawer);
 // --- Dashboard ---
 
 let dashboardItems = [];
+let activeTabId = "project"; // "project" = built-in, or a tab ID
+let dashboardTabsList = []; // cached tabs from server
 
 document.getElementById("dashboard-refresh-btn").addEventListener("click", loadDashboard);
 
@@ -1295,7 +1297,6 @@ function computeClientStats(items) {
     }
   }
 
-  // Sprint progress
   const sprintBreakdown = {};
   for (const item of items) {
     const sprint = item.custom_fields?.sprint;
@@ -1331,6 +1332,7 @@ function computeClientStats(items) {
 }
 
 function applyDashboardFilters() {
+  if (activeTabId !== "project") return; // filters only apply to project tab
   const sprint = filterEls.sprint.value;
   const assignee = filterEls.assignee.value;
   const priority = filterEls.priority.value;
@@ -1347,42 +1349,113 @@ function applyDashboardFilters() {
   renderDashboard(computeClientStats(filtered));
 }
 
+// --- Tab Bar ---
+
+function renderTabBar(tabs) {
+  const container = document.getElementById("dashboard-tabs");
+  container.innerHTML = "";
+
+  // Built-in Project tab (always first, non-deletable)
+  const projectTab = document.createElement("button");
+  projectTab.className = `dashboard-tab${activeTabId === "project" ? " active" : ""}`;
+  projectTab.dataset.tabId = "project";
+  projectTab.innerHTML = `<span>Project</span>`;
+  projectTab.addEventListener("click", () => switchTab("project"));
+  container.appendChild(projectTab);
+
+  // Agent-created tabs
+  for (const tab of tabs) {
+    const tabEl = document.createElement("button");
+    tabEl.className = `dashboard-tab${activeTabId === tab.id ? " active" : ""}`;
+    tabEl.dataset.tabId = tab.id;
+    tabEl.innerHTML = `<span>${escapeHtml(tab.name)}</span><button class="dashboard-tab-delete" title="Delete tab">&times;</button>`;
+    tabEl.addEventListener("click", (e) => {
+      if (e.target.closest(".dashboard-tab-delete")) return;
+      switchTab(tab.id);
+    });
+    tabEl.querySelector(".dashboard-tab-delete").addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (!confirm(`Delete tab "${tab.name}" and all its widgets?`)) return;
+      await fetch(`/api/dashboard/tabs/${tab.id}`, { method: "DELETE" });
+      if (activeTabId === tab.id) activeTabId = "project";
+      await loadDashboard();
+    });
+    container.appendChild(tabEl);
+  }
+}
+
+async function switchTab(tabId) {
+  activeTabId = tabId;
+  const grid = document.getElementById("widget-grid");
+  const filtersEl = document.getElementById("dashboard-filters");
+
+  // Update active state on tab bar
+  document.querySelectorAll(".dashboard-tab").forEach((el) => {
+    el.classList.toggle("active", el.dataset.tabId === tabId);
+  });
+
+  if (tabId === "project") {
+    // Show filters, load GitHub data
+    filtersEl.style.display = "";
+    document.getElementById("dashboard-fetched-at").textContent = "LOADING...";
+    try {
+      const res = await fetch("/api/dashboard");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      dashboardItems = data.items || [];
+      populateFilters(data.filters || {});
+      document.getElementById("dashboard-fetched-at").textContent =
+        `FETCHED: ${new Date(data.fetchedAt).toLocaleTimeString()}`;
+      renderDashboard(data.stats);
+      loadActivity();
+    } catch (err) {
+      grid.innerHTML = `<div class="widget-grid-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
+    }
+  } else {
+    // Hide filters for agent tabs, load widgets from server
+    filtersEl.style.display = "none";
+    document.getElementById("dashboard-fetched-at").textContent = "AGENT TAB";
+    try {
+      const res = await fetch(`/api/dashboard/tabs/${tabId}/widgets`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      renderWidgetGrid(data.widgets || []);
+    } catch (err) {
+      grid.innerHTML = `<div class="widget-grid-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+
 async function loadDashboard() {
   const loading = document.getElementById("dashboard-loading");
   const error = document.getElementById("dashboard-error");
-  const statsBar = document.getElementById("dashboard-stats-bar");
-  const grid = document.querySelector(".dashboard-grid");
+  const grid = document.getElementById("widget-grid");
 
   loading.classList.remove("hidden");
   error.classList.add("hidden");
-  statsBar.style.opacity = "0.4";
-  grid.style.opacity = "0.4";
+  if (grid) grid.style.opacity = "0.4";
 
   try {
-    const res = await fetch("/api/dashboard");
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || `HTTP ${res.status}`);
+    // Load tabs
+    const tabsRes = await fetch("/api/dashboard/tabs");
+    const tabsData = await tabsRes.json();
+    dashboardTabsList = tabsData.tabs || [];
+    renderTabBar(dashboardTabsList);
+
+    // If active tab is a custom tab that was deleted, fall back to project
+    if (activeTabId !== "project" && !dashboardTabsList.find((t) => t.id === activeTabId)) {
+      activeTabId = "project";
+      renderTabBar(dashboardTabsList);
     }
 
-    const data = await res.json();
-
-    dashboardItems = data.items || [];
-    populateFilters(data.filters || {});
-
-    const fetchedAt = new Date(data.fetchedAt);
-    document.getElementById("dashboard-fetched-at").textContent =
-      `FETCHED: ${fetchedAt.toLocaleTimeString()}`;
-
-    renderDashboard(data.stats);
-    loadActivity();
+    // Load content for active tab
+    await switchTab(activeTabId);
   } catch (err) {
     error.textContent = `Dashboard error: ${err.message}`;
     error.classList.remove("hidden");
   } finally {
     loading.classList.add("hidden");
-    statsBar.style.opacity = "";
-    grid.style.opacity = "";
+    if (grid) grid.style.opacity = "";
   }
 }
 
@@ -1396,178 +1469,273 @@ const STATUS_COLORS = {
   "No Status": "#484f58",
 };
 
-function renderDashboard(stats) {
-  // Overview stats
-  document.getElementById("stat-total").textContent = stats.overview.total;
-  document.getElementById("stat-completion").textContent = `${stats.overview.completionPct}%`;
-  document.getElementById("stat-in-progress").textContent = stats.overview.inProgressCount;
-  document.getElementById("stat-blocked").textContent = stats.overview.blocked;
+// --- Widget Grid System ---
 
-  // Status distribution (doughnut)
-  const statusBody = document.getElementById("chart-status-body");
-  statusBody.innerHTML = "";
+function renderWidgetGrid(widgets) {
+  const grid = document.getElementById("widget-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  if (!widgets || widgets.length === 0) {
+    grid.innerHTML = '<div class="widget-grid-empty">No widgets — ask the agent to set up your dashboard</div>';
+    return;
+  }
+
+  widgets
+    .sort((a, b) => (a.position || 0) - (b.position || 0))
+    .forEach((widget) => {
+      const el = createWidgetElement(widget);
+      grid.appendChild(el);
+    });
+}
+
+function createWidgetElement(widget) {
+  const div = document.createElement("div");
+  div.className = `widget widget-${widget.size || "half"}`;
+  div.id = `widget-${widget.id}`;
+  div.dataset.widgetId = widget.id;
+
+  // Stat cards have a simpler layout
+  if (widget.type === "stat-card") {
+    const config = typeof widget.config === "string" ? JSON.parse(widget.config) : widget.config;
+    const colorClass = config.color && config.color !== "default" ? `color-${config.color}` : "";
+    div.innerHTML = `
+      <div class="widget-stat">
+        <span class="widget-stat-label">${escapeHtml(widget.title)}</span>
+        <span class="widget-stat-value ${colorClass}">${escapeHtml(String(config.value || "--"))}</span>
+        ${config.trend ? `<span class="widget-stat-trend">${escapeHtml(config.trend)}</span>` : ""}
+      </div>
+    `;
+    return div;
+  }
+
+  div.innerHTML = `
+    <div class="widget-header"><span>${escapeHtml(widget.title)}</span></div>
+    <div class="widget-body"></div>
+  `;
+
+  const body = div.querySelector(".widget-body");
+  const config = typeof widget.config === "string" ? JSON.parse(widget.config) : widget.config;
+
+  const renderer = WIDGET_RENDERERS[widget.type];
+  if (renderer) renderer(body, config);
+
+  return div;
+}
+
+const WIDGET_RENDERERS = {
+  chart: renderChartWidget,
+  table: renderTableWidget,
+  list: renderListWidget,
+  markdown: renderMarkdownWidget,
+};
+
+function renderChartWidget(container, config) {
+  container.style.minHeight = "200px";
+  renderChartElement(container, config);
+}
+
+function renderTableWidget(container, config) {
+  if (!config.headers || !config.rows) {
+    container.innerHTML = '<div style="color: var(--text-muted); font-size: 11px;">No data</div>';
+    return;
+  }
+  container.innerHTML = `
+    <table class="widget-table">
+      <thead><tr>${config.headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr></thead>
+      <tbody>${config.rows.map((row) =>
+        `<tr>${row.map((cell) => `<td>${escapeHtml(String(cell))}</td>`).join("")}</tr>`
+      ).join("")}</tbody>
+    </table>
+  `;
+}
+
+function renderListWidget(container, config) {
+  if (!config.items || !config.items.length) {
+    container.innerHTML = '<div style="color: var(--text-muted); font-size: 11px;">Empty list</div>';
+    return;
+  }
+  container.innerHTML = `
+    <ul class="widget-list">
+      ${config.items.map((item) =>
+        `<li${item.color ? ` style="color:${item.color}"` : ""}>${escapeHtml(item.text)}</li>`
+      ).join("")}
+    </ul>
+  `;
+}
+
+function renderMarkdownWidget(container, config) {
+  container.innerHTML = `<div class="widget-markdown">${renderMarkdown(config.content || "")}</div>`;
+}
+
+// Generate default widgets from GitHub project stats
+function generateDefaultWidgets(stats) {
   const statusLabels = Object.keys(stats.statusCounts);
   const statusData = Object.values(stats.statusCounts);
   const statusColors = statusLabels.map((l, i) => STATUS_COLORS[l] || CHART_COLORS[i % CHART_COLORS.length]);
 
-  renderChartElement(statusBody, {
-    type: "doughnut",
-    data: {
-      labels: statusLabels,
-      datasets: [{ label: "Items", data: statusData, backgroundColor: statusColors }],
-    },
-  });
-
-  // Priority breakdown (bar)
-  const priorityBody = document.getElementById("chart-priority-body");
-  priorityBody.innerHTML = "";
   const priorityLabels = Object.keys(stats.priorityCounts);
   const priorityData = Object.values(stats.priorityCounts);
 
-  renderChartElement(priorityBody, {
-    type: "bar",
-    data: {
-      labels: priorityLabels,
-      datasets: [{ label: "Items", data: priorityData }],
-    },
-  });
-
-  // Assignee workload (stacked bar)
-  const workloadBody = document.getElementById("chart-workload-body");
-  workloadBody.innerHTML = "";
   const assignees = Object.keys(stats.assigneeWorkload);
   const allStatuses = [...new Set(assignees.flatMap((a) => Object.keys(stats.assigneeWorkload[a])))];
-
   const workloadDatasets = allStatuses.map((status, i) => ({
     label: status,
     data: assignees.map((a) => stats.assigneeWorkload[a][status] || 0),
     backgroundColor: STATUS_COLORS[status] || CHART_COLORS[i % CHART_COLORS.length],
   }));
 
-  renderChartElement(workloadBody, {
-    type: "bar",
-    data: { labels: assignees, datasets: workloadDatasets },
-    options: {
-      scales: {
-        x: { stacked: true },
-        y: { stacked: true },
-      },
-    },
-  });
+  const widgets = [
+    { id: "stat-total", type: "stat-card", title: "Total Items", size: "quarter", position: 0, config: { value: String(stats.overview.total) } },
+    { id: "stat-completion", type: "stat-card", title: "Completion", size: "quarter", position: 1, config: { value: `${stats.overview.completionPct}%` } },
+    { id: "stat-progress", type: "stat-card", title: "In Progress", size: "quarter", position: 2, config: { value: String(stats.overview.inProgressCount) } },
+    { id: "stat-blocked", type: "stat-card", title: "Blocked", size: "quarter", position: 3, config: { value: String(stats.overview.blocked), color: "red" } },
+    { id: "chart-status", type: "chart", title: "Status Distribution", size: "half", position: 4, config: { type: "doughnut", data: { labels: statusLabels, datasets: [{ label: "Items", data: statusData, backgroundColor: statusColors }] } } },
+    { id: "chart-priority", type: "chart", title: "Priority Breakdown", size: "half", position: 5, config: { type: "bar", data: { labels: priorityLabels, datasets: [{ label: "Items", data: priorityData }] } } },
+    { id: "chart-workload", type: "chart", title: "Assignee Workload", size: "full", position: 6, config: { type: "bar", data: { labels: assignees, datasets: workloadDatasets }, options: { scales: { x: { stacked: true }, y: { stacked: true } } } } },
+  ];
 
-  // Sprint progress (horizontal stacked bar)
-  const sprintCard = document.getElementById("sprint-progress-card");
-  const sprintBody = document.getElementById("chart-sprint-body");
-
+  // Sprint progress if available
   if (stats.sprintBreakdown && Object.keys(stats.sprintBreakdown).length > 0) {
-    sprintCard.style.display = "";
-    sprintBody.innerHTML = "";
-
     const sprints = Object.keys(stats.sprintBreakdown).sort((a, b) => Number(a) - Number(b));
     const allSprintStatuses = [...new Set(sprints.flatMap((s) => Object.keys(stats.sprintBreakdown[s])))];
-
     const sprintDatasets = allSprintStatuses.map((status, i) => ({
       label: status,
       data: sprints.map((s) => stats.sprintBreakdown[s][status] || 0),
       backgroundColor: STATUS_COLORS[status] || CHART_COLORS[i % CHART_COLORS.length],
     }));
+    widgets.push({
+      id: "chart-sprint", type: "chart", title: "Sprint Progress", size: "full", position: 7,
+      config: { type: "bar", data: { labels: sprints.map((s) => `Sprint ${s}`), datasets: sprintDatasets }, options: { indexAxis: "y", scales: { x: { stacked: true }, y: { stacked: true } } } },
+    });
+  }
 
-    renderChartElement(sprintBody, {
-      type: "bar",
-      data: { labels: sprints.map((s) => `Sprint ${s}`), datasets: sprintDatasets },
-      options: {
-        indexAxis: "y",
-        scales: {
-          x: { stacked: true },
-          y: { stacked: true },
-        },
+  // In-progress table
+  if (stats.inProgress && stats.inProgress.length > 0) {
+    widgets.push({
+      id: "table-progress", type: "table", title: "In Progress Items", size: "full", position: 8,
+      config: {
+        headers: ["#", "Title", "Assignees", "Repo", "Priority"],
+        rows: stats.inProgress.map((item) => [
+          String(item.number || "--"),
+          item.title,
+          item.assignees.length ? item.assignees.join(", ") : "Unassigned",
+          item.repository || "--",
+          String(item.priority || "--"),
+        ]),
       },
     });
-  } else {
-    sprintCard.style.display = "none";
   }
 
-  // In-progress items table
-  const stuckBody = document.getElementById("stuck-issues-body");
-  if (stats.inProgress.length === 0) {
-    stuckBody.innerHTML = '<div style="color: var(--text-muted); padding: 8px; font-size: 11px;">No items in progress.</div>';
-  } else {
-    stuckBody.innerHTML = `
-      <table class="stuck-table">
-        <thead>
-          <tr><th>#</th><th>Title</th><th>Assignees</th><th>Repo</th><th>Priority</th></tr>
-        </thead>
-        <tbody>
-          ${stats.inProgress.map((item) => `
-            <tr>
-              <td>${item.number || "--"}</td>
-              <td>${item.issue_url
-                ? `<a href="${escapeHtml(item.issue_url)}" target="_blank" rel="noopener">${escapeHtml(item.title)}</a>`
-                : escapeHtml(item.title)}</td>
-              <td>${item.assignees.length ? escapeHtml(item.assignees.join(", ")) : "Unassigned"}</td>
-              <td>${escapeHtml(item.repository || "--")}</td>
-              <td>${escapeHtml(String(item.priority || "--"))}</td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
-    `;
+  return widgets;
+}
+
+// Handle real-time dashboard updates from SSE
+function handleDashboardUpdate(data) {
+  if (data.action === "set_layout") {
+    // New tab created — reload tabs and switch to it
+    if (data.tab_id) {
+      activeTabId = data.tab_id;
+    }
+    loadDashboard();
+    return;
   }
+
+  if (data.action === "add") {
+    // A widget was added — reload tabs (may have created a new tab) and refresh
+    loadDashboard();
+    return;
+  }
+
+  const grid = document.getElementById("widget-grid");
+  if (!grid) return;
+
+  if (data.action === "remove") {
+    const el = document.getElementById(`widget-${data.widget_id}`);
+    if (el) el.remove();
+    if (grid.children.length === 0) {
+      grid.innerHTML = '<div class="widget-grid-empty">No widgets</div>';
+    }
+  } else if (data.action === "update") {
+    const el = document.getElementById(`widget-${data.widget_id}`);
+    if (el) {
+      let config = data.config;
+      try { config = typeof config === "string" ? JSON.parse(config) : config; } catch {}
+      const widget = {
+        id: data.widget_id,
+        type: el.dataset.type || "chart",
+        title: data.title || el.querySelector(".widget-header span")?.textContent || "",
+        size: data.size || el.className.match(/widget-(quarter|half|full)/)?.[1] || "half",
+        config: config || {},
+      };
+      const newEl = createWidgetElement(widget);
+      el.replaceWith(newEl);
+    }
+  }
+}
+
+// Backward-compatible renderDashboard that uses widget grid
+function renderDashboard(stats) {
+  const widgets = generateDefaultWidgets(stats);
+  renderWidgetGrid(widgets);
 }
 
 // --- Activity Feed ---
 
 async function loadActivity() {
-  const body = document.getElementById("activity-feed-body");
-  if (!body) return;
+  if (activeTabId !== "project") return; // only show activity on project tab
 
-  body.innerHTML = '<div style="color: var(--text-muted); padding: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em;">Loading activity...</div>';
+  const grid = document.getElementById("widget-grid");
+  if (!grid) return;
 
   try {
     const res = await fetch("/api/dashboard/activity");
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || `HTTP ${res.status}`);
-    }
+    if (!res.ok) return;
     const data = await res.json();
-    renderActivity(data.activities || []);
-  } catch (err) {
-    body.innerHTML = `<div style="color: var(--red); padding: 8px; font-size: 11px;">Activity error: ${escapeHtml(err.message)}</div>`;
-  }
-}
+    const activities = data.activities || [];
+    if (!activities.length) return;
 
-function renderActivity(activities) {
-  const body = document.getElementById("activity-feed-body");
-  if (!activities.length) {
-    body.innerHTML = '<div style="color: var(--text-muted); padding: 8px; font-size: 11px;">No recent activity.</div>';
-    return;
-  }
+    const activityWidget = createWidgetElement({
+      id: "activity-feed",
+      type: "chart",
+      title: "Recent Activity",
+      size: "full",
+      config: {},
+    });
 
-  body.innerHTML = `
-    <div class="activity-feed">
-      ${activities.map((a) => {
-        const timeAgo = formatTimeAgo(new Date(a.createdAt));
-        const icon = a.type === "pr" ? prIcon(a.status) : commitIcon();
-        const statusBadge = a.type === "pr" && a.status
-          ? `<span class="activity-status activity-status-${a.status}">${a.status}</span>`
-          : "";
-        return `
-          <div class="activity-item">
-            <div class="activity-icon">${icon}</div>
-            <div class="activity-content">
-              <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" class="activity-title">${escapeHtml(a.title)}</a>
-              <div class="activity-meta">
-                <span>${escapeHtml(a.author)}</span>
-                <span class="activity-repo">${escapeHtml(a.repo)}</span>
-                ${statusBadge}
-                <span class="activity-time">${timeAgo}</span>
+    const body = activityWidget.querySelector(".widget-body");
+    body.innerHTML = `
+      <div class="activity-feed">
+        ${activities.map((a) => {
+          const timeAgo = formatTimeAgo(new Date(a.createdAt));
+          const icon = a.type === "pr" ? prIcon(a.status) : commitIcon();
+          const statusBadge = a.type === "pr" && a.status
+            ? `<span class="activity-status activity-status-${a.status}">${a.status}</span>`
+            : "";
+          return `
+            <div class="activity-item">
+              <div class="activity-icon">${icon}</div>
+              <div class="activity-content">
+                <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener" class="activity-title">${escapeHtml(a.title)}</a>
+                <div class="activity-meta">
+                  <span>${escapeHtml(a.author)}</span>
+                  <span class="activity-repo">${escapeHtml(a.repo)}</span>
+                  ${statusBadge}
+                  <span class="activity-time">${timeAgo}</span>
+                </div>
               </div>
             </div>
-          </div>
-        `;
-      }).join("")}
-    </div>
-  `;
+          `;
+        }).join("")}
+      </div>
+    `;
+
+    const existing = document.getElementById("widget-activity-feed");
+    if (existing) existing.replaceWith(activityWidget);
+    else grid.appendChild(activityWidget);
+  } catch {
+    // Silently fail
+  }
 }
 
 function prIcon(status) {

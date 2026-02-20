@@ -52,6 +52,7 @@
 
       <!-- Dashboard View (homepage) -->
       <div id="dashboard-view" class="dashboard-view">
+        <div id="dashboard-tabs" class="dashboard-tabs"></div>
         <div id="dashboard-filters" class="dashboard-filters">
           <div class="filter-group">
             <label>Sprint</label>
@@ -74,50 +75,7 @@
             <select id="filter-repo"><option value="">All</option></select>
           </div>
         </div>
-        <div class="dashboard-stats-bar" id="dashboard-stats-bar">
-          <div class="stat-card">
-            <span class="stat-label">Total Items</span>
-            <span class="stat-value" id="stat-total">--</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Completion</span>
-            <span class="stat-value" id="stat-completion">--%</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">In Progress</span>
-            <span class="stat-value" id="stat-in-progress">--</span>
-          </div>
-          <div class="stat-card">
-            <span class="stat-label">Blocked</span>
-            <span class="stat-value stat-blocked" id="stat-blocked">--</span>
-          </div>
-        </div>
-        <div class="dashboard-grid">
-          <div class="dashboard-card">
-            <div class="dashboard-card-title">Status Distribution</div>
-            <div class="dashboard-card-body" id="chart-status-body"></div>
-          </div>
-          <div class="dashboard-card">
-            <div class="dashboard-card-title">Priority Breakdown</div>
-            <div class="dashboard-card-body" id="chart-priority-body"></div>
-          </div>
-          <div class="dashboard-card dashboard-card-wide">
-            <div class="dashboard-card-title">Assignee Workload</div>
-            <div class="dashboard-card-body" id="chart-workload-body"></div>
-          </div>
-          <div class="dashboard-card dashboard-card-wide" id="sprint-progress-card" style="display: none;">
-            <div class="dashboard-card-title">Sprint Progress</div>
-            <div class="dashboard-card-body" id="chart-sprint-body"></div>
-          </div>
-          <div class="dashboard-card dashboard-card-wide">
-            <div class="dashboard-card-title">In Progress Items</div>
-            <div class="dashboard-card-body" id="stuck-issues-body"></div>
-          </div>
-          <div class="dashboard-card dashboard-card-wide">
-            <div class="dashboard-card-title">Recent Activity</div>
-            <div class="dashboard-card-body" id="activity-feed-body"></div>
-          </div>
-        </div>
+        <div id="widget-grid" class="widget-grid"></div>
         <div id="dashboard-loading" class="dashboard-loading hidden">
           <div class="spinner"></div>
           <span>Loading dashboard...</span>
@@ -298,10 +256,6 @@
           <div class="settings-field">
             <label>PostHog Project ID <span class="settings-hint">(numeric project ID)</span></label>
             <input type="text" id="setting-posthog-project-id" class="settings-input" placeholder="12345" />
-          </div>
-          <div class="settings-field">
-            <label>Slack Webhook URL <span class="settings-hint">(for broadcast notifications)</span></label>
-            <input type="password" id="setting-slack-webhook" class="settings-input" placeholder="https://hooks.slack.com/services/..." />
           </div>
         </div>
         <div class="settings-section">

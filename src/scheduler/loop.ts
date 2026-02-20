@@ -3,7 +3,7 @@ import { jobs } from "../db/schema.ts";
 import { eq, lte, and } from "drizzle-orm";
 import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createDashboardMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { sendSlackMessage } from "../tools/slack.ts";
@@ -25,6 +25,7 @@ function buildJobAgentConfig(): AgentConfig {
       scheduler: createSchedulerMcpServer(),
       slack: createSlackMcpServer(),
       visualization: createVisualizationMcpServer(),
+      dashboard: createDashboardMcpServer(),
       ...getRemoteMcpServers(),
     },
     canUseTool: async (_toolName, input) => {

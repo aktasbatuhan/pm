@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
 import * as schema from "./schema.ts";
 import { DB_PATH } from "../paths.ts";
 
@@ -51,6 +51,50 @@ function migrate() {
   try { getDb().run(sql`ALTER TABLE chat_sessions ADD COLUMN slack_thread_ts TEXT`); } catch {}
   getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_slack_thread ON chat_sessions(slack_channel_id, slack_thread_ts)`);
 
+  // Users table
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'member',
+      token TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Invites table
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS invites (
+      id TEXT PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      created_by TEXT NOT NULL,
+      used_by TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  // Add userId to chat sessions
+  try { getDb().run(sql`ALTER TABLE chat_sessions ADD COLUMN user_id TEXT`); } catch {}
+
+  // Auto-create admin user from AUTH_TOKEN
+  const authToken = process.env.AUTH_TOKEN;
+  if (authToken) {
+    const existing = getDb()
+      .select()
+      .from(schema.users)
+      .where(eq(schema.users.token, authToken))
+      .get();
+    if (!existing) {
+      getDb().insert(schema.users).values({
+        id: crypto.randomUUID(),
+        name: "Admin",
+        role: "admin",
+        token: authToken,
+        createdAt: new Date(),
+      }).run();
+    }
+  }
+
   getDb().run(sql`
     CREATE TABLE IF NOT EXISTS jobs (
       id TEXT PRIMARY KEY,
@@ -65,6 +109,33 @@ function migrate() {
       updated_at INTEGER NOT NULL
     )
   `);
+
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS dashboard_widgets (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      size TEXT NOT NULL DEFAULT 'half',
+      config TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  // Dashboard tabs
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS dashboard_tabs (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      position INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  // Add tab_id column to dashboard_widgets
+  try { getDb().run(sql`ALTER TABLE dashboard_widgets ADD COLUMN tab_id TEXT`); } catch {}
 }
 
 // Helper to generate IDs

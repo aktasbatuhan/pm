@@ -1600,6 +1600,232 @@ html, body {
   display: none;
 }
 
+/* --- Dashboard Tabs --- */
+
+.dashboard-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.dashboard-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.dashboard-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.dashboard-tab:hover {
+  color: var(--text-secondary);
+}
+
+.dashboard-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.dashboard-tab-delete {
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  padding: 0;
+}
+
+.dashboard-tab:hover .dashboard-tab-delete {
+  display: flex;
+}
+
+.dashboard-tab-delete:hover {
+  color: var(--red);
+  background: rgba(255, 61, 61, 0.1);
+}
+
+/* --- Widget Grid (Agent-Controlled Dashboard) --- */
+
+.widget-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.widget {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 0;
+}
+
+.widget-quarter { grid-column: span 1; }
+.widget-half { grid-column: span 2; }
+.widget-full { grid-column: span 4; }
+
+.widget-header {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  padding: 8px 12px 6px;
+  border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.widget-body {
+  padding: 8px 12px 12px;
+  position: relative;
+}
+
+.widget-body .chart-container {
+  margin: 0;
+}
+
+/* Stat card widget */
+.widget-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+}
+
+.widget-stat-value {
+  font-size: 20px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.widget-stat-value.color-green { color: var(--green); }
+.widget-stat-value.color-red { color: var(--red); }
+.widget-stat-value.color-yellow { color: var(--yellow); }
+
+.widget-stat-label {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.widget-stat-trend {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+/* Table widget */
+.widget-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.widget-table th {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 2px solid var(--border);
+  color: var(--accent);
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.widget-table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}
+
+.widget-table tr:hover td {
+  background: var(--bg-hover);
+}
+
+/* List widget */
+.widget-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.widget-list li {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}
+
+.widget-list li:last-child {
+  border-bottom: none;
+}
+
+/* Markdown widget */
+.widget-markdown {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.widget-markdown h1, .widget-markdown h2, .widget-markdown h3 {
+  color: var(--text-primary);
+  margin: 4px 0;
+}
+
+.widget-markdown strong { color: var(--text-primary); }
+
+/* Empty state */
+.widget-grid-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+@media (max-width: 768px) {
+  .widget-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .widget-quarter { grid-column: span 1; }
+  .widget-half { grid-column: span 2; }
+  .widget-full { grid-column: span 2; }
+}
+
 /* --- Chat Drawer --- */
 
 .chat-backdrop {

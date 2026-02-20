@@ -6,6 +6,7 @@ import {
   createKnowledgeMcpServer,
   createSchedulerMcpServer,
   createSlackMcpServer,
+  createDashboardMcpServer,
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
@@ -152,6 +153,7 @@ async function processAgentRequest(
         knowledge: createKnowledgeMcpServer(),
         scheduler: createSchedulerMcpServer(),
         slack: createSlackMcpServer(),
+        dashboard: createDashboardMcpServer(),
         ...getRemoteMcpServers(),
       },
       allowedTools: [
@@ -159,6 +161,7 @@ async function processAgentRequest(
         "mcp__knowledge__*",
         "mcp__scheduler__*",
         "mcp__slack__*",
+        "mcp__dashboard__*",
         "mcp__exa__*",
         "mcp__granola__*",
       ],

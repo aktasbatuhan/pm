@@ -5,12 +5,6 @@ import {
   type McpSdkServerConfigWithInstance,
 } from "@anthropic-ai/claude-agent-sdk";
 
-import { getSettingString } from "../db/settings.ts";
-
-function getWebhookUrl(): string | null {
-  return getSettingString("integration.slack_webhook_url") || null;
-}
-
 const sendMessageTool = tool(
   "slack_send_message",
   "Send a message to a Slack channel. Use this to notify the team about sprint updates, alerts, or scheduled job results. If you are already responding in a Slack thread, do NOT use this tool to reply — your response is posted automatically. Use this only to broadcast to other channels.",
@@ -22,7 +16,7 @@ const sendMessageTool = tool(
     const sent = await sendSlackMessage(text, channel);
     if (!sent) {
       return {
-        content: [{ type: "text" as const, text: "Error: Could not send Slack message. Check SLACK_BOT_TOKEN or SLACK_WEBHOOK_URL configuration." }],
+        content: [{ type: "text" as const, text: "Error: Could not send Slack message. Check SLACK_BOT_TOKEN and SLACK_DEFAULT_CHANNEL environment variables." }],
         isError: true,
       };
     }
@@ -46,42 +40,34 @@ export function createSlackMcpServer(): McpSdkServerConfigWithInstance {
 }
 
 /**
- * Send a message to Slack. Prefers Bot API when SLACK_BOT_TOKEN is set,
- * falls back to incoming webhook.
+ * Send a message to Slack via Bot API.
+ * Requires SLACK_BOT_TOKEN and SLACK_DEFAULT_CHANNEL env vars.
  */
 export async function sendSlackMessage(text: string, channel?: string): Promise<boolean> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const targetChannel = channel || process.env.SLACK_DEFAULT_CHANNEL;
 
-  // Prefer Bot API
-  if (botToken && targetChannel) {
-    try {
-      const res = await fetch("https://slack.com/api/chat.postMessage", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${botToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ channel: targetChannel, text }),
-      });
-      const data = (await res.json()) as { ok: boolean };
-      if (data.ok) return true;
-    } catch {
-      // Fall through to webhook
-    }
+  if (!botToken || !targetChannel) {
+    console.warn(`[slack] sendSlackMessage: missing config — botToken=${!!botToken}, channel=${targetChannel || "(none)"}`);
+    return false;
   }
 
-  // Fallback: webhook
-  const url = getWebhookUrl();
-  if (!url) return false;
   try {
-    const res = await fetch(url, {
+    const res = await fetch("https://slack.com/api/chat.postMessage", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      headers: {
+        Authorization: `Bearer ${botToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ channel: targetChannel, text }),
     });
-    return res.ok;
-  } catch {
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    if (!data.ok) {
+      console.error(`[slack] chat.postMessage failed: ${data.error} (channel=${targetChannel})`);
+    }
+    return data.ok;
+  } catch (err) {
+    console.error("[slack] sendSlackMessage error:", err);
     return false;
   }
 }

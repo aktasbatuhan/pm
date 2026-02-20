@@ -8,6 +8,7 @@ const ENV_FALLBACK: Record<string, string> = {
   "integration.granola_api_key": "GRANOLA_API_KEY",
   "integration.posthog_api_key": "POSTHOG_API_KEY",
   "integration.posthog_host": "POSTHOG_HOST",
+  "integration.posthog_project_id": "POSTHOG_PROJECT_ID",
   "integration.slack_webhook_url": "SLACK_WEBHOOK_URL",
   "slack.allowed_users": "",
   "slack.allowed_channels": "",

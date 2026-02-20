@@ -6,6 +6,7 @@ import { chat, type AgentConfig } from "../agent/core.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
+import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import {
@@ -17,7 +18,7 @@ import {
   SENSITIVE_KEYS,
 } from "../db/settings.ts";
 import { getDb, newId } from "../db/index.ts";
-import { chatSessions, messages, users, invites } from "../db/schema.ts";
+import { chatSessions, messages, users, invites, dashboardWidgets, dashboardTabs } from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
 import { KNOWLEDGE_DIR } from "../paths.ts";
 import {
@@ -37,6 +38,7 @@ let schedulerServer: ReturnType<typeof createSchedulerMcpServer> | null = null;
 let slackServer: ReturnType<typeof createSlackMcpServer> | null = null;
 let visualizationServer: ReturnType<typeof createVisualizationMcpServer> | null = null;
 let posthogServer: ReturnType<typeof createPostHogMcpServer> | null = null;
+let dashboardServer: ReturnType<typeof createDashboardMcpServer> | null = null;
 
 function getGitHubServer() {
   if (!githubServer) githubServer = createGitHubMcpServer();
@@ -66,6 +68,11 @@ function getVisualizationServer() {
 function getPostHogServer() {
   if (!posthogServer) posthogServer = createPostHogMcpServer();
   return posthogServer;
+}
+
+function getDashboardServer() {
+  if (!dashboardServer) dashboardServer = createDashboardMcpServer();
+  return dashboardServer;
 }
 
 // Pending approval state (simple in-memory for localhost)
@@ -285,6 +292,7 @@ export function createRoutes() {
         slack: getSlackServer(),
         visualization: getVisualizationServer(),
         posthog: getPostHogServer(),
+        dashboard: getDashboardServer(),
         ...getRemoteMcpServers(),
       },
       canUseTool: async (_toolName, input, _options) => {
@@ -298,6 +306,7 @@ export function createRoutes() {
 
     return streamSSE(c, async (stream) => {
       let fullResponse = "";
+      let hasPartials = false;
       let sdkSessionId: string | undefined;
 
       try {
@@ -313,12 +322,14 @@ export function createRoutes() {
               data: JSON.stringify({}),
             });
           } else if (msg.type === "partial") {
+            hasPartials = true;
             await stream.writeSSE({
               event: "delta",
               data: JSON.stringify({ content: msg.content }),
             });
             fullResponse += msg.content;
-          } else if (msg.type === "text") {
+          } else if (msg.type === "text" && !hasPartials) {
+            // Only use finalized text if no streaming deltas were received
             fullResponse += msg.content;
           } else if (msg.type === "tool_use") {
             console.log(`[agent] tool_use: ${msg.toolName}`, msg.toolInput ? JSON.stringify(msg.toolInput).slice(0, 200) : "(no input)");
@@ -337,6 +348,29 @@ export function createRoutes() {
                 fullResponse += `\n<!--CHART:${typeof msg.toolInput.config === "string" ? msg.toolInput.config : JSON.stringify(msg.toolInput.config)}-->\n`;
               } else if (vizTool === "render_diagram") {
                 fullResponse += `\n<!--DIAGRAM:${JSON.stringify(msg.toolInput)}-->\n`;
+              }
+            } else if (msg.toolName?.startsWith("mcp__dashboard__")) {
+              const dashTool = msg.toolName.replace("mcp__dashboard__", "");
+              const actionMap: Record<string, string> = {
+                dashboard_add_widget: "add",
+                dashboard_remove_widget: "remove",
+                dashboard_update_widget: "update",
+                dashboard_set_layout: "set_layout",
+              };
+              const action = actionMap[dashTool];
+              if (action) {
+                console.log(`[agent] >> sending dashboard_update SSE event: ${action}`);
+                // For set_layout, fetch the created tab info to send to frontend
+                let extra: Record<string, unknown> = {};
+                if (action === "set_layout" && msg.toolInput?.tab_name) {
+                  const tab = getDb().select().from(dashboardTabs).all()
+                    .find((t) => t.name === msg.toolInput!.tab_name);
+                  if (tab) extra = { tab_id: tab.id, tab_name: tab.name, tab_position: tab.position };
+                }
+                await stream.writeSSE({
+                  event: "dashboard_update",
+                  data: JSON.stringify({ action, ...msg.toolInput, ...extra }),
+                });
               }
             } else {
               await stream.writeSSE({
@@ -502,6 +536,7 @@ export function createRoutes() {
     slackServer = null;
     visualizationServer = null;
     posthogServer = null;
+    dashboardServer = null;
 
     return c.json({ success: true, logs });
   });
@@ -527,6 +562,54 @@ export function createRoutes() {
         500,
       );
     }
+  });
+
+  app.get("/dashboard/tabs", (c) => {
+    const tabs = getDb()
+      .select()
+      .from(dashboardTabs)
+      .orderBy(dashboardTabs.position)
+      .all();
+    return c.json({ tabs });
+  });
+
+  app.get("/dashboard/tabs/:id/widgets", (c) => {
+    const tabId = c.req.param("id");
+    const widgets = getDb()
+      .select()
+      .from(dashboardWidgets)
+      .where(eq(dashboardWidgets.tabId, tabId))
+      .orderBy(dashboardWidgets.position)
+      .all();
+    return c.json({ widgets });
+  });
+
+  app.delete("/dashboard/tabs/:id", (c) => {
+    const tabId = c.req.param("id");
+    getDb().delete(dashboardWidgets).where(eq(dashboardWidgets.tabId, tabId)).run();
+    getDb().delete(dashboardTabs).where(eq(dashboardTabs.id, tabId)).run();
+    return c.json({ success: true });
+  });
+
+  app.put("/dashboard/tabs/reorder", async (c) => {
+    const body = await c.req.json<{ tabs: Array<{ id: string; position: number }> }>();
+    const now = new Date();
+    for (const tab of body.tabs) {
+      getDb().update(dashboardTabs)
+        .set({ position: tab.position, updatedAt: now })
+        .where(eq(dashboardTabs.id, tab.id))
+        .run();
+    }
+    return c.json({ success: true });
+  });
+
+  app.get("/dashboard/layout", (c) => {
+    const widgets = getDb()
+      .select()
+      .from(dashboardWidgets)
+      .orderBy(dashboardWidgets.position)
+      .all();
+    return c.json({ widgets });
   });
 
   app.get("/dashboard/activity", async (c) => {

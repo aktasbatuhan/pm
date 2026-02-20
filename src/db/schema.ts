@@ -1,9 +1,26 @@
 import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
 
+export const users = sqliteTable("users", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  role: text("role").$type<"admin" | "member">().notNull().default("member"),
+  token: text("token").notNull().unique(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export const invites = sqliteTable("invites", {
+  id: text("id").primaryKey(),
+  token: text("token").notNull().unique(),
+  createdBy: text("created_by").notNull(),
+  usedBy: text("used_by"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
 export const chatSessions = sqliteTable("chat_sessions", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   sessionId: text("session_id"), // SDK session ID for resume
+  userId: text("user_id"),
   slackChannelId: text("slack_channel_id"),
   slackThreadTs: text("slack_thread_ts"),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
@@ -44,6 +61,32 @@ export const jobs = sqliteTable("jobs", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
+export const dashboardTabs = sqliteTable("dashboard_tabs", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  position: integer("position").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const dashboardWidgets = sqliteTable("dashboard_widgets", {
+  id: text("id").primaryKey(),
+  tabId: text("tab_id"),
+  type: text("type").$type<"stat-card" | "chart" | "table" | "list" | "markdown">().notNull(),
+  title: text("title").notNull(),
+  size: text("size").$type<"quarter" | "half" | "full">().notNull().default("half"),
+  config: text("config", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  position: integer("position").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export type User = typeof users.$inferSelect;
+export type Invite = typeof invites.$inferSelect;
 export type Setting = typeof settings.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
 export type NewJob = typeof jobs.$inferInsert;
+export type DashboardTab = typeof dashboardTabs.$inferSelect;
+export type NewDashboardTab = typeof dashboardTabs.$inferInsert;
+export type DashboardWidget = typeof dashboardWidgets.$inferSelect;
+export type NewDashboardWidget = typeof dashboardWidgets.$inferInsert;
