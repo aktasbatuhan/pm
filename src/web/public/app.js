@@ -368,6 +368,18 @@ let currentSessionId = null;
 let isStreaming = false;
 let totalCost = 0;
 
+// Model selector — persist choice
+const modelSelect = document.getElementById("model-select");
+try {
+  const saved = localStorage.getItem("agent-model");
+  if (saved && modelSelect.querySelector(`option[value="${saved}"]`)) {
+    modelSelect.value = saved;
+  }
+} catch {}
+modelSelect.addEventListener("change", () => {
+  try { localStorage.setItem("agent-model", modelSelect.value); } catch {}
+});
+
 // DOM elements
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("message-input");
@@ -613,7 +625,7 @@ async function sendMessage() {
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, sessionId: currentSessionId }),
+      body: JSON.stringify({ message: text, sessionId: currentSessionId, model: modelSelect.value }),
     });
 
     const reader = res.body.getReader();

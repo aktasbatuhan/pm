@@ -243,6 +243,7 @@ export function createRoutes() {
     const body = await c.req.json<{
       message: string;
       sessionId?: string;
+      model?: string;
     }>();
 
     const db = getDb();
@@ -299,7 +300,7 @@ export function createRoutes() {
         return { behavior: "allow" as const, updatedInput: input };
       },
       resume: session?.sessionId ?? undefined,
-      model: process.env.AGENT_MODEL || undefined,
+      model: body.model || process.env.AGENT_MODEL || undefined,
     };
 
     console.log(`[agent] chat request: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
