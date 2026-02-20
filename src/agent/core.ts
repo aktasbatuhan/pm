@@ -88,7 +88,7 @@ export async function* chat(
   if (openRouterKey && !process.env.ANTHROPIC_API_KEY) {
     sdkEnv.ANTHROPIC_BASE_URL = "https://openrouter.ai/api";
     sdkEnv.ANTHROPIC_AUTH_TOKEN = openRouterKey;
-    sdkEnv.ANTHROPIC_API_KEY = "";
+    sdkEnv.ANTHROPIC_API_KEY = "sk-not-used";
   }
 
   const q = query({
