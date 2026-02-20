@@ -1368,7 +1368,8 @@ function renderTabBar(tabs) {
     const tabEl = document.createElement("button");
     tabEl.className = `dashboard-tab${activeTabId === tab.id ? " active" : ""}`;
     tabEl.dataset.tabId = tab.id;
-    tabEl.innerHTML = `<span>${escapeHtml(tab.name)}</span><button class="dashboard-tab-delete" title="Delete tab">&times;</button>`;
+    const filterBadge = tab.filters ? `<span class="dashboard-tab-filter" title="${escapeHtml(Object.entries(tab.filters).map(([k,v]) => `${k}=${v}`).join(", "))}">F</span>` : "";
+    tabEl.innerHTML = `<span>${escapeHtml(tab.name)}</span>${filterBadge}<button class="dashboard-tab-delete" title="Delete tab">&times;</button>`;
     tabEl.addEventListener("click", (e) => {
       if (e.target.closest(".dashboard-tab-delete")) return;
       switchTab(tab.id);
@@ -1412,14 +1413,45 @@ async function switchTab(tabId) {
       grid.innerHTML = `<div class="widget-grid-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
     }
   } else {
-    // Hide filters for agent tabs, load widgets from server
+    // Custom tab — check for filters and widgets
     filtersEl.style.display = "none";
-    document.getElementById("dashboard-fetched-at").textContent = "AGENT TAB";
+    const tabMeta = dashboardTabsList.find((t) => t.id === tabId);
+    const tabFilters = tabMeta?.filters || null;
+
     try {
       const res = await fetch(`/api/dashboard/tabs/${tabId}/widgets`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
-      renderWidgetGrid(data.widgets || []);
+      const widgets = data.widgets || [];
+
+      if (widgets.length > 0) {
+        // Tab has explicit widgets — render them
+        document.getElementById("dashboard-fetched-at").textContent = "AGENT TAB";
+        renderWidgetGrid(widgets);
+      } else if (tabFilters) {
+        // Filtered tab with no explicit widgets — load GitHub data, apply filters, auto-generate
+        document.getElementById("dashboard-fetched-at").textContent = "LOADING FILTERED DATA...";
+        const ghRes = await fetch("/api/dashboard");
+        if (!ghRes.ok) throw new Error(`HTTP ${ghRes.status}`);
+        const ghData = await ghRes.json();
+        let items = ghData.items || [];
+
+        // Apply tab filters
+        if (tabFilters.sprint) items = items.filter((i) => String(i.custom_fields?.sprint) === tabFilters.sprint);
+        if (tabFilters.assignee) items = items.filter((i) => i.assignees && i.assignees.includes(tabFilters.assignee));
+        if (tabFilters.priority) items = items.filter((i) => String(i.priority) === tabFilters.priority);
+        if (tabFilters.status) items = items.filter((i) => i.status === tabFilters.status);
+        if (tabFilters.repo) items = items.filter((i) => i.repository === tabFilters.repo);
+
+        const filterDesc = Object.entries(tabFilters).map(([k, v]) => `${k}=${v}`).join(", ");
+        document.getElementById("dashboard-fetched-at").textContent =
+          `FILTERED: ${filterDesc} (${items.length} items)`;
+        renderDashboard(computeClientStats(items));
+      } else {
+        // No widgets, no filters — empty tab
+        document.getElementById("dashboard-fetched-at").textContent = "AGENT TAB";
+        renderWidgetGrid([]);
+      }
     } catch (err) {
       grid.innerHTML = `<div class="widget-grid-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
     }

@@ -151,7 +151,7 @@ You control the user's dashboard. The dashboard uses a **tab system**:
 - **dashboard_add_widget**: Add a widget to a tab. Use \`tab_name\` to specify which tab (creates the tab if new). Defaults to "Custom".
 - **dashboard_remove_widget**: Remove a widget by ID.
 - **dashboard_update_widget**: Update a widget's title, config, or size.
-- **dashboard_set_layout**: Create a new tab with a full set of widgets. Provide \`tab_name\` (required) and \`widgets\` (JSON array). This creates a new tab — it does NOT replace the Project tab.
+- **dashboard_set_layout**: Create a new tab with a full set of widgets. Provide \`tab_name\` (required) and \`widgets\` (JSON array). This creates a new tab — it does NOT replace the Project tab. Optionally set \`filters\` to create a filtered view of GitHub data.
 
 **Widget Types & Config (config must be a JSON string):**
 
@@ -174,8 +174,23 @@ Types: bar, line, doughnut, pie, radar. Colors: #e8912d, #00c853, #ff3d3d, #58a6
 
 **Sizes:** "quarter" (1/4 width, stat cards), "half" (1/2 width), "full" (full width)
 
+**Filtered tabs (dynamic GitHub data views):**
+Use \`filters\` in dashboard_set_layout to create tabs that dynamically filter GitHub project data.
+When filters are set and no widgets are provided, the frontend auto-generates the default dashboard (stat cards + charts + tables) from the filtered data.
+
+Filter keys: "sprint", "assignee", "priority", "status", "repo". Values must match exactly.
+
+Examples:
+- Sprint-specific view: \`dashboard_set_layout\` with tab_name="Sprint 56", filters='{"sprint":"56"}'
+- Assignee view: \`dashboard_set_layout\` with tab_name="Alice's Work", filters='{"assignee":"alice"}'
+- Blocked items: \`dashboard_set_layout\` with tab_name="Blocked", filters='{"status":"Blocked"}'
+- Combined: \`dashboard_set_layout\` with tab_name="Sprint 56 Blockers", filters='{"sprint":"56","status":"Blocked"}'
+
+You can also provide both filters AND widgets — the filters are stored on the tab for reference, and your custom widgets are displayed.
+
 **When to create dashboard tabs:**
 - User asks "show me a sprint review" → dashboard_set_layout with tab_name "Sprint Review" and relevant widgets
+- User asks "show me sprint 56" → dashboard_set_layout with filters={"sprint":"56"} (auto-generated)
 - User asks "show me X" → dashboard_add_widget with a chart/table to a named tab
 - User asks "remove X" → dashboard_remove_widget
 - User says "update the dashboard" → dashboard_update_widget for existing widgets in a tab
@@ -184,6 +199,7 @@ Types: bar, line, doughnut, pie, radar. Colors: #e8912d, #00c853, #ff3d3d, #58a6
 
 **Best practices:**
 - Use descriptive tab names: "Sprint 56 Review", "Team Workload", "PR Overview"
+- For simple filtered views, prefer filters over manually building widgets — it's faster and auto-generates all standard charts
 - Use readable widget IDs like "chart-velocity", "stat-blocked", "table-stale-prs"
 - Stat cards work best in groups of 4 (they each take 1/4 width)
 - Put charts at "half" width in pairs, or "full" for complex charts

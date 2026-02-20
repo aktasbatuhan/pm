@@ -306,7 +306,6 @@ export function createRoutes() {
 
     return streamSSE(c, async (stream) => {
       let fullResponse = "";
-      let hasPartials = false;
       let sdkSessionId: string | undefined;
 
       try {
@@ -322,14 +321,10 @@ export function createRoutes() {
               data: JSON.stringify({}),
             });
           } else if (msg.type === "partial") {
-            hasPartials = true;
             await stream.writeSSE({
               event: "delta",
               data: JSON.stringify({ content: msg.content }),
             });
-            fullResponse += msg.content;
-          } else if (msg.type === "text" && !hasPartials) {
-            // Only use finalized text if no streaming deltas were received
             fullResponse += msg.content;
           } else if (msg.type === "tool_use") {
             console.log(`[agent] tool_use: ${msg.toolName}`, msg.toolInput ? JSON.stringify(msg.toolInput).slice(0, 200) : "(no input)");
@@ -365,7 +360,7 @@ export function createRoutes() {
                 if (action === "set_layout" && msg.toolInput?.tab_name) {
                   const tab = getDb().select().from(dashboardTabs).all()
                     .find((t) => t.name === msg.toolInput!.tab_name);
-                  if (tab) extra = { tab_id: tab.id, tab_name: tab.name, tab_position: tab.position };
+                  if (tab) extra = { tab_id: tab.id, tab_name: tab.name, tab_position: tab.position, tab_filters: tab.filters || null };
                 }
                 await stream.writeSSE({
                   event: "dashboard_update",

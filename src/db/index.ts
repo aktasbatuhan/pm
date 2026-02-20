@@ -136,6 +136,9 @@ function migrate() {
 
   // Add tab_id column to dashboard_widgets
   try { getDb().run(sql`ALTER TABLE dashboard_widgets ADD COLUMN tab_id TEXT`); } catch {}
+
+  // Add filters column to dashboard_tabs
+  try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN filters TEXT`); } catch {}
 }
 
 // Helper to generate IDs

@@ -12,7 +12,7 @@ import { dashboardWidgets, dashboardTabs } from "../db/schema.ts";
 // --- Helpers ---
 
 /** Get or create a tab, returning its ID. */
-function ensureTab(tabName: string): string {
+function ensureTab(tabName: string, filters?: Record<string, string> | null): string {
   const db = getDb();
   // Check if tab with this name exists
   const existing = db
@@ -21,7 +21,16 @@ function ensureTab(tabName: string): string {
     .all()
     .find((t) => t.name.toLowerCase() === tabName.toLowerCase());
 
-  if (existing) return existing.id;
+  if (existing) {
+    // Update filters if provided
+    if (filters !== undefined) {
+      db.update(dashboardTabs)
+        .set({ filters, updatedAt: new Date() })
+        .where(eq(dashboardTabs.id, existing.id))
+        .run();
+    }
+    return existing.id;
+  }
 
   // Create new tab at the end
   const allTabs = db.select({ position: dashboardTabs.position }).from(dashboardTabs).all();
@@ -33,6 +42,7 @@ function ensureTab(tabName: string): string {
     id,
     name: tabName,
     position: nextPos,
+    filters: filters || null,
     createdAt: now,
     updatedAt: now,
   }).run();
@@ -60,6 +70,7 @@ Agent-created tabs are listed with their widgets. Call this first to understand 
         id: tab.id,
         name: tab.name,
         position: tab.position,
+        filters: tab.filters || null,
         widgets: widgets
           .filter((w) => w.tabId === tab.id)
           .map((w) => ({
@@ -223,21 +234,53 @@ const setLayoutTool = tool(
   `Create a new dashboard tab with a full set of widgets. This does NOT replace the built-in Project tab — it creates a new tab alongside it.
 
 Each widget in the array needs: id, type, title, size, config (as object, not string), position.
-The tab_name is required — it becomes a new tab the user can switch to.`,
+The tab_name is required — it becomes a new tab the user can switch to.
+
+**Filtered tabs**: Set filters to create a tab that auto-generates default dashboard widgets from GitHub data filtered by the given criteria. When filters are set AND no widgets are provided, the frontend generates default widgets (stat cards + charts + tables) from the filtered project data. Useful for sprint-specific or assignee-specific views.
+
+Filter keys: "sprint", "assignee", "priority", "status", "repo". Values must match exactly (case-sensitive).`,
   {
     tab_name: z.string().describe("Name for the new dashboard tab (e.g. 'Sprint 56 Review', 'Team Workload')"),
-    widgets: z.string().describe("JSON array of widget objects: [{ id, type, title, size, config, position }]"),
+    widgets: z.string().optional().describe("JSON array of widget objects: [{ id, type, title, size, config, position }]. Optional if filters are set — frontend will auto-generate widgets from filtered data."),
+    filters: z.string().optional().describe('JSON object of filters to apply to GitHub data, e.g. {"sprint":"56"} or {"assignee":"alice","status":"In Progress"}. When set, the tab dynamically filters project data.'),
   },
-  async ({ tab_name, widgets }) => {
+  async ({ tab_name, widgets, filters }) => {
+    // Parse filters if provided
+    let parsedFilters: Record<string, string> | null = null;
+    if (filters) {
+      try {
+        parsedFilters = JSON.parse(filters);
+        if (typeof parsedFilters !== "object" || Array.isArray(parsedFilters)) throw new Error("not object");
+      } catch {
+        return { content: [{ type: "text" as const, text: "Error: filters must be a valid JSON object" }], isError: true };
+      }
+    }
+
+    // If no widgets provided but filters are set, create a filtered tab (frontend auto-generates widgets)
+    if (!widgets && parsedFilters) {
+      const tabId = ensureTab(tab_name, parsedFilters);
+      // Clear any existing widgets — frontend will auto-generate from filtered data
+      getDb().delete(dashboardWidgets).where(eq(dashboardWidgets.tabId, tabId)).run();
+
+      const filterDesc = Object.entries(parsedFilters).map(([k, v]) => `${k}=${v}`).join(", ");
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Dashboard tab "${tab_name}" created with filters: ${filterDesc}. The dashboard will auto-generate widgets from filtered GitHub data.`,
+        }],
+      };
+    }
+
+    // Parse widgets
     let parsed: Array<{ id?: string; type: string; title: string; size?: string; config: Record<string, unknown>; position?: number }>;
     try {
-      parsed = JSON.parse(widgets);
+      parsed = JSON.parse(widgets || "[]");
       if (!Array.isArray(parsed)) throw new Error("not array");
     } catch {
       return { content: [{ type: "text" as const, text: "Error: widgets must be a valid JSON array" }], isError: true };
     }
 
-    const tabId = ensureTab(tab_name);
+    const tabId = ensureTab(tab_name, parsedFilters);
     const now = new Date();
 
     // Clear existing widgets in this tab
@@ -259,10 +302,11 @@ The tab_name is required — it becomes a new tab the user can switch to.`,
       }).run();
     }
 
+    const filterNote = parsedFilters ? ` (filters: ${Object.entries(parsedFilters).map(([k, v]) => `${k}=${v}`).join(", ")})` : "";
     return {
       content: [{
         type: "text" as const,
-        text: `Dashboard tab "${tab_name}" created with ${parsed.length} widgets`,
+        text: `Dashboard tab "${tab_name}" created with ${parsed.length} widgets${filterNote}`,
       }],
     };
   },
