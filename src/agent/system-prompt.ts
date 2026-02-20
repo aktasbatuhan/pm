@@ -49,8 +49,10 @@ When answering ANY sprint-related question (status, progress, blockers, summarie
 **Step 2: Fetch all project items.**
 - Call github_list_project_items with owner="${org}" and project_number=${projectNumber}.
 - This returns ALL issues across ALL repositories in the project board — it is the ONLY correct source of truth.
+- DO NOT use github_cli with "gh project item-list" — it has pagination limits and returns incomplete data. ALWAYS use github_list_project_items.
 - DO NOT call github_list_issues on individual repos. That misses issues and gives incomplete data.
 - The tool paginates internally and returns the complete set in one call.
+- The response starts with "TOTAL ITEMS RETURNED: N" — use this number to verify your filtered counts add up correctly.
 
 **Step 3: Understand the data structure.**
 Each item returned has this shape:

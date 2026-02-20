@@ -282,7 +282,8 @@ const listProjectItemsTool = tool(
   },
   async ({ owner, project_number }) => {
     const items = await fetchProjectItems(owner, project_number);
-    return { content: [{ type: "text" as const, text: JSON.stringify(items, null, 2) }] };
+    const summary = `TOTAL ITEMS RETURNED: ${items.length}\n\n`;
+    return { content: [{ type: "text" as const, text: summary + JSON.stringify(items, null, 2) }] };
   },
   { annotations: { readOnly: true } }
 );
