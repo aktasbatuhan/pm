@@ -42,8 +42,9 @@ export async function* chat(
   images?: ImageAttachment[]
 ): AsyncGenerator<AgentMessage> {
   // Ensure sub-agents use the same model as the main agent (not haiku default)
-  if (config.model && !process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
-    process.env.CLAUDE_CODE_SUBAGENT_MODEL = config.model;
+  const effectiveModel = config.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview";
+  if (!process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
+    process.env.CLAUDE_CODE_SUBAGENT_MODEL = effectiveModel;
   }
 
   // Build prompt: multimodal if images are attached, plain string otherwise

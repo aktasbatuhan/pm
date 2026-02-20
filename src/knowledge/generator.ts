@@ -12,11 +12,11 @@ function getOctokit() {
 
 // --- LLM helper ---
 
-async function callLLM(system: string, user: string): Promise<string> {
-  const isOpenRouter =
-    !!process.env.OPENROUTER_API_KEY && !process.env.ANTHROPIC_API_KEY;
+const DEFAULT_MODEL = process.env.AGENT_MODEL || "google/gemini-3-flash-preview";
 
-  if (isOpenRouter) {
+async function callLLM(system: string, user: string): Promise<string> {
+  // Prefer OpenRouter when available (supports all model providers)
+  if (process.env.OPENROUTER_API_KEY) {
     const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -24,7 +24,7 @@ async function callLLM(system: string, user: string): Promise<string> {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "minimax/minimax-m2.5",
+        model: DEFAULT_MODEL,
         messages: [
           { role: "system", content: system },
           { role: "user", content: user },
@@ -38,7 +38,7 @@ async function callLLM(system: string, user: string): Promise<string> {
     return json.choices[0].message.content;
   }
 
-  // Anthropic direct
+  // Anthropic direct fallback
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
