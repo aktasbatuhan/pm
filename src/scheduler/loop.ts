@@ -2,6 +2,7 @@ import { getDb, newId } from "../db/index.ts";
 import { jobs } from "../db/schema.ts";
 import { eq, lte, and } from "drizzle-orm";
 import { chat, type AgentConfig } from "../agent/core.ts";
+import { sandboxCanUseTool, WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createDashboardMcpServer } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
@@ -38,11 +39,10 @@ function buildJobAgentConfig(resumeSessionId?: string): AgentConfig {
       dashboard: createDashboardMcpServer(),
       ...getRemoteMcpServers(),
     },
-    canUseTool: async (_toolName, input) => {
-      return { behavior: "allow" as const, updatedInput: input };
-    },
+    canUseTool: sandboxCanUseTool,
     resume: sdkResumeId,
     model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+    workingDirectory: WORKSPACE_DIR,
   };
 }
 

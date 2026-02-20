@@ -4,10 +4,16 @@ import {
   type SDKAssistantMessage,
   type SDKResultMessage,
   type SDKPartialAssistantMessage,
+  type SDKUserMessage,
   type McpSdkServerConfigWithInstance,
   type McpServerConfig,
   type CanUseTool,
 } from "@anthropic-ai/claude-agent-sdk";
+
+export interface ImageAttachment {
+  data: string;
+  media_type: string;
+}
 
 export interface AgentConfig {
   systemPrompt: string;
@@ -17,6 +23,7 @@ export interface AgentConfig {
   resume?: string;
   model?: string;
   allowedTools?: string[];
+  workingDirectory?: string;
 }
 
 export interface AgentMessage {
@@ -31,26 +38,70 @@ export interface AgentMessage {
 
 export async function* chat(
   userMessage: string,
-  config: AgentConfig
+  config: AgentConfig,
+  images?: ImageAttachment[]
 ): AsyncGenerator<AgentMessage> {
   // Ensure sub-agents use the same model as the main agent (not haiku default)
   if (config.model && !process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
     process.env.CLAUDE_CODE_SUBAGENT_MODEL = config.model;
   }
 
+  // Build prompt: multimodal if images are attached, plain string otherwise
+  let prompt: string | AsyncIterable<SDKUserMessage>;
+
+  if (images && images.length > 0) {
+    const content: Array<Record<string, unknown>> = [];
+    for (const img of images) {
+      content.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: img.media_type,
+          data: img.data,
+        },
+      });
+    }
+    if (userMessage) {
+      content.push({ type: "text", text: userMessage });
+    }
+
+    async function* generateMessages(): AsyncGenerator<SDKUserMessage> {
+      yield {
+        type: "user" as const,
+        message: {
+          role: "user" as const,
+          content: content as any,
+        },
+        parent_tool_use_id: null,
+        session_id: "",
+      };
+    }
+    prompt = generateMessages();
+  } else {
+    prompt = userMessage;
+  }
+
   const q = query({
-    prompt: userMessage,
+    prompt,
     options: {
       systemPrompt: config.systemPrompt,
       mcpServers: config.mcpServers,
       canUseTool: config.canUseTool,
-      tools: [],
-      allowedTools: config.allowedTools ?? ["mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*", "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*", "mcp__dashboard__*", "mcp__exa__*", "mcp__granola__*"],
+      tools: { type: "preset" as const, preset: "claude_code" as const },
+      allowedTools: config.allowedTools ?? [
+        "mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*",
+        "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*",
+        "mcp__dashboard__*", "mcp__exa__*", "mcp__granola__*",
+        "Bash", "Read", "Write", "Edit", "Glob", "Grep",
+        "WebFetch", "WebSearch",
+      ],
       includePartialMessages: true,
       resume: config.resume,
       sessionId: config.sessionId,
       maxTurns: 20,
-      permissionMode: "default",
+      permissionMode: "bypassPermissions",
+      allowDangerouslySkipPermissions: true,
+      cwd: config.workingDirectory || "/data/workspace",
       model: config.model,
     },
   });

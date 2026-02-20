@@ -3,9 +3,11 @@
 
 DATA_DIR="${DATA_DIR:-/data}"
 KNOWLEDGE_DIR="$DATA_DIR/knowledge"
+WORKSPACE_DIR="$DATA_DIR/workspace"
 
 # Ensure data dir exists first
 mkdir -p "$DATA_DIR"
+mkdir -p "$WORKSPACE_DIR"
 
 # Seed knowledge files from image if not already present
 if [ ! -d "$KNOWLEDGE_DIR" ]; then

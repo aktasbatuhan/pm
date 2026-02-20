@@ -380,6 +380,94 @@ modelSelect.addEventListener("change", () => {
   try { localStorage.setItem("agent-model", modelSelect.value); } catch {}
 });
 
+// --- Image Attachments ---
+
+let pendingImages = []; // { data: string, media_type: string, preview: string }
+
+function addImageFile(file) {
+  if (pendingImages.length >= 5) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = reader.result;
+    const base64 = dataUrl.split(",")[1];
+    pendingImages.push({ data: base64, media_type: file.type, preview: dataUrl });
+    renderImagePreviews();
+    sendBtn.disabled = false;
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderImagePreviews() {
+  const bar = document.getElementById("image-preview-bar");
+  if (pendingImages.length === 0) {
+    bar.style.display = "none";
+    return;
+  }
+  bar.style.display = "flex";
+  bar.innerHTML = pendingImages
+    .map(
+      (img, i) => `
+    <div class="image-preview-item">
+      <img src="${img.preview}" alt="Attachment ${i + 1}" />
+      <button class="image-remove-btn" data-index="${i}">&times;</button>
+    </div>
+  `
+    )
+    .join("");
+
+  bar.querySelectorAll(".image-remove-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      pendingImages.splice(parseInt(btn.dataset.index), 1);
+      renderImagePreviews();
+      if (!inputEl.value.trim() && pendingImages.length === 0) {
+        sendBtn.disabled = true;
+      }
+    });
+  });
+}
+
+// Paste handler — intercept images from clipboard
+document.getElementById("message-input").addEventListener("paste", (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith("image/")) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (file) addImageFile(file);
+    }
+  }
+});
+
+// Drag-drop handler on input area
+const inputArea = document.getElementById("input-area");
+inputArea.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  inputArea.classList.add("drag-over");
+});
+inputArea.addEventListener("dragleave", () => {
+  inputArea.classList.remove("drag-over");
+});
+inputArea.addEventListener("drop", (e) => {
+  e.preventDefault();
+  inputArea.classList.remove("drag-over");
+  for (const file of e.dataTransfer.files) {
+    if (file.type.startsWith("image/")) addImageFile(file);
+  }
+});
+
+// Attach button — hidden file input
+document.getElementById("attach-btn").addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.multiple = true;
+  input.onchange = () => {
+    for (const file of input.files) addImageFile(file);
+  };
+  input.click();
+});
+
 // DOM elements
 const messagesEl = document.getElementById("messages");
 const inputEl = document.getElementById("message-input");
@@ -436,14 +524,14 @@ let currentUser = null;
 
 // Event listeners
 inputEl.addEventListener("input", () => {
-  sendBtn.disabled = !inputEl.value.trim() || isStreaming;
+  sendBtn.disabled = (!inputEl.value.trim() && pendingImages.length === 0) || isStreaming;
   autoResize(inputEl);
 });
 
 inputEl.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
-    if (!isStreaming && inputEl.value.trim()) sendMessage();
+    if (!isStreaming && (inputEl.value.trim() || pendingImages.length > 0)) sendMessage();
   }
 });
 
@@ -568,7 +656,7 @@ async function loadSession(id) {
 
 async function sendMessage() {
   let text = inputEl.value.trim();
-  if (!text || isStreaming) return;
+  if ((!text && pendingImages.length === 0) || isStreaming) return;
 
   // Handle slash commands
   const parts = text.split(" ");
@@ -622,10 +710,17 @@ async function sendMessage() {
   let fullText = "";
 
   try {
+    const payload = { message: text, sessionId: currentSessionId, model: modelSelect.value };
+    if (pendingImages.length > 0) {
+      payload.images = pendingImages.map(({ data, media_type }) => ({ data, media_type }));
+    }
+    pendingImages = [];
+    renderImagePreviews();
+
     const res = await fetch("/api/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text, sessionId: currentSessionId, model: modelSelect.value }),
+      body: JSON.stringify(payload),
     });
 
     const reader = res.body.getReader();
@@ -737,7 +832,8 @@ async function sendMessage() {
             // Add individual tool indicator to details
             const toolEl = document.createElement("div");
             toolEl.className = "tool-indicator";
-            toolEl.innerHTML = `<span class="spinner"></span> ${data.tool}`;
+            const detail = data.detail ? ` <span class="tool-detail">${escapeHtml(data.detail)}</span>` : "";
+            toolEl.innerHTML = `<span class="spinner"></span> ${escapeHtml(data.tool)}${detail}`;
             toolDetails.appendChild(toolEl);
             scrollToBottom();
           } else if (eventType === "done") {
@@ -762,7 +858,7 @@ async function sendMessage() {
   assistantDiv.style.display = "";
   assistantDiv.classList.remove("streaming-cursor");
   isStreaming = false;
-  sendBtn.disabled = !inputEl.value.trim();
+  sendBtn.disabled = !inputEl.value.trim() && pendingImages.length === 0;
   loadSessions();
   updateSessionMeta();
 }
@@ -819,7 +915,10 @@ function appendAssistantMessage(text) {
 
 function renderMarkdown(text) {
   try {
-    return marked.parse(text, { breaks: true, gfm: true });
+    let html = marked.parse(text, { breaks: true, gfm: true });
+    // Style images in responses
+    html = html.replace(/<img /g, '<img loading="lazy" style="max-width:100%;border-radius:4px;" ');
+    return html;
   } catch {
     return escapeHtml(text);
   }

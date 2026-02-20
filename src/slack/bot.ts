@@ -1,5 +1,6 @@
 import { App } from "@slack/bolt";
-import { chat, type AgentConfig } from "../agent/core.ts";
+import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
+import { sandboxCanUseTool, WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import {
   createGitHubMcpServer,
@@ -116,6 +117,7 @@ async function processAgentRequest(
   channelId: string,
   threadTs: string,
   userText: string,
+  images?: ImageAttachment[],
 ): Promise<void> {
   const threadKey = `${channelId}:${threadTs}`;
   if (activeThreads.has(threadKey)) return;
@@ -165,9 +167,10 @@ async function processAgentRequest(
         "mcp__exa__*",
         "mcp__granola__*",
       ],
-      canUseTool: async (_toolName, input) => ({ behavior: "allow" as const, updatedInput: input }),
+      canUseTool: sandboxCanUseTool,
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+      workingDirectory: WORKSPACE_DIR,
     };
 
     // Run agent
@@ -177,7 +180,7 @@ async function processAgentRequest(
     let lastUpdateTime = 0;
 
     try {
-      for await (const msg of chat(userText, config)) {
+      for await (const msg of chat(userText, config, images)) {
         if (msg.type === "partial") {
           fullResponse += msg.content;
           hasPartials = true;
@@ -293,13 +296,40 @@ export function startSlackBot(): void {
   // Handle DMs
   app.message(async ({ message, client }) => {
     if ("bot_id" in message || message.subtype) return;
-    if (!("text" in message) || !message.text) return;
 
     const userId = ("user" in message) ? message.user as string : undefined;
     if (!userId || !isSlackAccessAllowed(userId, message.channel)) return;
 
+    const text = ("text" in message) ? message.text || "" : "";
+    const files = ("files" in message) ? (message as any).files as any[] : [];
+
+    // Download image attachments from Slack
+    const images: ImageAttachment[] = [];
+    if (files && files.length > 0) {
+      for (const file of files) {
+        if (file.mimetype?.startsWith("image/") && file.url_private_download) {
+          try {
+            const resp = await fetch(file.url_private_download, {
+              headers: { Authorization: `Bearer ${process.env.SLACK_BOT_TOKEN}` },
+            });
+            const buffer = await resp.arrayBuffer();
+            const base64 = Buffer.from(buffer).toString("base64");
+            images.push({ data: base64, media_type: file.mimetype });
+          } catch (err) {
+            console.error(`[slack] Failed to download file ${file.name}:`, err);
+          }
+        }
+      }
+    }
+
+    if (!text && images.length === 0) return;
+
     const threadTs = ("thread_ts" in message ? message.thread_ts : undefined) || message.ts;
-    await processAgentRequest(client, message.channel, threadTs!, message.text);
+    await processAgentRequest(
+      client, message.channel, threadTs!,
+      text || "Describe these images",
+      images.length > 0 ? images : undefined,
+    );
   });
 
   // Handle @mentions in channels

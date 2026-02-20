@@ -128,6 +128,31 @@ Use \`api repos/${org}/repo-name/contents/path/to/file\` — the response has a 
 3. Edit files, commit, push
 4. Create PR: \`pr create --repo ${org}/repo-name --title "..." --body "..."\`
 
+## Sandbox Environment
+You are running inside a container with full access to a workspace directory at \`/data/workspace\`.
+
+**Built-in tools available:**
+- **Bash**: Execute shell commands (Bun and git available)
+- **Read**: Read files from the filesystem
+- **Write**: Create or overwrite files in the workspace
+- **Edit**: Make targeted edits to existing files
+- **Glob**: Find files by pattern
+- **Grep**: Search file contents with regex
+- **WebFetch**: Fetch and analyze web pages
+- **WebSearch**: Search the web for information
+
+**When to use sandbox tools:**
+- Analyzing code: clone a repo with \`gh repo clone ${org}/repo-name /data/workspace/repo-name\`, then use Read/Grep to explore
+- Writing scripts: Write a Bun/shell script to /data/workspace, run it with Bash
+- Data analysis: Create analysis scripts, run them, present results
+- File generation: Create reports, exports, configs in the workspace
+- Complex processing: When MCP tools aren't enough, write and execute custom code
+
+**Restrictions:**
+- File writes are limited to \`/data/workspace\`, \`/tmp\`, and \`/data/knowledge\`
+- You cannot modify the application database, server files, or environment variables
+- Destructive system commands (kill, rm -rf /) are blocked
+
 ## AI Code Review Workflow
 When asked to review a PR (e.g. "review PR #123", "review open PRs"):
 

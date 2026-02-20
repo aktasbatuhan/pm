@@ -2,7 +2,8 @@ import * as fs from "fs";
 import * as path from "path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
-import { chat, type AgentConfig } from "../agent/core.ts";
+import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
+import { sandboxCanUseTool, WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
@@ -244,7 +245,24 @@ export function createRoutes() {
       message: string;
       sessionId?: string;
       model?: string;
+      images?: Array<{ data: string; media_type: string }>;
     }>();
+
+    // Validate images
+    const ALLOWED_IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+    if (body.images) {
+      if (body.images.length > 5) {
+        return c.json({ error: "Maximum 5 images per message" }, 400);
+      }
+      for (const img of body.images) {
+        if (!ALLOWED_IMAGE_TYPES.includes(img.media_type)) {
+          return c.json({ error: `Unsupported image type: ${img.media_type}` }, 400);
+        }
+        if (img.data.length > 10_000_000) {
+          return c.json({ error: "Image too large (max ~7.5MB)" }, 400);
+        }
+      }
+    }
 
     const db = getDb();
     let sessionId = body.sessionId;
@@ -264,13 +282,16 @@ export function createRoutes() {
         .run();
     }
 
-    // Save user message
+    // Save user message (with image markers if present)
+    const userContent = body.images?.length
+      ? `${body.message}\n${body.images.map((img, i) => `[Image ${i + 1}: ${img.media_type}]`).join("\n")}`
+      : body.message;
     db.insert(messages)
       .values({
         id: newId(),
         chatSessionId: sessionId,
         role: "user",
-        content: body.message,
+        content: userContent,
         createdAt: new Date(),
       })
       .run();
@@ -296,11 +317,10 @@ export function createRoutes() {
         dashboard: getDashboardServer(),
         ...getRemoteMcpServers(),
       },
-      canUseTool: async (_toolName, input, _options) => {
-        return { behavior: "allow" as const, updatedInput: input };
-      },
+      canUseTool: sandboxCanUseTool,
       resume: session?.sessionId ?? undefined,
       model: body.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+      workingDirectory: WORKSPACE_DIR,
     };
 
     console.log(`[agent] chat request: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
@@ -310,7 +330,13 @@ export function createRoutes() {
       let sdkSessionId: string | undefined;
 
       try {
-        for await (const msg of chat(body.message, agentConfig)) {
+        // Build image attachments if present
+        const imageAttachments: ImageAttachment[] | undefined = body.images?.map((img) => ({
+          data: img.data,
+          media_type: img.media_type,
+        }));
+
+        for await (const msg of chat(body.message, agentConfig, imageAttachments)) {
           if (msg.type === "thinking") {
             await stream.writeSSE({
               event: "thinking",
@@ -369,9 +395,28 @@ export function createRoutes() {
                 });
               }
             } else {
+              const toolData: Record<string, unknown> = { tool: msg.toolName };
+              // Include detail for built-in tools
+              if (msg.toolInput) {
+                if (msg.toolName === "Bash" && msg.toolInput.command) {
+                  toolData.detail = String(msg.toolInput.command).slice(0, 120);
+                } else if (msg.toolName === "Read" && msg.toolInput.file_path) {
+                  toolData.detail = String(msg.toolInput.file_path);
+                } else if ((msg.toolName === "Write" || msg.toolName === "Edit") && msg.toolInput.file_path) {
+                  toolData.detail = String(msg.toolInput.file_path);
+                } else if (msg.toolName === "Grep" && msg.toolInput.pattern) {
+                  toolData.detail = `/${msg.toolInput.pattern}/`;
+                } else if (msg.toolName === "Glob" && msg.toolInput.pattern) {
+                  toolData.detail = String(msg.toolInput.pattern);
+                } else if (msg.toolName === "WebFetch" && msg.toolInput.url) {
+                  toolData.detail = String(msg.toolInput.url).slice(0, 80);
+                } else if (msg.toolName === "WebSearch" && msg.toolInput.query) {
+                  toolData.detail = String(msg.toolInput.query);
+                }
+              }
               await stream.writeSSE({
                 event: "tool",
-                data: JSON.stringify({ tool: msg.toolName }),
+                data: JSON.stringify(toolData),
               });
             }
           } else if (msg.type === "result") {
