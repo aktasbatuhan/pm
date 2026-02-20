@@ -193,12 +193,27 @@
         <button class="btn btn-primary setup-btn" id="btn-connect-project">Connect</button>
       </div>
 
-      <!-- Step 4: Knowledge Generation Progress -->
+      <!-- Step 4: Repository Selection + Knowledge Generation -->
       <div class="setup-step hidden" id="setup-step-4">
-        <h3>Generating Knowledge</h3>
-        <p class="step-desc">Analyzing your repositories and generating knowledge files...</p>
-        <div id="knowledge-progress" class="knowledge-progress-log"></div>
-        <div id="knowledge-progress-status" class="step-status"></div>
+        <div id="repo-selection-phase">
+          <h3>Select Repositories</h3>
+          <p class="step-desc">Choose which repositories to analyze and generate knowledge for.</p>
+          <div id="repo-selection-loading" class="step-status">Discovering repositories...</div>
+          <div id="repo-selection-list" class="repo-selection-list"></div>
+          <div id="repo-selection-actions" class="repo-selection-actions" style="display:none;">
+            <div class="repo-select-controls">
+              <button class="btn-link" id="btn-repos-all">Select All</button>
+              <button class="btn-link" id="btn-repos-none">Select None</button>
+            </div>
+            <button class="btn btn-primary setup-btn" id="btn-generate-knowledge">Generate Knowledge</button>
+          </div>
+        </div>
+        <div id="knowledge-gen-phase" style="display:none;">
+          <h3>Generating Knowledge</h3>
+          <p class="step-desc">Analyzing your repositories and generating knowledge files...</p>
+          <div id="knowledge-progress" class="knowledge-progress-log"></div>
+          <div id="knowledge-progress-status" class="step-status"></div>
+        </div>
       </div>
 
       <!-- Step 5: Knowledge Review -->

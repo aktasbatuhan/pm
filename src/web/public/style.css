@@ -1134,7 +1134,62 @@ html, body {
   display: none;
 }
 
-/* Knowledge Generation Progress (Step 4) */
+/* Repository Selection (Step 4 - Phase 1) */
+.repo-selection-list {
+  max-height: 240px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+}
+
+.repo-selection-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.repo-selection-item:hover {
+  border-color: var(--accent-dim);
+}
+
+.repo-selection-item.selected {
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.repo-selection-item input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+.repo-selection-item .repo-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.repo-selection-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.repo-select-controls {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+/* Knowledge Generation Progress (Step 4 - Phase 2) */
 .knowledge-progress-log {
   background: var(--bg-primary);
   border: 1px solid var(--border);

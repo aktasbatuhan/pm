@@ -319,7 +319,7 @@ document.getElementById("btn-connect-project").addEventListener("click", async (
 
     if (data.success) {
       goToSetupStep(4);
-      startKnowledgeGeneration();
+      discoverRepos();
     } else {
       alert("Failed to save configuration");
     }
@@ -329,14 +329,104 @@ document.getElementById("btn-connect-project").addEventListener("click", async (
   }
 });
 
-// Step 4: SSE knowledge generation with real-time progress
-function startKnowledgeGeneration() {
+// Step 4 Phase 1: Discover repos and show selection
+let discoveredRepos = [];
+
+async function discoverRepos() {
+  const loadingEl = document.getElementById("repo-selection-loading");
+  const listEl = document.getElementById("repo-selection-list");
+  const actionsEl = document.getElementById("repo-selection-actions");
+
+  // Show selection phase, hide generation phase
+  document.getElementById("repo-selection-phase").style.display = "";
+  document.getElementById("knowledge-gen-phase").style.display = "none";
+  loadingEl.textContent = "Discovering repositories...";
+  loadingEl.className = "step-status";
+  listEl.innerHTML = "";
+  actionsEl.style.display = "none";
+
+  try {
+    const res = await fetch("/api/setup/discover-repos", { method: "POST" });
+    const data = await res.json();
+    discoveredRepos = data.repos || [];
+
+    if (discoveredRepos.length === 0) {
+      loadingEl.textContent = "No repositories found in this project.";
+      loadingEl.className = "step-status error";
+      actionsEl.style.display = "";
+      return;
+    }
+
+    loadingEl.textContent = `Found ${discoveredRepos.length} repositories`;
+    loadingEl.className = "step-status success";
+
+    listEl.innerHTML = discoveredRepos.map((repo) => `
+      <label class="repo-selection-item selected" data-repo="${escapeHtml(repo)}">
+        <input type="checkbox" checked />
+        <span class="repo-name">${escapeHtml(repo)}</span>
+      </label>
+    `).join("");
+
+    // Toggle selected class on click
+    listEl.querySelectorAll(".repo-selection-item").forEach((el) => {
+      const cb = el.querySelector("input[type='checkbox']");
+      cb.addEventListener("change", () => {
+        el.classList.toggle("selected", cb.checked);
+      });
+    });
+
+    actionsEl.style.display = "";
+  } catch (err) {
+    loadingEl.textContent = `Error: ${err.message}`;
+    loadingEl.className = "step-status error";
+  }
+}
+
+// Select all / none controls
+document.getElementById("btn-repos-all").addEventListener("click", () => {
+  document.querySelectorAll("#repo-selection-list .repo-selection-item").forEach((el) => {
+    el.querySelector("input[type='checkbox']").checked = true;
+    el.classList.add("selected");
+  });
+});
+
+document.getElementById("btn-repos-none").addEventListener("click", () => {
+  document.querySelectorAll("#repo-selection-list .repo-selection-item").forEach((el) => {
+    el.querySelector("input[type='checkbox']").checked = false;
+    el.classList.remove("selected");
+  });
+});
+
+// Generate knowledge for selected repos
+document.getElementById("btn-generate-knowledge").addEventListener("click", () => {
+  const selected = [];
+  document.querySelectorAll("#repo-selection-list .repo-selection-item").forEach((el) => {
+    if (el.querySelector("input[type='checkbox']").checked) {
+      selected.push(el.dataset.repo);
+    }
+  });
+
+  if (selected.length === 0) {
+    // Skip generation entirely, go to integrations
+    goToSetupStep(6);
+    return;
+  }
+
+  // Switch to generation phase
+  document.getElementById("repo-selection-phase").style.display = "none";
+  document.getElementById("knowledge-gen-phase").style.display = "";
+  startKnowledgeGeneration(selected);
+});
+
+// Step 4 Phase 2: SSE knowledge generation with real-time progress
+function startKnowledgeGeneration(repos) {
   const logEl = document.getElementById("knowledge-progress");
   const statusEl = document.getElementById("knowledge-progress-status");
   logEl.innerHTML = "";
   statusEl.textContent = "";
 
-  const evtSource = new EventSource("/api/setup/generate-knowledge");
+  const reposParam = encodeURIComponent(repos.join(","));
+  const evtSource = new EventSource(`/api/setup/generate-knowledge?repos=${reposParam}`);
 
   evtSource.addEventListener("progress", (e) => {
     const data = JSON.parse(e.data);
@@ -370,7 +460,7 @@ function startKnowledgeGeneration() {
     const data = JSON.parse(e.data);
     statusEl.textContent = `Error: ${data.message}`;
     statusEl.className = "step-status error";
-    appendRetrySkipButtons(statusEl.parentElement);
+    appendRetrySkipButtons(statusEl.parentElement, repos);
   });
 
   evtSource.onerror = () => {
@@ -380,14 +470,13 @@ function startKnowledgeGeneration() {
         evtSource.close();
         statusEl.textContent = "Connection lost during generation.";
         statusEl.className = "step-status error";
-        appendRetrySkipButtons(statusEl.parentElement);
+        appendRetrySkipButtons(statusEl.parentElement, repos);
       }
     }, 5000);
   };
 }
 
-function appendRetrySkipButtons(container) {
-  // Remove any existing retry/skip buttons
+function appendRetrySkipButtons(container, repos) {
   container.querySelectorAll(".setup-retry-btn, .setup-skip-btn").forEach(b => b.remove());
 
   const retryBtn = document.createElement("button");
@@ -396,7 +485,7 @@ function appendRetrySkipButtons(container) {
   retryBtn.style.marginTop = "10px";
   retryBtn.addEventListener("click", () => {
     container.querySelectorAll(".setup-retry-btn, .setup-skip-btn").forEach(b => b.remove());
-    startKnowledgeGeneration();
+    startKnowledgeGeneration(repos);
   });
 
   const skipBtn = document.createElement("button");
@@ -593,8 +682,13 @@ function resetSetupWizard() {
   document.getElementById("setup-token").value = "";
   document.getElementById("token-status").textContent = "";
   document.getElementById("token-status").className = "step-status";
+  document.getElementById("repo-selection-list").innerHTML = "";
+  document.getElementById("repo-selection-actions").style.display = "none";
+  document.getElementById("repo-selection-phase").style.display = "";
+  document.getElementById("knowledge-gen-phase").style.display = "none";
   document.getElementById("knowledge-progress").innerHTML = "";
   document.getElementById("knowledge-progress-status").textContent = "";
+  discoveredRepos = [];
   document.getElementById("setup-linear-key").value = "";
   document.getElementById("setup-exa-key").value = "";
   document.getElementById("setup-posthog-key").value = "";

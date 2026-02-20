@@ -606,8 +606,8 @@ export function createRoutes() {
     return c.json({ success: true, created });
   });
 
-  // SSE endpoint for knowledge generation progress
-  app.get("/setup/generate-knowledge", async (c) => {
+  // Discover repos linked to the configured project
+  app.post("/setup/discover-repos", async (c) => {
     const token = process.env.GITHUB_TOKEN;
     const org = process.env.GITHUB_ORG;
     const projectNumber = parseInt(process.env.GITHUB_PROJECT_NUMBER || "0", 10);
@@ -616,18 +616,32 @@ export function createRoutes() {
       return c.json({ error: "GitHub not configured. Run connect first." }, 400);
     }
 
+    const repos = await discoverReposFromProject(token, org, projectNumber);
+    return c.json({ repos });
+  });
+
+  // SSE endpoint for knowledge generation progress
+  // Accepts ?repos=repo1,repo2 to generate for specific repos
+  app.get("/setup/generate-knowledge", async (c) => {
+    const token = process.env.GITHUB_TOKEN;
+    const org = process.env.GITHUB_ORG;
+
+    if (!token || !org) {
+      return c.json({ error: "GitHub not configured. Run connect first." }, 400);
+    }
+
+    const reposParam = c.req.query("repos");
+    const repos = reposParam ? reposParam.split(",").filter(Boolean) : [];
+
+    if (repos.length === 0) {
+      return c.json({ error: "No repositories specified." }, 400);
+    }
+
     return streamSSE(c, async (stream) => {
       try {
         await stream.writeSSE({
           event: "progress",
-          data: JSON.stringify({ phase: "discovery", message: "Discovering repositories from project..." }),
-        });
-
-        const repos = await discoverReposFromProject(token, org, projectNumber);
-
-        await stream.writeSSE({
-          event: "progress",
-          data: JSON.stringify({ phase: "discovery", message: `Found ${repos.length} repositories: ${repos.join(", ")}` }),
+          data: JSON.stringify({ phase: "discovery", message: `Generating knowledge for ${repos.length} repositories: ${repos.join(", ")}` }),
         });
 
         await generateKnowledge(org, repos, async (msg) => {
