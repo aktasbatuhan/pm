@@ -120,13 +120,17 @@ export async function* chat(
   let emittedThinking = false;
   let emittedTyping = false;
 
+  let msgCount = 0;
   for await (const message of q) {
-    // Log every message type from SDK for debugging
-    if (message.type === "system") {
-      const m = message as any;
-      console.log(`[agent] SDK system/${m.subtype}: tools=[${m.tools?.slice(0, 5).join(", ")}${m.tools?.length > 5 ? "..." : ""}] (${m.tools?.length || 0} total)`);
-    } else if (message.type !== "stream_event") {
-      console.log(`[agent] SDK msg: type=${message.type}`);
+    msgCount++;
+    // Log first few messages and all non-stream messages
+    if (msgCount <= 3 || message.type !== "stream_event") {
+      const summary = message.type === "system"
+        ? `tools=${(message as any).tools?.length || 0}`
+        : message.type === "assistant"
+        ? `blocks=${(message as any).message?.content?.length || 0}`
+        : "";
+      console.log(`[agent] SDK #${msgCount}: type=${message.type} ${summary}`);
     }
 
     for (const parsed of parseMessage(message, emittedThinking, emittedTyping)) {
