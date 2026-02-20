@@ -121,10 +121,12 @@ export async function* chat(
   let emittedTyping = false;
 
   for await (const message of q) {
-    // Log system init message to see loaded tools
-    if (message.type === "system" && (message as any).subtype === "init") {
-      const tools = (message as any).tools;
-      console.log(`[agent] SDK init: tools=[${tools?.join(", ") || "none"}], cwd=${(message as any).cwd}`);
+    // Log every message type from SDK for debugging
+    if (message.type === "system") {
+      const m = message as any;
+      console.log(`[agent] SDK system/${m.subtype}: tools=[${m.tools?.slice(0, 5).join(", ")}${m.tools?.length > 5 ? "..." : ""}] (${m.tools?.length || 0} total)`);
+    } else if (message.type !== "stream_event") {
+      console.log(`[agent] SDK msg: type=${message.type}`);
     }
 
     for (const parsed of parseMessage(message, emittedThinking, emittedTyping)) {
