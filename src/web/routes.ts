@@ -323,7 +323,7 @@ export function createRoutes() {
       workingDirectory: WORKSPACE_DIR,
     };
 
-    console.log(`[agent] chat request: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
+    console.log(`[agent] chat request v2: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
 
     return streamSSE(c, async (stream) => {
       let fullResponse = "";
