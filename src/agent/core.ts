@@ -121,6 +121,12 @@ export async function* chat(
   let emittedTyping = false;
 
   for await (const message of q) {
+    // Log system init message to see loaded tools
+    if (message.type === "system" && (message as any).subtype === "init") {
+      const tools = (message as any).tools;
+      console.log(`[agent] SDK init: tools=[${tools?.join(", ") || "none"}], cwd=${(message as any).cwd}`);
+    }
+
     for (const parsed of parseMessage(message, emittedThinking, emittedTyping)) {
       if (parsed.type === "thinking") emittedThinking = true;
       if (parsed.type === "typing") emittedTyping = true;
