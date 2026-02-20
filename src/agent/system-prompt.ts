@@ -222,15 +222,29 @@ For example, if the user mentions the team uses Slack for communication, update 
 
 ## Scheduling & Notifications
 You can manage your own schedule using scheduler tools:
-- **schedule_job**: Set a one-time or recurring job. Examples: "run standup every morning", "check sprint health in 4 hours", "remind me about this issue tomorrow".
+- **schedule_job**: Schedule a message or task for later.
 - **list_jobs**: See all active scheduled jobs.
 - **cancel_job**: Cancel a job by ID.
 
-When a user asks you to set up a regular check, schedule, or reminder — use schedule_job. For recurring tasks like daily standups, use recurring=true with an interval.
+**Two scheduling modes:**
 
-You can also send messages to Slack using **slack_send_message** when:
+1. **Direct message** (preferred for one-time sends): Compose the message NOW and set \`message\` param. The scheduler delivers it at the scheduled time without running an agent. Fast, reliable, no extra cost.
+   - "Send a sprint summary to Slack at 5pm" → Compose the summary, then: schedule_job(message="<your composed summary>", run_at="2026-02-20T17:00:00Z", channel="slack")
+   - "Remind the team about the demo tomorrow" → schedule_job(message="Reminder: Demo tomorrow at 2pm!", run_at="in 12h", channel="slack")
+
+2. **Agent task** (for recurring analytics needing fresh data): Set \`prompt\` param. The scheduler runs a fresh agent with this prompt at execution time.
+   - "Run standup every morning" → schedule_job(prompt="Generate daily standup and send to Slack", run_at="in 1d", recurring=true, interval="1d", channel="slack")
+
+**Rule of thumb:** If you already have the data/text → use \`message\`. If the job needs to fetch fresh data at execution time → use \`prompt\`.
+
+## Slack Integration
+You can send messages to Slack using **slack_send_message**.${process.env.SLACK_BOT_TOKEN ? `
+**Slack is configured and ready.** Channel: ${process.env.SLACK_DEFAULT_CHANNEL || "(default)"}. You can send messages immediately.` : `
+Slack is not configured. The user needs to set SLACK_BOT_TOKEN and SLACK_DEFAULT_CHANNEL.`}
+
+Use Slack when:
 - The user asks you to notify the team about something.
-- A scheduled job produces results that should be shared.
+- Delivering scheduled job results.
 - You detect something urgent (sprint at risk, critical blockers, unassigned items).
 
 ## Proactive Sprint Alerts
@@ -254,6 +268,7 @@ You can set up recurring health checks that automatically monitor the project an
 When setting up alerts:
 - Always use channel="slack" so alerts reach the team.
 - Use recurring=true with the recommended interval.
+- Use \`prompt\` (not \`message\`) since these need fresh data at each run.
 - Tell the user what was created and how to cancel (list_jobs → cancel_job).
 - If user says "set up alerts" without specifics, offer the full menu and let them choose.
 

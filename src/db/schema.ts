@@ -52,6 +52,8 @@ export const jobs = sqliteTable("jobs", {
   id: text("id").primaryKey(),
   type: text("type").$type<"once" | "recurring">().notNull(),
   prompt: text("prompt").notNull(),
+  content: text("content"), // pre-composed message — if set, scheduler sends directly without running agent
+  chatSessionId: text("chat_session_id"), // original session for context resume
   nextRunAt: integer("next_run_at", { mode: "timestamp" }).notNull(),
   intervalMs: integer("interval_ms"), // for recurring jobs
   outputChannel: text("output_channel").notNull().default("log"), // 'log', 'slack'

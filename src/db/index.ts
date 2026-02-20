@@ -139,6 +139,10 @@ function migrate() {
 
   // Add filters column to dashboard_tabs
   try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN filters TEXT`); } catch {}
+
+  // Add content + chat_session_id columns to jobs (for direct-send and context resume)
+  try { getDb().run(sql`ALTER TABLE jobs ADD COLUMN content TEXT`); } catch {}
+  try { getDb().run(sql`ALTER TABLE jobs ADD COLUMN chat_session_id TEXT`); } catch {}
 }
 
 // Helper to generate IDs

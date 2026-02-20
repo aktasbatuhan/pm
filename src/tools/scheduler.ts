@@ -65,21 +65,43 @@ function parseRunAt(runAt: string): Date | null {
 
 const scheduleJobTool = tool(
   "schedule_job",
-  `Schedule a job to run at a specific time or on a recurring interval.
-The job will execute as a new agent conversation with the given prompt.
-Output is routed to the specified channel (default: log, or slack if configured).
+  `Schedule a job. Two modes:
 
-Examples:
-- One-time: schedule_job(prompt="Check sprint health", run_at="in 4h", channel="slack")
-- Recurring: schedule_job(prompt="Daily standup report", run_at="in 1d", recurring=true, interval="1d", channel="slack")`,
+**1. Send a message later** (preferred for one-time deliveries):
+Set "message" to the exact text to send. The scheduler delivers it directly at the scheduled time — no agent re-run needed. Fast and reliable.
+
+Example: schedule_job(message="Sprint 56 is at 85% completion...", run_at="in 4h", channel="slack")
+
+**2. Run an agent task later** (for recurring analysis that needs fresh data):
+Set "prompt" to the task description. The scheduler runs the agent with this prompt at the scheduled time.
+Use this only when the job needs live data at execution time (e.g. daily standup, sprint health check).
+
+Example: schedule_job(prompt="Generate daily standup report and send to Slack", run_at="in 1d", recurring=true, interval="1d", channel="slack")
+
+You must provide either "message" or "prompt" (not both).`,
   {
-    prompt: z.string().describe("The prompt/task to execute when the job fires"),
+    message: z.string().optional().describe("Pre-composed message to send directly at the scheduled time. No agent re-run — just delivers this text."),
+    prompt: z.string().optional().describe("Agent prompt to execute at the scheduled time. Use only when fresh data is needed (recurring analytics)."),
     run_at: z.string().describe("When to run: ISO timestamp (2026-02-17T09:00:00Z) or relative (in 4h, in 30m, in 1d)"),
     recurring: z.boolean().optional().describe("If true, job repeats on interval after first run"),
     interval: z.string().optional().describe("Repeat interval for recurring jobs (e.g. 30m, 4h, 1d, 7d)"),
     channel: z.string().optional().describe("Output channel: 'log' (default) or 'slack'"),
   },
-  async ({ prompt, run_at, recurring, interval, channel }) => {
+  async ({ message, prompt, run_at, recurring, interval, channel }) => {
+    if (!message && !prompt) {
+      return {
+        content: [{ type: "text" as const, text: "Error: Provide either 'message' (pre-composed text) or 'prompt' (agent task)." }],
+        isError: true,
+      };
+    }
+
+    if (message && prompt) {
+      return {
+        content: [{ type: "text" as const, text: "Error: Provide either 'message' or 'prompt', not both." }],
+        isError: true,
+      };
+    }
+
     const nextRun = parseRunAt(run_at);
     if (!nextRun) {
       return {
@@ -113,7 +135,8 @@ Examples:
       .values({
         id,
         type: recurring ? "recurring" : "once",
-        prompt,
+        prompt: prompt || "(direct message)",
+        content: message || null,
         nextRunAt: nextRun,
         intervalMs: intervalMs,
         outputChannel: channel || "log",
@@ -123,17 +146,23 @@ Examples:
       })
       .run();
 
+    const mode = message ? "direct message" : "agent task";
+    const desc = message
+      ? (message.length > 80 ? message.slice(0, 80) + "..." : message)
+      : (prompt!.length > 80 ? prompt!.slice(0, 80) + "..." : prompt!);
+
     const result = {
       id,
+      mode,
       type: recurring ? "recurring" : "once",
-      prompt: prompt.length > 80 ? prompt.slice(0, 80) + "..." : prompt,
+      content_preview: desc,
       next_run: nextRun.toISOString(),
       interval: interval || null,
       channel: channel || "log",
     };
 
     return {
-      content: [{ type: "text" as const, text: `Job scheduled:\n${JSON.stringify(result, null, 2)}` }],
+      content: [{ type: "text" as const, text: `Job scheduled (${mode}):\n${JSON.stringify(result, null, 2)}` }],
     };
   },
   { annotations: { readOnly: false, destructive: false } }
@@ -157,8 +186,11 @@ const listJobsTool = tool(
 
     const list = allJobs.map((j) => ({
       id: j.id,
+      mode: j.content ? "direct message" : "agent task",
       type: j.type,
-      prompt: j.prompt.length > 80 ? j.prompt.slice(0, 80) + "..." : j.prompt,
+      content_preview: j.content
+        ? (j.content.length > 80 ? j.content.slice(0, 80) + "..." : j.content)
+        : (j.prompt.length > 80 ? j.prompt.slice(0, 80) + "..." : j.prompt),
       next_run: j.nextRunAt instanceof Date ? j.nextRunAt.toISOString() : new Date(j.nextRunAt as unknown as number).toISOString(),
       interval_ms: j.intervalMs,
       channel: j.outputChannel,
