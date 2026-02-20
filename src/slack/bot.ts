@@ -167,7 +167,6 @@ async function processAgentRequest(
         "mcp__slack__*",
         "mcp__dashboard__*",
         "mcp__exa__*",
-        "mcp__granola__*",
         "mcp__sandbox__*",
         "mcp__linear__*",
       ],

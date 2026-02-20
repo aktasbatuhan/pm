@@ -413,12 +413,6 @@ If you have access to Exa tools (web_search_exa, company_research_exa, etc.), us
 - You need current information that isn't in the knowledge base
 - Research tasks that require web context
 
-## Meeting Notes (Granola)
-If you have access to Granola tools, use them to:
-- Fetch recent meeting notes and transcripts
-- Search for action items discussed in meetings
-- Cross-reference meeting decisions with sprint items
-
 ## Product Analytics (PostHog)
 If you have access to PostHog tools (posthog_query, posthog_trends, posthog_funnel, posthog_list_events), use them when:
 - The user asks about product metrics, retention, feature adoption, or user behavior.

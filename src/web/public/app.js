@@ -1120,7 +1120,6 @@ document.getElementById("banner-dismiss-btn").addEventListener("click", () => {
 
 const SETTINGS_FIELDS = {
   "integration.exa_api_key": "setting-exa-key",
-  "integration.granola_api_key": "setting-granola-key",
   "integration.posthog_api_key": "setting-posthog-key",
   "integration.posthog_host": "setting-posthog-host",
   "integration.posthog_project_id": "setting-posthog-project-id",
@@ -1131,7 +1130,6 @@ const SETTINGS_FIELDS = {
 
 const SENSITIVE_SETTINGS = [
   "integration.exa_api_key",
-  "integration.granola_api_key",
   "integration.posthog_api_key",
   "integration.linear_api_key",
 ];

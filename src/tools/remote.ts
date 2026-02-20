@@ -15,22 +15,6 @@ export function createExaMcpServer(): McpServerConfig | null {
 }
 
 /**
- * Create a Granola meeting notes MCP server config (remote HTTP).
- * Returns null if GRANOLA_API_KEY is not set.
- */
-export function createGranolaMcpServer(): McpServerConfig | null {
-  const apiKey = getSettingString("integration.granola_api_key");
-  if (!apiKey) return null;
-  return {
-    type: "http",
-    url: "https://mcp.granola.ai/mcp",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-    },
-  };
-}
-
-/**
  * Create a Linear issue tracking MCP server config (remote HTTP).
  * Returns null if LINEAR_API_KEY is not set.
  */
@@ -55,9 +39,6 @@ export function getRemoteMcpServers(): Record<string, McpServerConfig> {
 
   const exa = createExaMcpServer();
   if (exa) servers.exa = exa;
-
-  const granola = createGranolaMcpServer();
-  if (granola) servers.granola = granola;
 
   const linear = createLinearMcpServer();
   if (linear) servers.linear = linear;

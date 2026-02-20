@@ -5,7 +5,6 @@ import { eq } from "drizzle-orm";
 /** Setting keys → env var fallbacks */
 const ENV_FALLBACK: Record<string, string> = {
   "integration.exa_api_key": "EXA_API_KEY",
-  "integration.granola_api_key": "GRANOLA_API_KEY",
   "integration.posthog_api_key": "POSTHOG_API_KEY",
   "integration.posthog_host": "POSTHOG_HOST",
   "integration.posthog_project_id": "POSTHOG_PROJECT_ID",
@@ -21,7 +20,6 @@ export const SETTING_KEYS = Object.keys(ENV_FALLBACK);
 /** Keys that contain sensitive values (masked in API responses) */
 export const SENSITIVE_KEYS = [
   "integration.exa_api_key",
-  "integration.granola_api_key",
   "integration.posthog_api_key",
   "integration.slack_webhook_url",
   "integration.linear_api_key",
