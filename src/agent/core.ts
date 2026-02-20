@@ -81,6 +81,16 @@ export async function* chat(
     prompt = userMessage;
   }
 
+  // Route Claude Code subprocess through OpenRouter when no Anthropic key
+  // See: https://openrouter.ai/docs/guides/community/anthropic-agent-sdk
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+  const sdkEnv: Record<string, string | undefined> = { ...process.env };
+  if (openRouterKey && !process.env.ANTHROPIC_API_KEY) {
+    sdkEnv.ANTHROPIC_BASE_URL = "https://openrouter.ai/api";
+    sdkEnv.ANTHROPIC_AUTH_TOKEN = openRouterKey;
+    sdkEnv.ANTHROPIC_API_KEY = "";
+  }
+
   const q = query({
     prompt,
     options: {
@@ -102,6 +112,7 @@ export async function* chat(
       allowDangerouslySkipPermissions: true,
       cwd: config.workingDirectory || "/data/workspace",
       model: config.model,
+      env: sdkEnv,
     },
   });
 
