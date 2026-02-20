@@ -413,6 +413,35 @@ export function createRoutes() {
                   data: JSON.stringify({ action, ...msg.toolInput, ...extra }),
                 });
               }
+            } else if (msg.toolName === "mcp__sandbox__sandbox_share_file" && msg.toolInput?.path) {
+              // File sharing — emit SSE event for download chip
+              const inputPath = String(msg.toolInput.path);
+              const resolvedFile = inputPath.startsWith("/")
+                ? inputPath
+                : path.resolve(WORKSPACE_DIR, inputPath);
+              const relPath = resolvedFile.startsWith(WORKSPACE_DIR)
+                ? path.relative(WORKSPACE_DIR, resolvedFile)
+                : path.basename(resolvedFile);
+              const displayName = msg.toolInput.name ? String(msg.toolInput.name) : path.basename(resolvedFile);
+
+              // Get file size if it exists
+              let fileSize = 0;
+              let sizeFormatted = "0KB";
+              try {
+                const stat = fs.statSync(resolvedFile);
+                fileSize = stat.size;
+                sizeFormatted = fileSize > 1048576 ? `${(fileSize / 1048576).toFixed(1)}MB` : `${(fileSize / 1024).toFixed(1)}KB`;
+              } catch {}
+
+              const fileInfo = { path: relPath, name: displayName, size: fileSize, sizeFormatted };
+
+              await stream.writeSSE({
+                event: "file_shared",
+                data: JSON.stringify(fileInfo),
+              });
+
+              // Embed marker in fullResponse so file chips persist in DB
+              fullResponse += `\n<!--FILE:${JSON.stringify(fileInfo)}-->\n`;
             } else {
               const toolData: Record<string, unknown> = { tool: msg.toolName };
               // Include detail for sandbox and other tools
@@ -669,6 +698,54 @@ export function createRoutes() {
           data: JSON.stringify({ message: err instanceof Error ? err.message : String(err) }),
         });
       }
+    });
+  });
+
+  // --- File Download API ---
+
+  app.get("/files/:path{.+}", (c) => {
+    const filePath = c.req.param("path");
+    const resolved = path.resolve(WORKSPACE_DIR, filePath);
+
+    // Security: ensure resolved path is within WORKSPACE_DIR
+    if (!resolved.startsWith(WORKSPACE_DIR + path.sep) && resolved !== WORKSPACE_DIR) {
+      return c.json({ error: "Access denied" }, 403);
+    }
+
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+      return c.json({ error: "File not found" }, 404);
+    }
+
+    const ext = path.extname(resolved).toLowerCase();
+    const mimeTypes: Record<string, string> = {
+      ".csv": "text/csv",
+      ".json": "application/json",
+      ".txt": "text/plain",
+      ".md": "text/markdown",
+      ".html": "text/html",
+      ".xml": "application/xml",
+      ".pdf": "application/pdf",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".gif": "image/gif",
+      ".svg": "image/svg+xml",
+      ".zip": "application/zip",
+      ".tar": "application/x-tar",
+      ".gz": "application/gzip",
+      ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      ".xls": "application/vnd.ms-excel",
+    };
+    const contentType = mimeTypes[ext] || "application/octet-stream";
+    const fileName = path.basename(resolved);
+
+    const fileBuffer = fs.readFileSync(resolved);
+    return new Response(fileBuffer, {
+      headers: {
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Content-Length": String(fileBuffer.length),
+      },
     });
   });
 

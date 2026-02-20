@@ -167,10 +167,62 @@ const listDirTool = tool(
   { annotations: { readOnly: true } }
 );
 
+// --- Share File Tool ---
+
+const shareFileTool = tool(
+  "sandbox_share_file",
+  `Share a file from the workspace with the user so they can download it. Use this after creating files (CSV reports, exports, analysis results, etc.) that the user should be able to download. The file must exist in ${WORKSPACE_DIR} or /tmp.`,
+  {
+    path: z.string().describe("Absolute path or path relative to workspace"),
+    name: z.string().optional().describe("Display name for the download (defaults to filename)"),
+  },
+  async ({ path: filePath, name }) => {
+    const resolved = filePath.startsWith("/")
+      ? filePath
+      : path.resolve(WORKSPACE_DIR, filePath);
+
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) {
+        return {
+          content: [{ type: "text" as const, text: `Error: ${resolved} is not a file` }],
+          isError: true,
+        };
+      }
+
+      // Make path relative to workspace for the download URL
+      const relativePath = resolved.startsWith(WORKSPACE_DIR)
+        ? path.relative(WORKSPACE_DIR, resolved)
+        : path.basename(resolved);
+      const displayName = name || path.basename(resolved);
+      const sizeKb = (stat.size / 1024).toFixed(1);
+
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            shared: true,
+            path: relativePath,
+            name: displayName,
+            size: stat.size,
+            sizeFormatted: stat.size > 1048576 ? `${(stat.size / 1048576).toFixed(1)}MB` : `${sizeKb}KB`,
+          }),
+        }],
+      };
+    } catch {
+      return {
+        content: [{ type: "text" as const, text: `Error: File not found: ${resolved}` }],
+        isError: true,
+      };
+    }
+  },
+  { annotations: { readOnly: true } }
+);
+
 // --- Export ---
 
 const READ_TOOLS = [readFileTool, listDirTool];
-const WRITE_TOOLS = [bashTool, writeFileTool];
+const WRITE_TOOLS = [bashTool, writeFileTool, shareFileTool];
 
 export const SANDBOX_TOOL_NAMES = [...READ_TOOLS, ...WRITE_TOOLS].map((t) => t.name);
 

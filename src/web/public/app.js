@@ -149,6 +149,27 @@ function renderMermaidElement(container, input) {
   });
 }
 
+// --- File Download Chip ---
+
+function renderFileChip(container, fileInfo) {
+  const chip = document.createElement("a");
+  chip.className = "file-download-chip";
+  chip.href = `/api/files/${encodeURIComponent(fileInfo.path)}`;
+  chip.download = fileInfo.name || fileInfo.path;
+  chip.target = "_blank";
+  chip.innerHTML = `
+    <div class="file-download-icon">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 1.75a.25.25 0 01.25-.25h3.168a.75.75 0 01.536.22l2.35 2.35a.75.75 0 01.22.536v7.644a.25.25 0 01-.25.25h-6.02a.25.25 0 01-.254-.25V1.75zm3.75 8.75a.75.75 0 00-1.5 0v1.94l-.72-.72a.75.75 0 00-1.06 1.06l2 2a.75.75 0 001.06 0l2-2a.75.75 0 10-1.06-1.06l-.72.72V10.5z"/></svg>
+    </div>
+    <div class="file-download-info">
+      <span class="file-download-name">${escapeHtml(fileInfo.name || fileInfo.path)}</span>
+      <span class="file-download-size">${escapeHtml(fileInfo.sizeFormatted || '')}</span>
+    </div>
+    <span class="file-download-action">Download</span>
+  `;
+  container.appendChild(chip);
+}
+
 // --- Setup Wizard ---
 
 const setupOverlay = document.getElementById("setup-overlay");
@@ -1137,6 +1158,13 @@ async function sendMessage() {
               fullText += `\n<!--DIAGRAM:${JSON.stringify(data.input)}-->\n`;
             }
             scrollToBottom();
+          } else if (eventType === "file_shared") {
+            thinkingDiv.style.display = "none";
+            assistantDiv.style.display = "";
+            renderFileChip(assistantDiv, data);
+            // Embed marker in fullText so it persists in DB
+            fullText += `\n<!--FILE:${JSON.stringify(data)}-->\n`;
+            scrollToBottom();
           } else if (eventType === "dashboard_update") {
             handleDashboardUpdate(data);
           } else if (eventType === "tool") {
@@ -1227,14 +1255,18 @@ function appendAssistantMessage(text) {
   const div = document.createElement("div");
   div.className = "message message-assistant";
 
-  // Extract visualization markers before rendering markdown
+  // Extract visualization and file markers before rendering markdown
   const chartMarkers = [];
   const diagramMarkers = [];
+  const fileMarkers = [];
   const cleanText = text.replace(/\n?<!--CHART:([\s\S]*?)-->\n?/g, (_, config) => {
     chartMarkers.push(config);
     return "";
   }).replace(/\n?<!--DIAGRAM:([\s\S]*?)-->\n?/g, (_, config) => {
     diagramMarkers.push(config);
+    return "";
+  }).replace(/\n?<!--FILE:([\s\S]*?)-->\n?/g, (_, config) => {
+    fileMarkers.push(config);
     return "";
   });
 
@@ -1259,6 +1291,16 @@ function appendAssistantMessage(text) {
       renderMermaidElement(div, diagramConfig);
     } catch (e) {
       console.error("[viz] Failed to restore diagram:", e);
+    }
+  }
+
+  // Re-render embedded file download chips
+  for (const configStr of fileMarkers) {
+    try {
+      const fileInfo = JSON.parse(configStr);
+      renderFileChip(div, fileInfo);
+    } catch (e) {
+      console.error("[file] Failed to restore file chip:", e);
     }
   }
 
