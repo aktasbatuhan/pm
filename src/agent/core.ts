@@ -82,9 +82,10 @@ export async function* chat(
   }
 
   // Build env vars for Claude Code subprocess — route through OpenRouter
+  // See: https://openrouter.ai/docs/guides/community/anthropic-agent-sdk
   const openRouterKey = process.env.OPENROUTER_API_KEY;
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  if (openRouterKey && !process.env.ANTHROPIC_API_KEY) {
+  if (openRouterKey) {
     sdkEnv.ANTHROPIC_BASE_URL = "https://openrouter.ai/api";
     sdkEnv.ANTHROPIC_AUTH_TOKEN = openRouterKey;
     sdkEnv.ANTHROPIC_API_KEY = "";
