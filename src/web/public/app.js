@@ -152,7 +152,10 @@ function renderMermaidElement(container, input) {
 // --- Setup Wizard ---
 
 const setupOverlay = document.getElementById("setup-overlay");
-const setupState = { token: "", username: "", org: "", selectedProject: null };
+const setupState = {
+  token: "", username: "", org: "", selectedProject: null,
+  knowledgeFileCount: 0, integrationsConfigured: 0,
+};
 
 function showSetup() {
   setupOverlay.classList.remove("hidden");
@@ -293,46 +296,285 @@ document.getElementById("setup-org").addEventListener("keydown", (e) => {
   if (e.key === "Enter") document.getElementById("btn-fetch-projects").click();
 });
 
-// Step 3: Complete
-document.getElementById("btn-complete-setup").addEventListener("click", async () => {
+// Step 3: Connect project (save config, then advance to knowledge generation)
+document.getElementById("btn-connect-project").addEventListener("click", async () => {
   if (!setupState.selectedProject) {
     alert("Select a project first");
     return;
   }
 
-  const genKnowledge = document.getElementById("setup-gen-knowledge").checked;
-  setSetupLoading(true, genKnowledge ? "Generating knowledge files..." : "Saving configuration...");
-
+  setSetupLoading(true, "Saving configuration...");
   try {
-    const res = await fetch("/api/setup/complete", {
+    const res = await fetch("/api/setup/connect", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         token: setupState.token,
         org: setupState.org,
         projectNumber: setupState.selectedProject,
-        generateKnowledgeFiles: genKnowledge,
       }),
     });
     const data = await res.json();
     setSetupLoading(false);
 
-    const logsEl = document.getElementById("setup-logs");
-    logsEl.innerHTML = (data.logs || [])
-      .map((l) => {
-        const cls = l.includes("Skipped") ? "log-warn" : "log-ok";
-        return `<div class="${cls}">${escapeHtml(l)}</div>`;
-      })
-      .join("");
-
-    goToSetupStep(4);
+    if (data.success) {
+      goToSetupStep(4);
+      startKnowledgeGeneration();
+    } else {
+      alert("Failed to save configuration");
+    }
   } catch (err) {
     setSetupLoading(false);
     alert(`Setup failed: ${err.message}`);
   }
 });
 
-// Step 4: Start
+// Step 4: SSE knowledge generation with real-time progress
+function startKnowledgeGeneration() {
+  const logEl = document.getElementById("knowledge-progress");
+  const statusEl = document.getElementById("knowledge-progress-status");
+  logEl.innerHTML = "";
+  statusEl.textContent = "";
+
+  const evtSource = new EventSource("/api/setup/generate-knowledge");
+
+  evtSource.addEventListener("progress", (e) => {
+    const data = JSON.parse(e.data);
+    const line = document.createElement("div");
+    line.className = `progress-line phase-${data.phase}`;
+
+    const icon = (data.phase === "complete" || data.phase === "writing") ? "done" :
+                 data.phase === "warning" ? "warning" : "active";
+    line.innerHTML = `<span class="progress-icon progress-icon-${icon}"></span>${escapeHtml(data.message)}`;
+
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  });
+
+  evtSource.addEventListener("complete", () => {
+    evtSource.close();
+    const line = document.createElement("div");
+    line.className = "progress-line phase-complete";
+    line.innerHTML = '<span class="progress-icon progress-icon-done"></span>Knowledge generation complete';
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+
+    statusEl.textContent = "Complete! Loading files for review...";
+    statusEl.className = "step-status success";
+
+    setTimeout(() => loadKnowledgeForReview(), 1000);
+  });
+
+  evtSource.addEventListener("gen_error", (e) => {
+    evtSource.close();
+    const data = JSON.parse(e.data);
+    statusEl.textContent = `Error: ${data.message}`;
+    statusEl.className = "step-status error";
+    appendRetrySkipButtons(statusEl.parentElement);
+  });
+
+  evtSource.onerror = () => {
+    if (evtSource.readyState === EventSource.CLOSED) return;
+    setTimeout(() => {
+      if (evtSource.readyState !== EventSource.CLOSED) {
+        evtSource.close();
+        statusEl.textContent = "Connection lost during generation.";
+        statusEl.className = "step-status error";
+        appendRetrySkipButtons(statusEl.parentElement);
+      }
+    }, 5000);
+  };
+}
+
+function appendRetrySkipButtons(container) {
+  // Remove any existing retry/skip buttons
+  container.querySelectorAll(".setup-retry-btn, .setup-skip-btn").forEach(b => b.remove());
+
+  const retryBtn = document.createElement("button");
+  retryBtn.className = "btn btn-primary setup-btn setup-retry-btn";
+  retryBtn.textContent = "Retry";
+  retryBtn.style.marginTop = "10px";
+  retryBtn.addEventListener("click", () => {
+    container.querySelectorAll(".setup-retry-btn, .setup-skip-btn").forEach(b => b.remove());
+    startKnowledgeGeneration();
+  });
+
+  const skipBtn = document.createElement("button");
+  skipBtn.className = "btn setup-btn setup-skip-btn";
+  skipBtn.textContent = "Skip to Integrations";
+  skipBtn.style.marginTop = "6px";
+  skipBtn.addEventListener("click", () => goToSetupStep(6));
+
+  container.appendChild(retryBtn);
+  container.appendChild(skipBtn);
+}
+
+// Step 5: Knowledge review carousel
+let krFiles = [];
+let krIndex = 0;
+let krModified = {};
+
+async function loadKnowledgeForReview() {
+  try {
+    const res = await fetch("/api/knowledge");
+    const files = await res.json();
+    const reviewFiles = files.filter(f => f.path !== "skills.md");
+    setupState.knowledgeFileCount = reviewFiles.length;
+
+    if (reviewFiles.length === 0) {
+      goToSetupStep(6);
+      return;
+    }
+
+    krFiles = [];
+    for (const file of reviewFiles) {
+      try {
+        const fileRes = await fetch(`/api/knowledge/${file.path}`);
+        const fileData = await fileRes.json();
+        krFiles.push({ path: file.path, content: fileData.content });
+      } catch {
+        krFiles.push({ path: file.path, content: "(Failed to load)" });
+      }
+    }
+
+    krIndex = 0;
+    krModified = {};
+    goToSetupStep(5);
+    renderKnowledgeReviewFile();
+  } catch (err) {
+    console.error("Failed to load knowledge files:", err);
+    goToSetupStep(6);
+  }
+}
+
+function renderKnowledgeReviewFile() {
+  const file = krFiles[krIndex];
+  document.getElementById("kr-indicator").textContent = `File ${krIndex + 1} of ${krFiles.length}`;
+  document.getElementById("kr-file-name").textContent = file.path;
+  document.getElementById("kr-textarea").value =
+    krModified[file.path] !== undefined ? krModified[file.path] : file.content;
+  document.getElementById("btn-kr-prev").disabled = krIndex === 0;
+  document.getElementById("btn-kr-next").disabled = krIndex === krFiles.length - 1;
+  document.getElementById("kr-save-status").textContent = "";
+}
+
+document.getElementById("kr-textarea").addEventListener("input", () => {
+  const file = krFiles[krIndex];
+  krModified[file.path] = document.getElementById("kr-textarea").value;
+});
+
+document.getElementById("btn-kr-prev").addEventListener("click", () => {
+  if (krIndex > 0) { krIndex--; renderKnowledgeReviewFile(); }
+});
+
+document.getElementById("btn-kr-next").addEventListener("click", () => {
+  if (krIndex < krFiles.length - 1) { krIndex++; renderKnowledgeReviewFile(); }
+});
+
+document.getElementById("btn-kr-save").addEventListener("click", async () => {
+  const file = krFiles[krIndex];
+  const content = document.getElementById("kr-textarea").value;
+  const statusEl = document.getElementById("kr-save-status");
+
+  try {
+    const res = await fetch(`/api/knowledge/${file.path}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (res.ok) {
+      statusEl.textContent = "Saved";
+      statusEl.className = "knowledge-status success";
+      file.content = content;
+      delete krModified[file.path];
+      setTimeout(() => { if (statusEl.textContent === "Saved") statusEl.textContent = ""; }, 2000);
+    } else {
+      statusEl.textContent = "Save failed";
+      statusEl.className = "knowledge-status error";
+    }
+  } catch (err) {
+    statusEl.textContent = "Save failed";
+    statusEl.className = "knowledge-status error";
+  }
+});
+
+document.getElementById("btn-kr-done").addEventListener("click", async () => {
+  const modifiedPaths = Object.keys(krModified);
+  if (modifiedPaths.length > 0) {
+    setSetupLoading(true, "Saving changes...");
+    for (const p of modifiedPaths) {
+      try {
+        await fetch(`/api/knowledge/${p}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: krModified[p] }),
+        });
+      } catch { /* continue */ }
+    }
+    setSetupLoading(false);
+  }
+  goToSetupStep(6);
+});
+
+document.getElementById("btn-kr-skip").addEventListener("click", () => goToSetupStep(6));
+
+// Step 6: Integrations
+document.getElementById("btn-save-integrations").addEventListener("click", async () => {
+  const payload = {};
+  let configured = 0;
+
+  const linearKey = document.getElementById("setup-linear-key").value.trim();
+  const exaKey = document.getElementById("setup-exa-key").value.trim();
+  const posthogKey = document.getElementById("setup-posthog-key").value.trim();
+  const posthogHost = document.getElementById("setup-posthog-host").value.trim();
+  const posthogProjectId = document.getElementById("setup-posthog-project-id").value.trim();
+
+  if (linearKey) { payload["integration.linear_api_key"] = linearKey; configured++; }
+  if (exaKey) { payload["integration.exa_api_key"] = exaKey; configured++; }
+  if (posthogKey) { payload["integration.posthog_api_key"] = posthogKey; configured++; }
+  if (posthogHost) payload["integration.posthog_host"] = posthogHost;
+  if (posthogProjectId) payload["integration.posthog_project_id"] = posthogProjectId;
+
+  setupState.integrationsConfigured = configured;
+
+  if (Object.keys(payload).length > 0) {
+    setSetupLoading(true, "Saving integrations...");
+    try {
+      await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      console.error("Failed to save integrations:", err);
+    }
+    setSetupLoading(false);
+  }
+
+  buildSetupSummary();
+  goToSetupStep(7);
+});
+
+// Step 7: Summary
+function buildSetupSummary() {
+  const summaryEl = document.getElementById("setup-summary");
+  const items = [
+    { label: "GitHub Connected", detail: `${setupState.org} / Project #${setupState.selectedProject}`, done: true },
+    { label: "Knowledge Files Generated", detail: `${setupState.knowledgeFileCount} file${setupState.knowledgeFileCount !== 1 ? "s" : ""}`, done: setupState.knowledgeFileCount > 0 },
+    { label: "Integrations Configured", detail: `${setupState.integrationsConfigured} integration${setupState.integrationsConfigured !== 1 ? "s" : ""}`, done: setupState.integrationsConfigured > 0 },
+  ];
+
+  summaryEl.innerHTML = items.map(item => `
+    <div class="summary-item">
+      <span class="summary-icon ${item.done ? "summary-done" : "summary-skip"}">${item.done ? "+" : "-"}</span>
+      <div class="summary-text">
+        <span class="summary-label">${escapeHtml(item.label)}</span>
+        <span class="summary-detail">${escapeHtml(item.detail)}</span>
+      </div>
+    </div>
+  `).join("");
+}
+
 document.getElementById("btn-start-chat").addEventListener("click", () => {
   hideSetup();
   hideOnboardingBanner();
@@ -341,15 +583,31 @@ document.getElementById("btn-start-chat").addEventListener("click", () => {
 });
 
 // Reconfigure button — reset wizard and show it
-document.getElementById("reconfigure-btn").addEventListener("click", () => {
+function resetSetupWizard() {
   setupState.token = "";
   setupState.username = "";
   setupState.org = "";
   setupState.selectedProject = null;
+  setupState.knowledgeFileCount = 0;
+  setupState.integrationsConfigured = 0;
   document.getElementById("setup-token").value = "";
   document.getElementById("token-status").textContent = "";
   document.getElementById("token-status").className = "step-status";
+  document.getElementById("knowledge-progress").innerHTML = "";
+  document.getElementById("knowledge-progress-status").textContent = "";
+  document.getElementById("setup-linear-key").value = "";
+  document.getElementById("setup-exa-key").value = "";
+  document.getElementById("setup-posthog-key").value = "";
+  document.getElementById("setup-posthog-host").value = "";
+  document.getElementById("setup-posthog-project-id").value = "";
+  krFiles = [];
+  krIndex = 0;
+  krModified = {};
   goToSetupStep(1);
+}
+
+document.getElementById("reconfigure-btn").addEventListener("click", () => {
+  resetSetupWizard();
   showSetup();
 });
 
@@ -1100,14 +1358,7 @@ function hideOnboardingBanner() {
 }
 
 document.getElementById("banner-setup-btn").addEventListener("click", () => {
-  setupState.token = "";
-  setupState.username = "";
-  setupState.org = "";
-  setupState.selectedProject = null;
-  document.getElementById("setup-token").value = "";
-  document.getElementById("token-status").textContent = "";
-  document.getElementById("token-status").className = "step-status";
-  goToSetupStep(1);
+  resetSetupWizard();
   showSetup();
 });
 

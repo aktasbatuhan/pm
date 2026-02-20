@@ -888,13 +888,15 @@ html, body {
 }
 
 .setup-wizard {
-  width: 440px;
-  max-width: 90vw;
+  width: 700px;
+  max-width: 92vw;
+  max-height: 90vh;
   background: var(--bg-secondary);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 24px;
   position: relative;
+  overflow-y: auto;
 }
 
 .setup-header h2 {
@@ -947,7 +949,7 @@ html, body {
 }
 
 .step-line {
-  width: 40px;
+  width: 24px;
   height: 1px;
   background: var(--border);
 }
@@ -1130,6 +1132,261 @@ html, body {
 
 .setup-loading.hidden {
   display: none;
+}
+
+/* Knowledge Generation Progress (Step 4) */
+.knowledge-progress-log {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+  max-height: 280px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+  line-height: 1.8;
+}
+
+.progress-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.progress-icon {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.progress-icon-active {
+  background: var(--accent);
+  animation: pulse-icon 1s ease-in-out infinite;
+}
+
+.progress-icon-done {
+  background: var(--green);
+}
+
+.progress-icon-warning {
+  background: var(--yellow);
+}
+
+.progress-icon-error {
+  background: var(--red);
+}
+
+@keyframes pulse-icon {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.phase-collecting { color: var(--text-secondary); }
+.phase-fetching { color: var(--text-secondary); }
+.phase-synthesizing { color: var(--accent); }
+.phase-writing { color: var(--green); }
+.phase-warning { color: var(--yellow); }
+.phase-complete { color: var(--green); font-weight: 500; }
+
+/* Knowledge Review Carousel (Step 5) */
+.knowledge-review-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.kr-indicator {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.kr-file-name {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.kr-textarea {
+  width: 100%;
+  height: 260px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  outline: none;
+  resize: vertical;
+  padding: 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  tab-size: 2;
+  margin-bottom: 8px;
+}
+
+.kr-textarea:focus {
+  border-color: var(--accent-dim);
+}
+
+.kr-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 4px 0;
+  display: block;
+  text-align: center;
+}
+
+.btn-link:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+}
+
+/* Integration Cards (Step 6) */
+.step-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+  font-style: italic;
+}
+
+.integration-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+
+.integration-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.integration-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.integration-name {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+  display: block;
+}
+
+.integration-desc {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  display: block;
+}
+
+.integration-card .setup-input {
+  margin-bottom: 4px;
+}
+
+.integration-card .setup-input:last-of-type {
+  margin-bottom: 0;
+}
+
+/* Setup Summary (Step 7) */
+.setup-summary {
+  margin-bottom: 16px;
+}
+
+.summary-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.summary-item:last-child {
+  border-bottom: none;
+}
+
+.summary-icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: var(--radius);
+  flex-shrink: 0;
+}
+
+.summary-done {
+  color: var(--green);
+  background: var(--green-dim);
+}
+
+.summary-skip {
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+}
+
+.summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.summary-label {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.summary-detail {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
 }
 
 /* Knowledge Hub Overlay */

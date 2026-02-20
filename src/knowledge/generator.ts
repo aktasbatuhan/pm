@@ -481,30 +481,30 @@ ${data.recentIssues.map((i) => `- ${i.title} [${i.state}]`).join("\n") || "None"
 export async function generateFullKnowledge(
   org: string,
   repoNames: string[],
-  onProgress?: (msg: string) => void
+  onProgress?: (msg: string) => void | Promise<void>
 ): Promise<void> {
   if (!existsSync(KNOWLEDGE_DIR)) mkdirSync(KNOWLEDGE_DIR, { recursive: true });
 
   // Phase 1: Collect data
-  onProgress?.("Collecting organization data...");
+  await onProgress?.("Collecting organization data...");
   const orgData = await collectOrgData(org);
 
-  onProgress?.(`Collecting data for ${repoNames.length} repositories...`);
+  await onProgress?.(`Collecting data for ${repoNames.length} repositories...`);
   const repoDataMap: RawRepoData[] = [];
   for (const repo of repoNames) {
-    onProgress?.(`Fetching ${repo}...`);
+    await onProgress?.(`Fetching ${repo}...`);
     try {
       const data = await collectRepoData(org, repo);
       repoDataMap.push(data);
     } catch (err) {
-      onProgress?.(
+      await onProgress?.(
         `Skipped ${repo}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
   }
 
   // Write company.md (non-LLM, fast reference)
-  onProgress?.("Writing company.md...");
+  await onProgress?.("Writing company.md...");
   await generateCompanyKnowledge(org);
 
   // Phase 2: LLM synthesis
@@ -512,24 +512,24 @@ export async function generateFullKnowledge(
     !!process.env.ANTHROPIC_API_KEY || !!process.env.OPENROUTER_API_KEY;
 
   if (!hasLLMKey) {
-    onProgress?.(
+    await onProgress?.(
       "No LLM API key found — writing raw knowledge files (no synthesis)"
     );
     for (const data of repoDataMap) {
       await generateRepoKnowledge(org, data.name);
-      onProgress?.(`repos/${data.name}.md written (raw)`);
+      await onProgress?.(`repos/${data.name}.md written (raw)`);
     }
     return;
   }
 
   // Generate overview.md
-  onProgress?.("Synthesizing overview with Claude...");
+  await onProgress?.("Synthesizing overview with Claude...");
   try {
     const overview = await synthesizeOverview(orgData, repoDataMap);
     writeFileSync(join(KNOWLEDGE_DIR, "overview.md"), overview);
-    onProgress?.("overview.md generated");
+    await onProgress?.("overview.md generated");
   } catch (err) {
-    onProgress?.(
+    await onProgress?.(
       `overview.md failed: ${err instanceof Error ? err.message : String(err)}`
     );
   }
@@ -544,18 +544,18 @@ export async function generateFullKnowledge(
     const batch = repoDataMap.slice(i, i + batchSize);
     const results = await Promise.allSettled(
       batch.map(async (repo) => {
-        onProgress?.(`Synthesizing ${repo.name}...`);
+        await onProgress?.(`Synthesizing ${repo.name}...`);
         const content = await synthesizeRepoKnowledge(repo, orgContext);
         writeFileSync(join(reposDir, `${repo.name}.md`), content);
-        onProgress?.(`repos/${repo.name}.md generated`);
+        await onProgress?.(`repos/${repo.name}.md generated`);
       })
     );
     for (const r of results) {
       if (r.status === "rejected") {
-        onProgress?.(`Failed: ${r.reason}`);
+        await onProgress?.(`Failed: ${r.reason}`);
       }
     }
   }
 
-  onProgress?.("Knowledge generation complete");
+  await onProgress?.("Knowledge generation complete");
 }

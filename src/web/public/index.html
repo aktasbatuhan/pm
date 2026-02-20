@@ -148,7 +148,7 @@
     <div class="setup-wizard">
       <div class="setup-header">
         <h2>PM Agent Setup</h2>
-        <p class="setup-subtitle">Connect your GitHub Project to get started.</p>
+        <p class="setup-subtitle">Connect your GitHub Project and configure your workspace.</p>
       </div>
 
       <div class="step-indicators">
@@ -159,6 +159,12 @@
         <span class="step-dot" data-step="3">3</span>
         <span class="step-line"></span>
         <span class="step-dot" data-step="4">4</span>
+        <span class="step-line"></span>
+        <span class="step-dot" data-step="5">5</span>
+        <span class="step-line"></span>
+        <span class="step-dot" data-step="6">6</span>
+        <span class="step-line"></span>
+        <span class="step-dot" data-step="7">7</span>
       </div>
 
       <!-- Step 1: Token -->
@@ -184,17 +190,84 @@
         <h3>Select Project</h3>
         <p class="step-desc">Choose the GitHub Project v2 board to connect.</p>
         <div id="projects-list" class="projects-list"></div>
-        <label class="setup-checkbox">
-          <input type="checkbox" id="setup-gen-knowledge" checked />
-          <span>Auto-generate knowledge files</span>
-        </label>
-        <button class="btn btn-primary setup-btn" id="btn-complete-setup">Connect</button>
+        <button class="btn btn-primary setup-btn" id="btn-connect-project">Connect</button>
       </div>
 
-      <!-- Step 4: Done -->
+      <!-- Step 4: Knowledge Generation Progress -->
       <div class="setup-step hidden" id="setup-step-4">
+        <h3>Generating Knowledge</h3>
+        <p class="step-desc">Analyzing your repositories and generating knowledge files...</p>
+        <div id="knowledge-progress" class="knowledge-progress-log"></div>
+        <div id="knowledge-progress-status" class="step-status"></div>
+      </div>
+
+      <!-- Step 5: Knowledge Review -->
+      <div class="setup-step hidden" id="setup-step-5">
+        <h3>Review Knowledge Files</h3>
+        <p class="step-desc">Review and edit the generated knowledge files. These help the agent understand your project.</p>
+        <div class="knowledge-review-nav">
+          <button class="btn btn-sm" id="btn-kr-prev" disabled>&larr; Previous</button>
+          <span id="kr-indicator" class="kr-indicator">File 1 of 1</span>
+          <button class="btn btn-sm" id="btn-kr-next">Next &rarr;</button>
+        </div>
+        <div id="kr-file-name" class="kr-file-name"></div>
+        <textarea id="kr-textarea" class="kr-textarea" spellcheck="false"></textarea>
+        <div class="kr-actions">
+          <span id="kr-save-status" class="knowledge-status"></span>
+          <button class="btn btn-sm" id="btn-kr-save">Save Changes</button>
+          <button class="btn btn-primary setup-btn" id="btn-kr-done" style="width:auto;">Continue</button>
+        </div>
+        <button class="btn-link" id="btn-kr-skip">Skip Review</button>
+      </div>
+
+      <!-- Step 6: Integrations -->
+      <div class="setup-step hidden" id="setup-step-6">
+        <h3>Integrations</h3>
+        <p class="step-desc">Configure optional integrations to enhance your PM Agent.</p>
+        <p class="step-hint">All optional — you can configure these later in Settings.</p>
+
+        <div class="integration-card">
+          <div class="integration-header">
+            <span class="integration-icon">L</span>
+            <div>
+              <span class="integration-name">Linear</span>
+              <span class="integration-desc">Issue tracking — cycles, sprints, team workload</span>
+            </div>
+          </div>
+          <input type="password" id="setup-linear-key" class="setup-input" placeholder="lin_api_..." autocomplete="off" />
+        </div>
+
+        <div class="integration-card">
+          <div class="integration-header">
+            <span class="integration-icon">E</span>
+            <div>
+              <span class="integration-name">Exa</span>
+              <span class="integration-desc">Web search — industry news, competitor analysis</span>
+            </div>
+          </div>
+          <input type="password" id="setup-exa-key" class="setup-input" placeholder="exa-..." autocomplete="off" />
+        </div>
+
+        <div class="integration-card">
+          <div class="integration-header">
+            <span class="integration-icon">P</span>
+            <div>
+              <span class="integration-name">PostHog</span>
+              <span class="integration-desc">Product analytics — usage metrics, feature adoption</span>
+            </div>
+          </div>
+          <input type="password" id="setup-posthog-key" class="setup-input" placeholder="phx_..." autocomplete="off" />
+          <input type="text" id="setup-posthog-host" class="setup-input" placeholder="https://us.posthog.com" />
+          <input type="text" id="setup-posthog-project-id" class="setup-input" placeholder="Project ID (e.g. 12345)" />
+        </div>
+
+        <button class="btn btn-primary setup-btn" id="btn-save-integrations">Continue</button>
+      </div>
+
+      <!-- Step 7: Complete -->
+      <div class="setup-step hidden" id="setup-step-7">
         <h3>Setup Complete</h3>
-        <div id="setup-logs" class="setup-logs"></div>
+        <div id="setup-summary" class="setup-summary"></div>
         <button class="btn btn-primary setup-btn" id="btn-start-chat">Start Chatting</button>
       </div>
 

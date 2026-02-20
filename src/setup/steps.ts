@@ -155,7 +155,7 @@ export async function discoverReposFromProject(
 export async function generateKnowledge(
   org: string,
   repoNames: string[],
-  onProgress?: (msg: string) => void,
+  onProgress?: (msg: string) => void | Promise<void>,
   token?: string
 ): Promise<void> {
   // The generator reads process.env.GITHUB_TOKEN — ensure it's set
@@ -183,6 +183,28 @@ function loadEnv(): Record<string, string> {
 function saveEnvFile(env: Record<string, string>) {
   const lines = Object.entries(env).map(([k, v]) => `${k}=${v}`);
   writeFileSync(ENV_PATH, lines.join("\n") + "\n");
+}
+
+export function saveGitHubConfig(opts: {
+  token: string;
+  org: string;
+  projectNumber: number;
+}): { created: boolean } {
+  const env = loadEnv();
+  const existed = existsSync(ENV_PATH);
+
+  env.GITHUB_TOKEN = opts.token;
+  env.GITHUB_ORG = opts.org;
+  env.GITHUB_PROJECT_NUMBER = String(opts.projectNumber);
+  if (!env.PORT) env.PORT = "3000";
+
+  saveEnvFile(env);
+
+  process.env.GITHUB_TOKEN = opts.token;
+  process.env.GITHUB_ORG = opts.org;
+  process.env.GITHUB_PROJECT_NUMBER = String(opts.projectNumber);
+
+  return { created: !existed };
 }
 
 export function completeSetup(opts: {

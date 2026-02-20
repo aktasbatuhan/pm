@@ -31,6 +31,7 @@ import {
   discoverReposFromProject,
   generateKnowledge,
   completeSetup,
+  saveGitHubConfig,
 } from "../setup/steps.ts";
 
 // Shared MCP server instances
@@ -42,6 +43,17 @@ let visualizationServer: ReturnType<typeof createVisualizationMcpServer> | null 
 let posthogServer: ReturnType<typeof createPostHogMcpServer> | null = null;
 let dashboardServer: ReturnType<typeof createDashboardMcpServer> | null = null;
 let sandboxServer: ReturnType<typeof createSandboxMcpServer> | null = null;
+
+function resetMcpServers() {
+  githubServer = null;
+  knowledgeServer = null;
+  schedulerServer = null;
+  slackServer = null;
+  visualizationServer = null;
+  posthogServer = null;
+  dashboardServer = null;
+  sandboxServer = null;
+}
 
 function getGitHubServer() {
   if (!githubServer) githubServer = createGitHubMcpServer();
@@ -571,16 +583,79 @@ export function createRoutes() {
     });
     logs.push(created ? ".env created" : ".env updated");
 
-    // Reset cached MCP servers so they pick up new config
-    githubServer = null;
-    knowledgeServer = null;
-    schedulerServer = null;
-    slackServer = null;
-    visualizationServer = null;
-    posthogServer = null;
-    dashboardServer = null;
+    resetMcpServers();
 
     return c.json({ success: true, logs });
+  });
+
+  // Save GitHub config only (no knowledge generation)
+  app.post("/setup/connect", async (c) => {
+    const body = await c.req.json<{
+      token: string;
+      org: string;
+      projectNumber: number;
+    }>();
+
+    const { created } = saveGitHubConfig({
+      token: body.token,
+      org: body.org,
+      projectNumber: body.projectNumber,
+    });
+
+    resetMcpServers();
+    return c.json({ success: true, created });
+  });
+
+  // SSE endpoint for knowledge generation progress
+  app.get("/setup/generate-knowledge", async (c) => {
+    const token = process.env.GITHUB_TOKEN;
+    const org = process.env.GITHUB_ORG;
+    const projectNumber = parseInt(process.env.GITHUB_PROJECT_NUMBER || "0", 10);
+
+    if (!token || !org || !projectNumber) {
+      return c.json({ error: "GitHub not configured. Run connect first." }, 400);
+    }
+
+    return streamSSE(c, async (stream) => {
+      try {
+        await stream.writeSSE({
+          event: "progress",
+          data: JSON.stringify({ phase: "discovery", message: "Discovering repositories from project..." }),
+        });
+
+        const repos = await discoverReposFromProject(token, org, projectNumber);
+
+        await stream.writeSSE({
+          event: "progress",
+          data: JSON.stringify({ phase: "discovery", message: `Found ${repos.length} repositories: ${repos.join(", ")}` }),
+        });
+
+        await generateKnowledge(org, repos, async (msg) => {
+          let phase = "generating";
+          if (msg.includes("Collecting")) phase = "collecting";
+          else if (msg.includes("Fetching")) phase = "fetching";
+          else if (msg.includes("Synthesizing")) phase = "synthesizing";
+          else if (msg.includes("generated") || msg.includes("written") || msg.includes("Writing")) phase = "writing";
+          else if (msg.includes("complete")) phase = "complete";
+          else if (msg.includes("Skipped") || msg.includes("Failed") || msg.includes("failed")) phase = "warning";
+
+          await stream.writeSSE({
+            event: "progress",
+            data: JSON.stringify({ phase, message: msg }),
+          });
+        }, token);
+
+        await stream.writeSSE({
+          event: "complete",
+          data: JSON.stringify({ success: true }),
+        });
+      } catch (err) {
+        await stream.writeSSE({
+          event: "gen_error",
+          data: JSON.stringify({ message: err instanceof Error ? err.message : String(err) }),
+        });
+      }
+    });
   });
 
   // --- Dashboard API ---
