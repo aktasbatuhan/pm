@@ -1739,13 +1739,13 @@ async function loadActivity() {
     const activities = data.activities || [];
     if (!activities.length) return;
 
-    const activityWidget = createWidgetElement({
-      id: "activity-feed",
-      type: "chart",
-      title: "Recent Activity",
-      size: "full",
-      config: {},
-    });
+    const activityWidget = document.createElement("div");
+    activityWidget.className = "widget widget-full";
+    activityWidget.id = "widget-activity-feed";
+    activityWidget.innerHTML = `
+      <div class="widget-header"><span>Recent Activity</span></div>
+      <div class="widget-body"></div>
+    `;
 
     const body = activityWidget.querySelector(".widget-body");
     body.innerHTML = `
