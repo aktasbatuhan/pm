@@ -21,6 +21,7 @@ import {
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages, users, invites, dashboardWidgets, dashboardTabs } from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
+import { refreshTab } from "../scheduler/tab-refresh.ts";
 import { KNOWLEDGE_DIR } from "../paths.ts";
 import {
   getSetupStatus,
@@ -610,7 +611,13 @@ export function createRoutes() {
       .select()
       .from(dashboardTabs)
       .orderBy(dashboardTabs.position)
-      .all();
+      .all()
+      .map((t) => ({
+        ...t,
+        refreshPrompt: t.refreshPrompt || null,
+        refreshIntervalMs: t.refreshIntervalMs || null,
+        lastRefreshedAt: t.lastRefreshedAt?.toISOString() || null,
+      }));
     return c.json({ tabs });
   });
 
@@ -630,6 +637,26 @@ export function createRoutes() {
     getDb().delete(dashboardWidgets).where(eq(dashboardWidgets.tabId, tabId)).run();
     getDb().delete(dashboardTabs).where(eq(dashboardTabs.id, tabId)).run();
     return c.json({ success: true });
+  });
+
+  // Manual tab refresh
+  app.post("/dashboard/tabs/:id/refresh", async (c) => {
+    const tabId = c.req.param("id");
+    const tab = getDb()
+      .select()
+      .from(dashboardTabs)
+      .where(eq(dashboardTabs.id, tabId))
+      .get();
+
+    if (!tab) return c.json({ error: "Tab not found" }, 404);
+    if (!tab.refreshPrompt) return c.json({ error: "Tab has no refresh prompt configured" }, 400);
+
+    // Run refresh in background, return immediately
+    refreshTab(tab).catch((err) =>
+      console.error(`[routes] Manual refresh failed for tab ${tabId}:`, err)
+    );
+
+    return c.json({ success: true, message: "Refresh started" });
   });
 
   app.put("/dashboard/tabs/reorder", async (c) => {

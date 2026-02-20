@@ -143,6 +143,11 @@ function migrate() {
   // Add content + chat_session_id columns to jobs (for direct-send and context resume)
   try { getDb().run(sql`ALTER TABLE jobs ADD COLUMN content TEXT`); } catch {}
   try { getDb().run(sql`ALTER TABLE jobs ADD COLUMN chat_session_id TEXT`); } catch {}
+
+  // Tab refresh columns
+  try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN refresh_prompt TEXT`); } catch {}
+  try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN refresh_interval_ms INTEGER`); } catch {}
+  try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN last_refreshed_at INTEGER`); } catch {}
 }
 
 // Helper to generate IDs

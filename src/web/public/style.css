@@ -1788,6 +1788,40 @@ html, body {
   flex-shrink: 0;
 }
 
+.tab-refresh-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  margin-left: 2px;
+  padding: 0;
+  border-radius: 2px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+}
+
+.tab-refresh-btn:hover {
+  color: var(--accent);
+  background: var(--accent-muted);
+}
+
+.tab-refresh-btn.loading {
+  animation: spin 0.8s linear infinite;
+  color: var(--accent);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* --- Widget Grid (Agent-Controlled Dashboard) --- */
 
 .widget-grid {

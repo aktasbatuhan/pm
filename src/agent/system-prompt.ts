@@ -256,7 +256,7 @@ Types: bar, line, doughnut, pie, radar. Colors: #e8912d, #00c853, #ff3d3d, #58a6
 Use \`filters\` in dashboard_set_layout to create tabs that dynamically filter GitHub project data.
 When filters are set and no widgets are provided, the frontend auto-generates the default dashboard (stat cards + charts + tables) from the filtered data.
 
-Filter keys: "sprint", "assignee", "priority", "status", "repo". Values must match exactly.
+Filter keys: "sprint", "assignee", "priority", "status", "repo". Values are matched case-insensitively.
 
 Examples:
 - Sprint-specific view: \`dashboard_set_layout\` with tab_name="Sprint 56", filters='{"sprint":"56"}'
@@ -265,6 +265,13 @@ Examples:
 - Combined: \`dashboard_set_layout\` with tab_name="Sprint 56 Blockers", filters='{"sprint":"56","status":"Blocked"}'
 
 You can also provide both filters AND widgets — the filters are stored on the tab for reference, and your custom widgets are displayed.
+
+**Tab Refresh:**
+When creating tabs with \`dashboard_set_layout\`, you can make them auto-refreshable:
+- \`refresh_prompt\`: A self-contained prompt that will be run to regenerate the tab's data (e.g. "Fetch all blocked items from Sprint 56 and update the tab with current counts and issue list"). When set, the tab shows a refresh button.
+- \`refresh_interval_minutes\`: How often to auto-refresh (e.g. 30 for every 30 minutes). Omit for manual-only refresh.
+- Always set \`refresh_prompt\` for data-driven tabs so they stay current. The prompt should include all context needed to rebuild the tab — don't reference "the current sprint" without specifying which one.
+- The refresh agent only has access to GitHub, knowledge, and dashboard tools — no Slack or scheduler.
 
 **When to create dashboard tabs:**
 - User asks "show me a sprint review" → dashboard_set_layout with tab_name "Sprint Review" and relevant widgets

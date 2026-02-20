@@ -1442,6 +1442,10 @@ function computeClientStats(items) {
   };
 }
 
+function ciEquals(a, b) {
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
+
 function applyDashboardFilters() {
   if (activeTabId !== "project") return; // filters only apply to project tab
   const sprint = filterEls.sprint.value;
@@ -1451,11 +1455,11 @@ function applyDashboardFilters() {
   const repo = filterEls.repo.value;
 
   let filtered = dashboardItems;
-  if (sprint) filtered = filtered.filter((i) => String(i.custom_fields?.sprint) === sprint);
-  if (assignee) filtered = filtered.filter((i) => i.assignees && i.assignees.includes(assignee));
-  if (priority) filtered = filtered.filter((i) => String(i.priority) === priority);
-  if (status) filtered = filtered.filter((i) => i.status === status);
-  if (repo) filtered = filtered.filter((i) => i.repository === repo);
+  if (sprint) filtered = filtered.filter((i) => ciEquals(i.custom_fields?.sprint, sprint));
+  if (assignee) filtered = filtered.filter((i) => i.assignees && i.assignees.some((a) => ciEquals(a, assignee)));
+  if (priority) filtered = filtered.filter((i) => ciEquals(i.priority, priority));
+  if (status) filtered = filtered.filter((i) => ciEquals(i.status, status));
+  if (repo) filtered = filtered.filter((i) => ciEquals(i.repository, repo));
 
   renderDashboard(computeClientStats(filtered));
 }
@@ -1480,9 +1484,12 @@ function renderTabBar(tabs) {
     tabEl.className = `dashboard-tab${activeTabId === tab.id ? " active" : ""}`;
     tabEl.dataset.tabId = tab.id;
     const filterBadge = tab.filters ? `<span class="dashboard-tab-filter" title="${escapeHtml(Object.entries(tab.filters).map(([k,v]) => `${k}=${v}`).join(", "))}">F</span>` : "";
-    tabEl.innerHTML = `<span>${escapeHtml(tab.name)}</span>${filterBadge}<button class="dashboard-tab-delete" title="Delete tab">&times;</button>`;
+    const refreshBtn = tab.refreshPrompt
+      ? `<button class="tab-refresh-btn" data-tab-id="${tab.id}" title="${tab.lastRefreshedAt ? `Last updated: ${formatTimeAgo(new Date(tab.lastRefreshedAt))}` : 'Refresh tab data'}">&#x21bb;</button>`
+      : "";
+    tabEl.innerHTML = `<span>${escapeHtml(tab.name)}</span>${filterBadge}${refreshBtn}<button class="dashboard-tab-delete" title="Delete tab">&times;</button>`;
     tabEl.addEventListener("click", (e) => {
-      if (e.target.closest(".dashboard-tab-delete")) return;
+      if (e.target.closest(".dashboard-tab-delete") || e.target.closest(".tab-refresh-btn")) return;
       switchTab(tab.id);
     });
     tabEl.querySelector(".dashboard-tab-delete").addEventListener("click", async (e) => {
@@ -1492,6 +1499,22 @@ function renderTabBar(tabs) {
       if (activeTabId === tab.id) activeTabId = "project";
       await loadDashboard();
     });
+    const refreshBtnEl = tabEl.querySelector(".tab-refresh-btn");
+    if (refreshBtnEl) {
+      refreshBtnEl.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        refreshBtnEl.classList.add("loading");
+        try {
+          await fetch(`/api/dashboard/tabs/${tab.id}/refresh`, { method: "POST" });
+          // Reload after a short delay to let the refresh agent work
+          setTimeout(() => loadDashboard(), 3000);
+        } catch (err) {
+          console.error("Refresh failed:", err);
+        } finally {
+          setTimeout(() => refreshBtnEl.classList.remove("loading"), 2000);
+        }
+      });
+    }
     container.appendChild(tabEl);
   }
 }
@@ -1537,7 +1560,10 @@ async function switchTab(tabId) {
 
       if (widgets.length > 0) {
         // Tab has explicit widgets — render them
-        document.getElementById("dashboard-fetched-at").textContent = "AGENT TAB";
+        const updatedInfo = tabMeta?.lastRefreshedAt
+          ? `UPDATED: ${formatTimeAgo(new Date(tabMeta.lastRefreshedAt))}`
+          : "AGENT TAB";
+        document.getElementById("dashboard-fetched-at").textContent = updatedInfo;
         renderWidgetGrid(widgets);
       } else if (tabFilters) {
         // Filtered tab with no explicit widgets — load GitHub data, apply filters, auto-generate
@@ -1547,12 +1573,12 @@ async function switchTab(tabId) {
         const ghData = await ghRes.json();
         let items = ghData.items || [];
 
-        // Apply tab filters
-        if (tabFilters.sprint) items = items.filter((i) => String(i.custom_fields?.sprint) === tabFilters.sprint);
-        if (tabFilters.assignee) items = items.filter((i) => i.assignees && i.assignees.includes(tabFilters.assignee));
-        if (tabFilters.priority) items = items.filter((i) => String(i.priority) === tabFilters.priority);
-        if (tabFilters.status) items = items.filter((i) => i.status === tabFilters.status);
-        if (tabFilters.repo) items = items.filter((i) => i.repository === tabFilters.repo);
+        // Apply tab filters (case-insensitive)
+        if (tabFilters.sprint) items = items.filter((i) => ciEquals(i.custom_fields?.sprint, tabFilters.sprint));
+        if (tabFilters.assignee) items = items.filter((i) => i.assignees && i.assignees.some((a) => ciEquals(a, tabFilters.assignee)));
+        if (tabFilters.priority) items = items.filter((i) => ciEquals(i.priority, tabFilters.priority));
+        if (tabFilters.status) items = items.filter((i) => ciEquals(i.status, tabFilters.status));
+        if (tabFilters.repo) items = items.filter((i) => ciEquals(i.repository, tabFilters.repo));
 
         const filterDesc = Object.entries(tabFilters).map(([k, v]) => `${k}=${v}`).join(", ");
         document.getElementById("dashboard-fetched-at").textContent =
@@ -1784,8 +1810,8 @@ function handleDashboardUpdate(data) {
     return;
   }
 
-  if (data.action === "add") {
-    // A widget was added — reload tabs (may have created a new tab) and refresh
+  if (data.action === "add" || data.action === "refresh") {
+    // A widget was added or a tab was refreshed — reload
     loadDashboard();
     return;
   }

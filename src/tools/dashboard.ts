@@ -11,9 +11,26 @@ import { dashboardWidgets, dashboardTabs } from "../db/schema.ts";
 
 // --- Helpers ---
 
+interface TabOptions {
+  filters?: Record<string, string> | null;
+  refreshPrompt?: string | null;
+  refreshIntervalMs?: number | null;
+}
+
 /** Get or create a tab, returning its ID. */
-function ensureTab(tabName: string, filters?: Record<string, string> | null): string {
+function ensureTab(tabName: string, opts?: TabOptions | Record<string, string> | null): string {
   const db = getDb();
+
+  // Normalize: if opts is a plain filters object (legacy call), wrap it
+  let options: TabOptions;
+  if (opts === null || opts === undefined) {
+    options = {};
+  } else if ("refreshPrompt" in opts || "refreshIntervalMs" in opts || "filters" in opts) {
+    options = opts as TabOptions;
+  } else {
+    options = { filters: opts as Record<string, string> };
+  }
+
   // Check if tab with this name exists
   const existing = db
     .select()
@@ -22,10 +39,14 @@ function ensureTab(tabName: string, filters?: Record<string, string> | null): st
     .find((t) => t.name.toLowerCase() === tabName.toLowerCase());
 
   if (existing) {
-    // Update filters if provided
-    if (filters !== undefined) {
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+    if (options.filters !== undefined) updates.filters = options.filters;
+    if (options.refreshPrompt !== undefined) updates.refreshPrompt = options.refreshPrompt;
+    if (options.refreshIntervalMs !== undefined) updates.refreshIntervalMs = options.refreshIntervalMs;
+
+    if (Object.keys(updates).length > 1) {
       db.update(dashboardTabs)
-        .set({ filters, updatedAt: new Date() })
+        .set(updates)
         .where(eq(dashboardTabs.id, existing.id))
         .run();
     }
@@ -42,7 +63,10 @@ function ensureTab(tabName: string, filters?: Record<string, string> | null): st
     id,
     name: tabName,
     position: nextPos,
-    filters: filters || null,
+    filters: options.filters || null,
+    refreshPrompt: options.refreshPrompt || null,
+    refreshIntervalMs: options.refreshIntervalMs || null,
+    lastRefreshedAt: options.refreshPrompt ? now : null,
     createdAt: now,
     updatedAt: now,
   }).run();
@@ -71,6 +95,9 @@ Agent-created tabs are listed with their widgets. Call this first to understand 
         name: tab.name,
         position: tab.position,
         filters: tab.filters || null,
+        refreshPrompt: tab.refreshPrompt || null,
+        refreshIntervalMs: tab.refreshIntervalMs || null,
+        lastRefreshedAt: tab.lastRefreshedAt?.toISOString() || null,
         widgets: widgets
           .filter((w) => w.tabId === tab.id)
           .map((w) => ({
@@ -238,13 +265,15 @@ The tab_name is required — it becomes a new tab the user can switch to.
 
 **Filtered tabs**: Set filters to create a tab that auto-generates default dashboard widgets from GitHub data filtered by the given criteria. When filters are set AND no widgets are provided, the frontend generates default widgets (stat cards + charts + tables) from the filtered project data. Useful for sprint-specific or assignee-specific views.
 
-Filter keys: "sprint", "assignee", "priority", "status", "repo". Values must match exactly (case-sensitive).`,
+Filter keys: "sprint", "assignee", "priority", "status", "repo". Values are matched case-insensitively.`,
   {
     tab_name: z.string().describe("Name for the new dashboard tab (e.g. 'Sprint 56 Review', 'Team Workload')"),
     widgets: z.string().optional().describe("JSON array of widget objects: [{ id, type, title, size, config, position }]. Optional if filters are set — frontend will auto-generate widgets from filtered data."),
     filters: z.string().optional().describe('JSON object of filters to apply to GitHub data, e.g. {"sprint":"56"} or {"assignee":"alice","status":"In Progress"}. When set, the tab dynamically filters project data.'),
+    refresh_prompt: z.string().optional().describe("A self-contained prompt that will be run to refresh this tab's data. E.g. 'Fetch all blocked items from Sprint 56 and update the tab with current counts and issue list'. When set, the tab becomes refreshable."),
+    refresh_interval_minutes: z.number().optional().describe("Auto-refresh interval in minutes (e.g. 30 for every 30 minutes). Omit for manual-only refresh. Only used when refresh_prompt is set."),
   },
-  async ({ tab_name, widgets, filters }) => {
+  async ({ tab_name, widgets, filters, refresh_prompt, refresh_interval_minutes }) => {
     // Parse filters if provided
     let parsedFilters: Record<string, string> | null = null;
     if (filters) {
@@ -256,9 +285,15 @@ Filter keys: "sprint", "assignee", "priority", "status", "repo". Values must mat
       }
     }
 
+    const refreshIntervalMs = refresh_interval_minutes ? Math.round(refresh_interval_minutes * 60000) : null;
+
     // If no widgets provided but filters are set, create a filtered tab (frontend auto-generates widgets)
     if (!widgets && parsedFilters) {
-      const tabId = ensureTab(tab_name, parsedFilters);
+      const tabId = ensureTab(tab_name, {
+        filters: parsedFilters,
+        refreshPrompt: refresh_prompt || null,
+        refreshIntervalMs,
+      });
       // Clear any existing widgets — frontend will auto-generate from filtered data
       getDb().delete(dashboardWidgets).where(eq(dashboardWidgets.tabId, tabId)).run();
 
@@ -280,7 +315,11 @@ Filter keys: "sprint", "assignee", "priority", "status", "repo". Values must mat
       return { content: [{ type: "text" as const, text: "Error: widgets must be a valid JSON array" }], isError: true };
     }
 
-    const tabId = ensureTab(tab_name, parsedFilters);
+    const tabId = ensureTab(tab_name, {
+      filters: parsedFilters,
+      refreshPrompt: refresh_prompt || null,
+      refreshIntervalMs,
+    });
     const now = new Date();
 
     // Clear existing widgets in this tab

@@ -68,6 +68,9 @@ export const dashboardTabs = sqliteTable("dashboard_tabs", {
   name: text("name").notNull(),
   position: integer("position").notNull().default(0),
   filters: text("filters", { mode: "json" }).$type<Record<string, string> | null>(),
+  refreshPrompt: text("refresh_prompt"),
+  refreshIntervalMs: integer("refresh_interval_ms"),
+  lastRefreshedAt: integer("last_refreshed_at", { mode: "timestamp" }),
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });

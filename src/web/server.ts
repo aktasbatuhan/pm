@@ -3,6 +3,7 @@ import { serveStatic } from "hono/bun";
 import { createRoutes } from "./routes.ts";
 import { authMiddleware, createAuthRoutes } from "./auth.ts";
 import { startJobLoop } from "../scheduler/loop.ts";
+import { startTabRefreshLoop } from "../scheduler/tab-refresh.ts";
 import { startSlackBot } from "../slack/bot.ts";
 
 export function createServer() {
@@ -30,8 +31,9 @@ export function startServer(port: number = 3000) {
   console.log(`\n  PM Agent Web UI`);
   console.log(`  http://localhost:${port}\n`);
 
-  // Start background job loop
+  // Start background loops
   startJobLoop();
+  startTabRefreshLoop();
 
   // Start Slack bot if configured
   startSlackBot();
