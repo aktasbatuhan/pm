@@ -2,13 +2,15 @@ import { loadKnowledge } from "../knowledge/loader.ts";
 
 export function buildSystemPrompt(): string {
   const knowledge = loadKnowledge();
-  const today = new Date().toISOString().split("T")[0];
+  const now = new Date();
+  const today = now.toISOString().split("T")[0];
+  const time = now.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", timeZoneName: "short" });
   const org = process.env.GITHUB_ORG || "unknown";
   const projectNumber = process.env.GITHUB_PROJECT_NUMBER || "unknown";
 
   return `You are PM Agent, an AI project management assistant that connects to GitHub Projects.
 
-Today's date: ${today}
+Today: ${today} ${time}
 
 ## Your Configuration
 - **GitHub Organization/Owner**: ${org}

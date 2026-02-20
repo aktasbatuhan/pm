@@ -167,7 +167,7 @@ async function processAgentRequest(
       ],
       canUseTool: async (_toolName, input) => ({ behavior: "allow" as const, updatedInput: input }),
       resume: sdkResumeId,
-      model: process.env.AGENT_MODEL || undefined,
+      model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
     };
 
     // Run agent

@@ -300,7 +300,7 @@ export function createRoutes() {
         return { behavior: "allow" as const, updatedInput: input };
       },
       resume: session?.sessionId ?? undefined,
-      model: body.model || process.env.AGENT_MODEL || undefined,
+      model: body.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
     };
 
     console.log(`[agent] chat request: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
