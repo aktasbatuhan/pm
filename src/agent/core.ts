@@ -33,6 +33,11 @@ export async function* chat(
   userMessage: string,
   config: AgentConfig
 ): AsyncGenerator<AgentMessage> {
+  // Ensure sub-agents use the same model as the main agent (not haiku default)
+  if (config.model && !process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
+    process.env.CLAUDE_CODE_SUBAGENT_MODEL = config.model;
+  }
+
   const q = query({
     prompt: userMessage,
     options: {
