@@ -1124,6 +1124,7 @@ const SETTINGS_FIELDS = {
   "integration.posthog_api_key": "setting-posthog-key",
   "integration.posthog_host": "setting-posthog-host",
   "integration.posthog_project_id": "setting-posthog-project-id",
+  "integration.linear_api_key": "setting-linear-key",
   "slack.allowed_users": "setting-slack-users",
   "slack.allowed_channels": "setting-slack-channels",
 };
@@ -1132,6 +1133,7 @@ const SENSITIVE_SETTINGS = [
   "integration.exa_api_key",
   "integration.granola_api_key",
   "integration.posthog_api_key",
+  "integration.linear_api_key",
 ];
 
 const ARRAY_SETTINGS = ["slack.allowed_users", "slack.allowed_channels"];

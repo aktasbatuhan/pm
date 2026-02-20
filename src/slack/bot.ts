@@ -169,6 +169,7 @@ async function processAgentRequest(
         "mcp__exa__*",
         "mcp__granola__*",
         "mcp__sandbox__*",
+        "mcp__linear__*",
       ],
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",

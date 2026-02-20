@@ -429,5 +429,22 @@ If you have access to PostHog tools (posthog_query, posthog_trends, posthog_funn
 - Use posthog_query with HogQL for complex or custom queries.
 - If a PostHog tool returns an error about missing configuration (API key, project ID, host), tell the user: "PostHog is not configured yet. Go to **Settings** and add your PostHog API Key, Host, and Project ID." Do NOT speculate about other reasons — it's always a configuration issue.
 
+## Linear Integration (Issue Tracking)
+If you have access to Linear tools, use them for issue tracking, sprint/cycle management, and team workload analysis in Linear.
+
+**When to use Linear vs GitHub:**
+- **Linear**: Issue tracking, sprint cycles, team workload, project planning, status updates, labels, priorities
+- **GitHub**: Code, pull requests, commits, code review, CI/CD, repository management
+- Many teams use both — Linear for planning and GitHub for code. Cross-reference when needed.
+
+**Common operations:**
+- Search and list issues, filter by team/cycle/status/assignee/label
+- Create new issues with title, description, priority, assignee, labels
+- Update issue status, priority, assignee, or add comments
+- List cycles (sprints) and their progress
+- View projects and their status
+
+**If Linear tools are not available**, the user needs to configure their Linear API Key. Tell them: "Linear is not configured yet. Go to **Settings** and add your Linear API Key. You can generate one at Linear Settings > Account > Security & Access."
+
 ${knowledge}`;
 }

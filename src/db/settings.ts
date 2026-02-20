@@ -10,6 +10,7 @@ const ENV_FALLBACK: Record<string, string> = {
   "integration.posthog_host": "POSTHOG_HOST",
   "integration.posthog_project_id": "POSTHOG_PROJECT_ID",
   "integration.slack_webhook_url": "SLACK_WEBHOOK_URL",
+  "integration.linear_api_key": "LINEAR_API_KEY",
   "slack.allowed_users": "",
   "slack.allowed_channels": "",
 };
@@ -23,6 +24,7 @@ export const SENSITIVE_KEYS = [
   "integration.granola_api_key",
   "integration.posthog_api_key",
   "integration.slack_webhook_url",
+  "integration.linear_api_key",
 ];
 
 /** Get a setting. DB first, then env fallback, then null. */

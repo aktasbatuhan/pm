@@ -92,7 +92,7 @@ export async function* chat(
         "mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*",
         "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*",
         "mcp__dashboard__*", "mcp__exa__*", "mcp__granola__*",
-        "mcp__sandbox__*",
+        "mcp__sandbox__*", "mcp__linear__*",
       ],
       includePartialMessages: true,
       resume: config.resume,

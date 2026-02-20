@@ -31,6 +31,22 @@ export function createGranolaMcpServer(): McpServerConfig | null {
 }
 
 /**
+ * Create a Linear issue tracking MCP server config (remote HTTP).
+ * Returns null if LINEAR_API_KEY is not set.
+ */
+export function createLinearMcpServer(): McpServerConfig | null {
+  const apiKey = getSettingString("integration.linear_api_key");
+  if (!apiKey) return null;
+  return {
+    type: "http",
+    url: "https://mcp.linear.app/mcp",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+    },
+  };
+}
+
+/**
  * Collect all configured remote MCP servers.
  * Only includes servers whose API keys are set.
  */
@@ -42,6 +58,9 @@ export function getRemoteMcpServers(): Record<string, McpServerConfig> {
 
   const granola = createGranolaMcpServer();
   if (granola) servers.granola = granola;
+
+  const linear = createLinearMcpServer();
+  if (linear) servers.linear = linear;
 
   return servers;
 }
