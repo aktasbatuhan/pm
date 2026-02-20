@@ -95,6 +95,52 @@ function getSandboxServer() {
   return sandboxServer;
 }
 
+// Human-readable tool labels
+const TOOL_LABELS: Record<string, string> = {
+  "mcp__github__github_list_project_items": "Fetching project items",
+  "mcp__github__github_list_project_fields": "Loading field configuration",
+  "mcp__github__github_cli": "Running GitHub CLI",
+  "mcp__github__github_list_issues": "Listing issues",
+  "mcp__sandbox__sandbox_bash": "Running command",
+  "mcp__sandbox__sandbox_write_file": "Writing file",
+  "mcp__sandbox__sandbox_read_file": "Reading file",
+  "mcp__sandbox__sandbox_list_dir": "Listing directory",
+  "mcp__sandbox__sandbox_share_file": "Sharing file",
+  "mcp__visualization__render_chart": "Generating chart",
+  "mcp__visualization__render_diagram": "Generating diagram",
+  "mcp__knowledge__knowledge_list_files": "Checking knowledge base",
+  "mcp__knowledge__knowledge_read_file": "Reading knowledge",
+  "mcp__knowledge__knowledge_update_file": "Updating knowledge",
+  "mcp__knowledge__knowledge_append_to_file": "Updating knowledge",
+  "mcp__dashboard__dashboard_get_state": "Reading dashboard",
+  "mcp__dashboard__dashboard_set_layout": "Building dashboard",
+  "mcp__dashboard__dashboard_add_widget": "Adding widget",
+  "mcp__dashboard__dashboard_remove_widget": "Removing widget",
+  "mcp__dashboard__dashboard_update_widget": "Updating widget",
+  "mcp__scheduler__schedule_job": "Scheduling job",
+  "mcp__scheduler__list_jobs": "Listing scheduled jobs",
+  "mcp__scheduler__cancel_job": "Cancelling job",
+  "mcp__slack__slack_send_message": "Sending to Slack",
+  "mcp__posthog__posthog_query": "Querying analytics",
+  "mcp__posthog__posthog_trends": "Fetching trends",
+  "mcp__posthog__posthog_funnel": "Analyzing funnel",
+  "mcp__posthog__posthog_list_events": "Listing events",
+  "mcp__linear__linear_search_issues": "Searching Linear",
+  "mcp__linear__linear_create_issue": "Creating Linear issue",
+  "mcp__linear__linear_update_issue": "Updating Linear issue",
+  "mcp__linear__linear_list_cycles": "Listing Linear cycles",
+  "mcp__exa__web_search_exa": "Searching the web",
+  "mcp__exa__company_research_exa": "Researching company",
+};
+
+function formatToolName(name: string): string {
+  // Strip mcp__server__ prefix and humanize
+  const stripped = name.replace(/^mcp__\w+__/, "");
+  return stripped
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 // Pending approval state (simple in-memory for localhost)
 const pendingApprovals = new Map<
   string,
@@ -361,6 +407,11 @@ export function createRoutes() {
               event: "thinking",
               data: JSON.stringify({}),
             });
+          } else if (msg.type === "thinking_delta") {
+            await stream.writeSSE({
+              event: "thinking_delta",
+              data: JSON.stringify({ content: msg.content }),
+            });
           } else if (msg.type === "typing") {
             await stream.writeSSE({
               event: "typing",
@@ -444,6 +495,8 @@ export function createRoutes() {
               fullResponse += `\n<!--FILE:${JSON.stringify(fileInfo)}-->\n`;
             } else {
               const toolData: Record<string, unknown> = { tool: msg.toolName };
+              // Add human-readable label
+              toolData.label = TOOL_LABELS[msg.toolName || ""] || formatToolName(msg.toolName || "");
               // Include detail for sandbox and other tools
               if (msg.toolInput) {
                 if (msg.toolName === "mcp__sandbox__sandbox_bash" && msg.toolInput.command) {

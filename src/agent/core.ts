@@ -27,7 +27,7 @@ export interface AgentConfig {
 }
 
 export interface AgentMessage {
-  type: "text" | "tool_use" | "result" | "partial" | "thinking" | "typing";
+  type: "text" | "tool_use" | "result" | "partial" | "thinking" | "typing" | "thinking_delta";
   content: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
@@ -176,7 +176,9 @@ function parseMessage(
       }
     } else if (msg.event.type === "content_block_delta") {
       const delta = msg.event.delta;
-      if ("text" in delta) {
+      if ("thinking" in delta) {
+        results.push({ type: "thinking_delta", content: (delta as any).thinking });
+      } else if ("text" in delta) {
         if (!alreadyTyping) {
           results.push({ type: "typing", content: "" });
         }

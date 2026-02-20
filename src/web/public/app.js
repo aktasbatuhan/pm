@@ -1050,12 +1050,12 @@ async function sendMessage() {
   inputEl.style.height = "auto";
   sendBtn.disabled = true;
 
-  // Create thinking indicator
-  const thinkingDiv = document.createElement("div");
-  thinkingDiv.className = "thinking-indicator";
-  thinkingDiv.innerHTML = '<div class="thinking-dots"><span></span><span></span><span></span></div><span class="thinking-label">Thinking...</span>';
-  thinkingDiv.style.display = "none";
-  messagesEl.appendChild(thinkingDiv);
+  // Create activity bar
+  const activityBar = document.createElement("div");
+  activityBar.className = "activity-bar";
+  activityBar.innerHTML = '<div class="activity-spinner"></div><span class="activity-label">Thinking...</span>';
+  activityBar.style.display = "none";
+  messagesEl.appendChild(activityBar);
 
   // Create assistant message container
   const assistantDiv = document.createElement("div");
@@ -1081,6 +1081,7 @@ async function sendMessage() {
 
   isStreaming = true;
   let fullText = "";
+  let thinkingContent = "";
 
   try {
     const payload = { message: text, sessionId: currentSessionId, model: modelSelect.value };
@@ -1117,15 +1118,19 @@ async function sendMessage() {
             : "delta";
 
           if (eventType === "thinking") {
-            thinkingDiv.style.display = "flex";
-            thinkingDiv.querySelector(".thinking-label").textContent = "Thinking...";
+            activityBar.style.display = "flex";
+            activityBar.querySelector(".activity-label").textContent = "Thinking...";
             scrollToBottom();
+          } else if (eventType === "thinking_delta") {
+            if (data.content) {
+              thinkingContent += data.content;
+            }
           } else if (eventType === "typing") {
-            thinkingDiv.querySelector(".thinking-label").textContent = "Typing...";
+            activityBar.querySelector(".activity-label").textContent = "Composing response...";
             scrollToBottom();
           } else if (eventType === "delta" || !eventLine) {
             if (data.content) {
-              thinkingDiv.style.display = "none";
+              activityBar.style.display = "none";
               assistantDiv.style.display = "";
               fullText += data.content;
 
@@ -1134,42 +1139,45 @@ async function sendMessage() {
               if (textContainer) {
                 textContainer.innerHTML = renderMarkdown(fullText);
               } else {
-                // Fallback if text container doesn't exist
                 assistantDiv.innerHTML = renderMarkdown(fullText);
               }
 
               scrollToBottom();
             }
           } else if (eventType === "visualization") {
-            thinkingDiv.style.display = "none";
+            activityBar.style.display = "none";
+            activityBar.querySelector(".activity-label").textContent = "Rendering visualization...";
             assistantDiv.style.display = "";
             if (data.tool === "render_chart") {
               try {
                 const chartConfig = JSON.parse(data.input.config);
                 renderChartElement(assistantDiv, chartConfig);
-                // Embed marker in fullText so it persists in DB
                 fullText += `\n<!--CHART:${data.input.config}-->\n`;
               } catch (e) {
                 console.error("[viz] Failed to parse chart config:", e);
               }
             } else if (data.tool === "render_diagram") {
               renderMermaidElement(assistantDiv, data.input);
-              // Embed marker in fullText so it persists in DB
               fullText += `\n<!--DIAGRAM:${JSON.stringify(data.input)}-->\n`;
             }
             scrollToBottom();
           } else if (eventType === "file_shared") {
-            thinkingDiv.style.display = "none";
+            activityBar.style.display = "none";
             assistantDiv.style.display = "";
             renderFileChip(assistantDiv, data);
-            // Embed marker in fullText so it persists in DB
             fullText += `\n<!--FILE:${JSON.stringify(data)}-->\n`;
             scrollToBottom();
           } else if (eventType === "dashboard_update") {
             handleDashboardUpdate(data);
           } else if (eventType === "tool") {
+            // Update activity bar with tool description
+            activityBar.style.display = "flex";
+            activityBar.querySelector(".activity-label").textContent =
+              (data.label || data.tool) + "...";
+            scrollToBottom();
+
             // Track tool call
-            toolCalls.push(data.tool);
+            toolCalls.push(data.label || data.tool);
 
             // Create/update tool summary
             if (!toolSummary) {
@@ -1178,7 +1186,7 @@ async function sendMessage() {
               toolSummary.innerHTML = `
                 <div class="tool-summary-header">
                   <span class="tool-count">Used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}</span>
-                  <button class="tool-toggle-btn" data-expanded="false">▼ Show details</button>
+                  <button class="tool-toggle-btn" data-expanded="false">Show details</button>
                 </div>
               `;
               toolContainer.appendChild(toolSummary);
@@ -1188,32 +1196,30 @@ async function sendMessage() {
               toolDetails.style.display = "none";
               toolContainer.appendChild(toolDetails);
 
-              // Add toggle functionality
               const toggleBtn = toolSummary.querySelector('.tool-toggle-btn');
               toggleBtn.addEventListener('click', () => {
                 const expanded = toggleBtn.dataset.expanded === 'true';
                 if (expanded) {
                   toolDetails.style.display = 'none';
-                  toggleBtn.textContent = '▼ Show details';
+                  toggleBtn.textContent = 'Show details';
                   toggleBtn.dataset.expanded = 'false';
                 } else {
                   toolDetails.style.display = 'block';
-                  toggleBtn.textContent = '▲ Hide details';
+                  toggleBtn.textContent = 'Hide details';
                   toggleBtn.dataset.expanded = 'true';
                 }
               });
 
               toolContainer.style.display = "block";
             } else {
-              // Update count
               toolSummary.querySelector('.tool-count').textContent = `Used ${toolCalls.length} tool${toolCalls.length > 1 ? 's' : ''}`;
             }
 
-            // Add individual tool indicator to details
+            // Add individual tool indicator with human-readable label
             const toolEl = document.createElement("div");
             toolEl.className = "tool-indicator";
             const detail = data.detail ? ` <span class="tool-detail">${escapeHtml(data.detail)}</span>` : "";
-            toolEl.innerHTML = `<span class="spinner"></span> ${escapeHtml(data.tool)}${detail}`;
+            toolEl.innerHTML = `<span class="spinner"></span> ${escapeHtml(data.label || data.tool)}${detail}`;
             toolDetails.appendChild(toolEl);
             scrollToBottom();
           } else if (eventType === "done") {
@@ -1234,13 +1240,57 @@ async function sendMessage() {
     assistantDiv.innerHTML += `<p style="color: var(--red)">Connection error: ${escapeHtml(e.message)}</p>`;
   }
 
-  thinkingDiv.remove();
+  activityBar.remove();
   assistantDiv.style.display = "";
   assistantDiv.classList.remove("streaming-cursor");
+
+  // Render thinking section if we captured thinking content
+  if (thinkingContent.trim()) {
+    const thinkingSection = createThinkingSection(thinkingContent);
+    // Insert at the beginning of assistant message
+    assistantDiv.insertBefore(thinkingSection, assistantDiv.firstChild);
+    // Embed marker in fullText for persistence
+    fullText = `<!--THINKING:${btoa(unescape(encodeURIComponent(thinkingContent)))}-->\n` + fullText;
+  }
+
   isStreaming = false;
   sendBtn.disabled = !inputEl.value.trim() && pendingImages.length === 0;
   loadSessions();
   updateSessionMeta();
+}
+
+function createThinkingSection(content) {
+  const section = document.createElement("div");
+  section.className = "thinking-section";
+
+  const charCount = content.length;
+  const label = charCount > 1000
+    ? `${(charCount / 1000).toFixed(1)}k chars`
+    : `${charCount} chars`;
+
+  const toggle = document.createElement("button");
+  toggle.className = "thinking-toggle";
+  toggle.innerHTML = `<span class="thinking-toggle-icon">&#9654;</span> Reasoning (${label})`;
+
+  const contentDiv = document.createElement("div");
+  contentDiv.className = "thinking-content";
+  contentDiv.style.display = "none";
+  contentDiv.textContent = content;
+
+  toggle.addEventListener("click", () => {
+    const icon = toggle.querySelector(".thinking-toggle-icon");
+    if (contentDiv.style.display === "none") {
+      contentDiv.style.display = "block";
+      icon.classList.add("expanded");
+    } else {
+      contentDiv.style.display = "none";
+      icon.classList.remove("expanded");
+    }
+  });
+
+  section.appendChild(toggle);
+  section.appendChild(contentDiv);
+  return section;
 }
 
 function appendUserMessage(text) {
@@ -1255,11 +1305,17 @@ function appendAssistantMessage(text) {
   const div = document.createElement("div");
   div.className = "message message-assistant";
 
-  // Extract visualization and file markers before rendering markdown
+  // Extract thinking, visualization, and file markers before rendering markdown
   const chartMarkers = [];
   const diagramMarkers = [];
   const fileMarkers = [];
-  const cleanText = text.replace(/\n?<!--CHART:([\s\S]*?)-->\n?/g, (_, config) => {
+  let thinkingMarker = null;
+  const cleanText = text.replace(/<!--THINKING:([\s\S]*?)-->\n?/g, (_, encoded) => {
+    try {
+      thinkingMarker = decodeURIComponent(escape(atob(encoded)));
+    } catch { thinkingMarker = encoded; }
+    return "";
+  }).replace(/\n?<!--CHART:([\s\S]*?)-->\n?/g, (_, config) => {
     chartMarkers.push(config);
     return "";
   }).replace(/\n?<!--DIAGRAM:([\s\S]*?)-->\n?/g, (_, config) => {
@@ -1270,8 +1326,16 @@ function appendAssistantMessage(text) {
     return "";
   });
 
+  // Render thinking section first (above response text)
+  if (thinkingMarker) {
+    const thinkingSection = createThinkingSection(thinkingMarker);
+    div.appendChild(thinkingSection);
+  }
+
   // Render the text content
-  div.innerHTML = renderMarkdown(cleanText);
+  const textDiv = document.createElement("div");
+  textDiv.innerHTML = renderMarkdown(cleanText);
+  div.appendChild(textDiv);
   messagesEl.appendChild(div);
 
   // Re-render embedded charts
