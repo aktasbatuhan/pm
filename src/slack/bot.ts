@@ -1,6 +1,6 @@
 import { App } from "@slack/bolt";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
-import { sandboxCanUseTool, WORKSPACE_DIR } from "../agent/sandbox.ts";
+import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
 import {
   createGitHubMcpServer,
@@ -8,6 +8,7 @@ import {
   createSchedulerMcpServer,
   createSlackMcpServer,
   createDashboardMcpServer,
+  createSandboxMcpServer,
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
@@ -156,6 +157,7 @@ async function processAgentRequest(
         scheduler: createSchedulerMcpServer(),
         slack: createSlackMcpServer(),
         dashboard: createDashboardMcpServer(),
+        sandbox: createSandboxMcpServer(),
         ...getRemoteMcpServers(),
       },
       allowedTools: [
@@ -166,8 +168,8 @@ async function processAgentRequest(
         "mcp__dashboard__*",
         "mcp__exa__*",
         "mcp__granola__*",
+        "mcp__sandbox__*",
       ],
-      canUseTool: sandboxCanUseTool,
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
       workingDirectory: WORKSPACE_DIR,

@@ -81,29 +81,18 @@ export async function* chat(
     prompt = userMessage;
   }
 
-  // Build env vars for Claude Code subprocess — route through OpenRouter
-  // See: https://openrouter.ai/docs/guides/community/anthropic-agent-sdk
-  const openRouterKey = process.env.OPENROUTER_API_KEY;
-  const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  if (openRouterKey) {
-    sdkEnv.ANTHROPIC_BASE_URL = "https://openrouter.ai/api";
-    sdkEnv.ANTHROPIC_AUTH_TOKEN = openRouterKey;
-    sdkEnv.ANTHROPIC_API_KEY = "";
-  }
-
   const q = query({
     prompt,
     options: {
       systemPrompt: config.systemPrompt,
       mcpServers: config.mcpServers,
       canUseTool: config.canUseTool,
-      tools: { type: "preset" as const, preset: "claude_code" as const },
+      tools: [],
       allowedTools: config.allowedTools ?? [
         "mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*",
         "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*",
         "mcp__dashboard__*", "mcp__exa__*", "mcp__granola__*",
-        "Bash", "Read", "Write", "Edit", "Glob", "Grep",
-        "WebFetch", "WebSearch",
+        "mcp__sandbox__*",
       ],
       includePartialMessages: true,
       resume: config.resume,
@@ -113,26 +102,13 @@ export async function* chat(
       allowDangerouslySkipPermissions: true,
       cwd: config.workingDirectory || "/data/workspace",
       model: config.model,
-      env: sdkEnv,
     },
   });
 
   let emittedThinking = false;
   let emittedTyping = false;
 
-  let msgCount = 0;
   for await (const message of q) {
-    msgCount++;
-    // Log first few messages and all non-stream messages
-    if (msgCount <= 3 || message.type !== "stream_event") {
-      const summary = message.type === "system"
-        ? `tools=${(message as any).tools?.length || 0}`
-        : message.type === "assistant"
-        ? `blocks=${(message as any).message?.content?.length || 0}`
-        : "";
-      console.log(`[agent] SDK #${msgCount}: type=${message.type} ${summary}`);
-    }
-
     for (const parsed of parseMessage(message, emittedThinking, emittedTyping)) {
       if (parsed.type === "thinking") emittedThinking = true;
       if (parsed.type === "typing") emittedTyping = true;

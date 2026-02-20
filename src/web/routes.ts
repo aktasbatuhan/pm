@@ -3,9 +3,9 @@ import * as path from "path";
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
-import { sandboxCanUseTool, WORKSPACE_DIR } from "../agent/sandbox.ts";
+import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
@@ -40,6 +40,7 @@ let slackServer: ReturnType<typeof createSlackMcpServer> | null = null;
 let visualizationServer: ReturnType<typeof createVisualizationMcpServer> | null = null;
 let posthogServer: ReturnType<typeof createPostHogMcpServer> | null = null;
 let dashboardServer: ReturnType<typeof createDashboardMcpServer> | null = null;
+let sandboxServer: ReturnType<typeof createSandboxMcpServer> | null = null;
 
 function getGitHubServer() {
   if (!githubServer) githubServer = createGitHubMcpServer();
@@ -74,6 +75,11 @@ function getPostHogServer() {
 function getDashboardServer() {
   if (!dashboardServer) dashboardServer = createDashboardMcpServer();
   return dashboardServer;
+}
+
+function getSandboxServer() {
+  if (!sandboxServer) sandboxServer = createSandboxMcpServer();
+  return sandboxServer;
 }
 
 // Pending approval state (simple in-memory for localhost)
@@ -315,15 +321,15 @@ export function createRoutes() {
         visualization: getVisualizationServer(),
         posthog: getPostHogServer(),
         dashboard: getDashboardServer(),
+        sandbox: getSandboxServer(),
         ...getRemoteMcpServers(),
       },
-      canUseTool: sandboxCanUseTool,
       resume: session?.sessionId ?? undefined,
       model: body.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
       workingDirectory: WORKSPACE_DIR,
     };
 
-    console.log(`[agent] chat request v2: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
+    console.log(`[agent] chat request: model=${agentConfig.model}, prompt_len=${systemPrompt.length}, resume=${!!agentConfig.resume}`);
 
     return streamSSE(c, async (stream) => {
       let fullResponse = "";
@@ -396,22 +402,16 @@ export function createRoutes() {
               }
             } else {
               const toolData: Record<string, unknown> = { tool: msg.toolName };
-              // Include detail for built-in tools
+              // Include detail for sandbox and other tools
               if (msg.toolInput) {
-                if (msg.toolName === "Bash" && msg.toolInput.command) {
+                if (msg.toolName === "mcp__sandbox__sandbox_bash" && msg.toolInput.command) {
                   toolData.detail = String(msg.toolInput.command).slice(0, 120);
-                } else if (msg.toolName === "Read" && msg.toolInput.file_path) {
-                  toolData.detail = String(msg.toolInput.file_path);
-                } else if ((msg.toolName === "Write" || msg.toolName === "Edit") && msg.toolInput.file_path) {
-                  toolData.detail = String(msg.toolInput.file_path);
-                } else if (msg.toolName === "Grep" && msg.toolInput.pattern) {
-                  toolData.detail = `/${msg.toolInput.pattern}/`;
-                } else if (msg.toolName === "Glob" && msg.toolInput.pattern) {
-                  toolData.detail = String(msg.toolInput.pattern);
-                } else if (msg.toolName === "WebFetch" && msg.toolInput.url) {
-                  toolData.detail = String(msg.toolInput.url).slice(0, 80);
-                } else if (msg.toolName === "WebSearch" && msg.toolInput.query) {
-                  toolData.detail = String(msg.toolInput.query);
+                } else if (msg.toolName === "mcp__sandbox__sandbox_read_file" && msg.toolInput.path) {
+                  toolData.detail = String(msg.toolInput.path);
+                } else if (msg.toolName === "mcp__sandbox__sandbox_write_file" && msg.toolInput.path) {
+                  toolData.detail = String(msg.toolInput.path);
+                } else if (msg.toolName === "mcp__sandbox__sandbox_list_dir") {
+                  toolData.detail = String(msg.toolInput.path || ".");
                 }
               }
               await stream.writeSSE({

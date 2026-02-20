@@ -2,9 +2,9 @@ import { getDb, newId } from "../db/index.ts";
 import { jobs } from "../db/schema.ts";
 import { eq, lte, and } from "drizzle-orm";
 import { chat, type AgentConfig } from "../agent/core.ts";
-import { sandboxCanUseTool, WORKSPACE_DIR } from "../agent/sandbox.ts";
+import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createDashboardMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createDashboardMcpServer, createSandboxMcpServer } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { sendSlackMessage } from "../tools/slack.ts";
 import { chatSessions, messages } from "../db/schema.ts";
@@ -37,9 +37,9 @@ function buildJobAgentConfig(resumeSessionId?: string): AgentConfig {
       slack: createSlackMcpServer(),
       visualization: createVisualizationMcpServer(),
       dashboard: createDashboardMcpServer(),
+      sandbox: createSandboxMcpServer(),
       ...getRemoteMcpServers(),
     },
-    canUseTool: sandboxCanUseTool,
     resume: sdkResumeId,
     model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
     workingDirectory: WORKSPACE_DIR,
