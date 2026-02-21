@@ -2,8 +2,6 @@
 
 An open-source AI project management agent built on the [Claude Agent SDK](https://platform.claude.com/docs/en/agent-sdk/overview). Connects to your GitHub Projects and helps with sprint analysis, status tracking, effort estimation, and planning.
 
-Built as Episode 1 of the [Open Source Agent Series](https://batuhanaktas.substack.com).
-
 ## Features
 
 - **Sprint Analysis** — Automated standup reports, sprint health checks, risk detection

@@ -6,7 +6,6 @@ This project follows a **two-repo architecture**. When making changes, always co
 
 ### Repo 1: `pm-agent` (this repo)
 - **What**: The PM agent itself — self-hostable, potentially open-source
-- **Repo**: github.com/aktasbatuhan/pm
 - **Deploy**: Each customer gets their own Railway instance running this exact code
 - **Config**: All customer-specific config is via env vars (GitHub token, Slack tokens, org, etc.)
 - **Key principle**: This repo must remain self-contained and deployable independently. No SaaS/billing/multi-tenant logic belongs here.
@@ -35,11 +34,10 @@ Every customer instance runs the **exact same agent code**. Differentiation happ
 - Settings in the DB (configured via the agent's Settings page)
 - Plan-based feature flags (future — stored as env vars set by platform)
 
-### Current Instance (Batuhan's)
-- Railway project: `f3d86f92-d0e4-4763-9ac9-655ad95054ba`
-- Service: `6dee8bbf-a0b2-4e79-9345-5b1b7bea25f6`
-- This instance is NOT special — it's just a deployment of `pm-agent` with Batuhan's env vars
-- Do NOT add Batuhan-specific logic to the codebase
+### Deployment Instances
+- Each deployment is just `pm-agent` + customer-specific env vars
+- No instance is special — do NOT add instance-specific logic to the codebase
+- Railway project/service IDs are stored in each customer's platform record, not in code
 
 ## Tech Stack
 - **Runtime**: Bun

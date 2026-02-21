@@ -10,7 +10,7 @@
 - [x] Self-managed runtime — scheduler MCP tools (`schedule_job`, `list_jobs`, `cancel_job`), background job loop, jobs DB table
 - [x] Slack notifications — `slack_send_message` MCP tool via incoming webhook
 - [x] Auth — token-based middleware, session cookies, login page, Bearer token for API
-- [x] Deployment — Dockerfile, docker-compose, Railway (live at `pm-production-e983.up.railway.app`)
+- [x] Deployment — Dockerfile, docker-compose, Railway
 - [x] Persistent volume at `/data` for DB + knowledge files
 - [x] Onboarding banner — auto-detects empty knowledge base, prompts setup
 - [x] Bloomberg Terminal UI — dark aesthetic, amber accents, all-monospace, data-dense layout
