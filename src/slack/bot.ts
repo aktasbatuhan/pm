@@ -9,6 +9,7 @@ import {
   createSlackMcpServer,
   createDashboardMcpServer,
   createSandboxMcpServer,
+  createPostHogMcpServer,
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
@@ -158,6 +159,7 @@ async function processAgentRequest(
         slack: createSlackMcpServer(),
         dashboard: createDashboardMcpServer(),
         sandbox: createSandboxMcpServer(),
+        posthog: createPostHogMcpServer(),
         ...getRemoteMcpServers(),
       },
       allowedTools: [
@@ -169,6 +171,7 @@ async function processAgentRequest(
         "mcp__exa__*",
         "mcp__sandbox__*",
         "mcp__linear__*",
+        "mcp__posthog__*",
       ],
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
