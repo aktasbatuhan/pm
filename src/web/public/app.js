@@ -1974,11 +1974,17 @@ async function switchTab(tabId) {
   activeTabId = tabId;
   const grid = document.getElementById("widget-grid");
   const filtersEl = document.getElementById("dashboard-filters");
+  const overlay = document.getElementById("tab-loading-overlay");
+  const overlayLabel = overlay.querySelector(".tab-loading-label");
 
   // Update active state on tab bar
   document.querySelectorAll(".dashboard-tab").forEach((el) => {
     el.classList.toggle("active", el.dataset.tabId === tabId);
   });
+
+  // Show loading overlay
+  overlayLabel.textContent = tabId === "project" ? "Loading project data..." : "Loading tab...";
+  overlay.classList.add("active");
 
   if (tabId === "project") {
     // Show filters, load GitHub data
@@ -1996,12 +2002,15 @@ async function switchTab(tabId) {
       loadActivity();
     } catch (err) {
       grid.innerHTML = `<div class="widget-grid-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      overlay.classList.remove("active");
     }
   } else {
     // Custom tab — check for filters and widgets
     filtersEl.style.display = "none";
     const tabMeta = dashboardTabsList.find((t) => t.id === tabId);
     const tabFilters = tabMeta?.filters || null;
+    overlayLabel.textContent = `Loading ${tabMeta?.name || "tab"}...`;
 
     try {
       const res = await fetch(`/api/dashboard/tabs/${tabId}/widgets`);
@@ -2018,7 +2027,7 @@ async function switchTab(tabId) {
         renderWidgetGrid(widgets);
       } else if (tabFilters) {
         // Filtered tab with no explicit widgets — load GitHub data, apply filters, auto-generate
-        document.getElementById("dashboard-fetched-at").textContent = "LOADING FILTERED DATA...";
+        overlayLabel.textContent = "Loading filtered data...";
         const ghRes = await fetch("/api/dashboard");
         if (!ghRes.ok) throw new Error(`HTTP ${ghRes.status}`);
         const ghData = await ghRes.json();
@@ -2042,6 +2051,8 @@ async function switchTab(tabId) {
       }
     } catch (err) {
       grid.innerHTML = `<div class="widget-grid-empty" style="color:var(--red)">Error: ${escapeHtml(err.message)}</div>`;
+    } finally {
+      overlay.classList.remove("active");
     }
   }
 }

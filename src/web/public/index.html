@@ -75,7 +75,13 @@
             <select id="filter-repo"><option value="">All</option></select>
           </div>
         </div>
-        <div id="widget-grid" class="widget-grid"></div>
+        <div id="dashboard-content" style="position:relative;min-height:200px">
+          <div id="tab-loading-overlay" class="tab-loading-overlay">
+            <div class="tab-loading-spinner"></div>
+            <span class="tab-loading-label">Loading...</span>
+          </div>
+          <div id="widget-grid" class="widget-grid"></div>
+        </div>
         <div id="dashboard-loading" class="dashboard-loading hidden">
           <div class="spinner"></div>
           <span>Loading dashboard...</span>

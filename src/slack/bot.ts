@@ -338,6 +338,7 @@ export function startSlackBot(): void {
   });
 
   // App Home tab
+  const agentName = process.env.AGENT_NAME || "Dash";
   app.event("app_home_opened", async ({ event, client }) => {
     await client.views.publish({
       user_id: event.user,
@@ -346,13 +347,13 @@ export function startSlackBot(): void {
         blocks: [
           {
             type: "header",
-            text: { type: "plain_text", text: "PM Agent", emoji: true },
+            text: { type: "plain_text", text: agentName, emoji: true },
           },
           {
             type: "section",
             text: {
               type: "mrkdwn",
-              text: "Your AI-powered project management assistant. I can help with GitHub issues, PRs, standups, analytics, and more — right from Slack.",
+              text: `Hey! I'm ${agentName}, your AI team member. I work alongside the product and engineering team — I know the codebase, the sprints, the people, and the priorities. Ask me anything right here in Slack.`,
             },
           },
           { type: "divider" },
@@ -414,7 +415,7 @@ export function startSlackBot(): void {
             elements: [
               {
                 type: "mrkdwn",
-                text: "Powered by PM Agent  •  Responses use AI and may not always be accurate",
+                text: `Powered by ${agentName}  •  Responses use AI and may not always be accurate`,
               },
             ],
           },
