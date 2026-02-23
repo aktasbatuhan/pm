@@ -10,6 +10,33 @@ const SESSION_MAX_AGE = 7 * 24 * 60 * 60; // 7 days
 // In-memory session store: sessionId → userId
 const validSessions = new Map<string, string>();
 
+// Rate limiting for auth endpoints
+const AUTH_WINDOW_MS = 60_000;
+const AUTH_MAX_ATTEMPTS = 5;
+type RateEntry = { count: number; resetAt: number };
+const authRateMap = new Map<string, RateEntry>();
+
+function getClientIp(c: Context): string {
+  return (
+    c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+    c.req.header("cf-connecting-ip") ||
+    c.req.header("x-real-ip") ||
+    "unknown"
+  );
+}
+
+function checkAuthRate(ip: string): boolean {
+  const now = Date.now();
+  const entry = authRateMap.get(ip);
+  if (!entry || entry.resetAt <= now) {
+    authRateMap.set(ip, { count: 1, resetAt: now + AUTH_WINDOW_MS });
+    return true;
+  }
+  if (entry.count >= AUTH_MAX_ATTEMPTS) return false;
+  entry.count++;
+  return true;
+}
+
 function getAuthToken(): string | null {
   return process.env.AUTH_TOKEN || null;
 }
@@ -85,6 +112,10 @@ export async function authMiddleware(c: Context, next: Next) {
 export function createAuthRoutes(app: any) {
   // Login with token
   app.post("/api/auth/login", async (c: Context) => {
+    if (!checkAuthRate(getClientIp(c))) {
+      return c.json({ error: "Too many attempts. Try again later." }, 429);
+    }
+
     const token = getAuthToken();
     if (!token) return c.json({ success: true });
 
@@ -121,6 +152,10 @@ export function createAuthRoutes(app: any) {
 
   // Handle join
   app.post("/api/auth/join", async (c: Context) => {
+    if (!checkAuthRate(getClientIp(c))) {
+      return c.json({ error: "Too many attempts. Try again later." }, 429);
+    }
+
     const body = await c.req.json<{ token: string; name: string }>();
     const db = getDb();
 

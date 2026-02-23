@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
 import { WORKSPACE_DIR } from "../agent/sandbox.ts";
@@ -305,7 +306,8 @@ export function createRoutes() {
   });
 
   // Chat with streaming (SSE)
-  app.post("/chat", async (c) => {
+  // 50MB limit: allows up to 5 base64 images (~7.5MB each) plus message text
+  app.post("/chat", bodyLimit({ maxSize: 50 * 1024 * 1024, onError: (c) => c.json({ error: "Payload too large" }, 413) }), async (c) => {
     const body = await c.req.json<{
       message: string;
       sessionId?: string;

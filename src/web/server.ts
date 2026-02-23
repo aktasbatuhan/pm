@@ -9,6 +9,16 @@ import { startSlackBot } from "../slack/bot.ts";
 export function createServer() {
   const app = new Hono();
 
+  // Security headers for HTML responses
+  app.use("*", async (c, next) => {
+    await next();
+    const ct = c.res.headers.get("content-type") || "";
+    if (ct.includes("text/html")) {
+      c.header("X-Frame-Options", "DENY");
+      c.header("Content-Security-Policy", "frame-ancestors 'none'");
+    }
+  });
+
   // Auth middleware (skipped if AUTH_TOKEN not set)
   app.use("*", authMiddleware);
 
