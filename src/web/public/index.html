@@ -50,6 +50,15 @@
         </div>
       </div>
 
+      <!-- Empty state (shown when configured but no knowledge) -->
+      <div id="empty-state" class="empty-state hidden">
+        <div class="empty-state-icon">&#9881;</div>
+        <h2>Welcome to your agent</h2>
+        <p class="empty-state-desc">Your agent is connected to GitHub but hasn't indexed your repositories yet. Run setup to generate a knowledge base so it can understand your codebase, project structure, and team context.</p>
+        <button id="empty-state-setup-btn" class="btn btn-primary">Run Setup</button>
+        <button id="empty-state-dismiss-btn" class="btn-link" style="margin-top:12px;font-size:12px;color:var(--text-muted);">Skip — I'll set this up later</button>
+      </div>
+
       <!-- Dashboard View (homepage) -->
       <div id="dashboard-view" class="dashboard-view">
         <div id="dashboard-tabs" class="dashboard-tabs"></div>
@@ -176,7 +185,16 @@
       <!-- Step 1: Token -->
       <div class="setup-step" id="setup-step-1">
         <h3>GitHub Token</h3>
-        <p class="step-desc">Personal access token with <code>repo</code>, <code>project</code>, and <code>read:org</code> scopes.</p>
+        <p class="step-desc">Your agent needs a GitHub Personal Access Token to read issues, PRs, and project boards on your behalf.</p>
+        <div class="step-help">
+          <strong>How to create one:</strong>
+          <ol>
+            <li>Go to <a href="https://github.com/settings/tokens?type=beta" target="_blank" rel="noopener">github.com/settings/tokens</a></li>
+            <li>Click <strong>Generate new token</strong> (classic)</li>
+            <li>Select scopes: <code>repo</code>, <code>read:org</code>, <code>project</code></li>
+            <li>Click <strong>Generate token</strong> and copy it</li>
+          </ol>
+        </div>
         <input type="password" id="setup-token" placeholder="ghp_..." class="setup-input" autocomplete="off" />
         <div id="token-status" class="step-status"></div>
         <button class="btn btn-primary setup-btn" id="btn-validate-token">Validate</button>
@@ -185,7 +203,7 @@
       <!-- Step 2: Org -->
       <div class="setup-step hidden" id="setup-step-2">
         <h3>Organization</h3>
-        <p class="step-desc">Select or enter the GitHub org / username that owns the project.</p>
+        <p class="step-desc">Select the GitHub organization or username where your project lives. The agent will track issues, PRs, and boards from this org.</p>
         <div id="org-options" class="org-options"></div>
         <input type="text" id="setup-org" placeholder="your-org" class="setup-input" />
         <button class="btn btn-primary setup-btn" id="btn-fetch-projects">Fetch Projects</button>
@@ -194,7 +212,7 @@
       <!-- Step 3: Project -->
       <div class="setup-step hidden" id="setup-step-3">
         <h3>Select Project</h3>
-        <p class="step-desc">Choose the GitHub Project v2 board to connect.</p>
+        <p class="step-desc">Choose the GitHub Projects (v2) board your team uses for planning. The agent will use this as its primary source for tasks, sprints, and priorities.</p>
         <div id="projects-list" class="projects-list"></div>
         <button class="btn btn-primary setup-btn" id="btn-connect-project">Connect</button>
       </div>
@@ -203,7 +221,7 @@
       <div class="setup-step hidden" id="setup-step-4">
         <div id="repo-selection-phase">
           <h3>Select Repositories</h3>
-          <p class="step-desc">Choose which repositories to analyze and generate knowledge for.</p>
+          <p class="step-desc">The agent will analyze selected repos to build a knowledge base — understanding your architecture, code patterns, and team conventions. This helps it give context-aware answers.</p>
           <div id="repo-selection-loading" class="step-status">Discovering repositories...</div>
           <div id="repo-selection-list" class="repo-selection-list"></div>
           <div id="repo-selection-actions" class="repo-selection-actions" style="display:none;">
@@ -244,18 +262,18 @@
       <!-- Step 6: Integrations -->
       <div class="setup-step hidden" id="setup-step-6">
         <h3>Integrations</h3>
-        <p class="step-desc">Configure optional integrations to enhance your PM Agent.</p>
-        <p class="step-hint">All optional — you can configure these later in Settings.</p>
+        <p class="step-desc">Connect additional tools to give your agent more context. All optional — you can configure these later in Settings.</p>
 
         <div class="integration-card">
           <div class="integration-header">
             <span class="integration-icon">L</span>
             <div>
               <span class="integration-name">Linear</span>
-              <span class="integration-desc">Issue tracking — cycles, sprints, team workload</span>
+              <span class="integration-desc">Track issues, cycles, and team workload from Linear alongside GitHub.</span>
             </div>
           </div>
           <input type="password" id="setup-linear-key" class="setup-input" placeholder="lin_api_..." autocomplete="off" />
+          <p class="step-help-inline">Get your API key from <a href="https://linear.app/settings/api" target="_blank" rel="noopener">linear.app/settings/api</a></p>
         </div>
 
         <div class="integration-card">
@@ -263,10 +281,11 @@
             <span class="integration-icon">E</span>
             <div>
               <span class="integration-name">Exa</span>
-              <span class="integration-desc">Web search — industry news, competitor analysis</span>
+              <span class="integration-desc">Enable web search for industry news, competitor analysis, and research.</span>
             </div>
           </div>
           <input type="password" id="setup-exa-key" class="setup-input" placeholder="exa-..." autocomplete="off" />
+          <p class="step-help-inline">Get your API key from <a href="https://dashboard.exa.ai/api-keys" target="_blank" rel="noopener">dashboard.exa.ai</a></p>
         </div>
 
         <div class="integration-card">
@@ -274,12 +293,13 @@
             <span class="integration-icon">P</span>
             <div>
               <span class="integration-name">PostHog</span>
-              <span class="integration-desc">Product analytics — usage metrics, feature adoption</span>
+              <span class="integration-desc">Query product analytics — usage metrics, funnels, and feature adoption data.</span>
             </div>
           </div>
           <input type="password" id="setup-posthog-key" class="setup-input" placeholder="phx_..." autocomplete="off" />
           <input type="text" id="setup-posthog-host" class="setup-input" placeholder="https://us.posthog.com" />
           <input type="text" id="setup-posthog-project-id" class="setup-input" placeholder="Project ID (e.g. 12345)" />
+          <p class="step-help-inline">Find these in <a href="https://posthog.com" target="_blank" rel="noopener">PostHog</a> → Settings → Project API Key</p>
         </div>
 
         <button class="btn btn-primary setup-btn" id="btn-save-integrations">Continue</button>

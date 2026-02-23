@@ -270,6 +270,94 @@ html, body {
   gap: 8px;
 }
 
+/* Empty State */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 80px 40px;
+  min-height: 60vh;
+}
+
+.empty-state.hidden {
+  display: none;
+}
+
+.empty-state-icon {
+  font-size: 48px;
+  margin-bottom: 20px;
+  opacity: 0.3;
+}
+
+.empty-state h2 {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  color: var(--text-primary);
+}
+
+.empty-state-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  max-width: 480px;
+  line-height: 1.6;
+  margin-bottom: 24px;
+}
+
+/* Setup help text */
+.step-help {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin: 12px 0 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.step-help strong {
+  color: var(--text-primary);
+  display: block;
+  margin-bottom: 6px;
+}
+
+.step-help ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.step-help li {
+  margin-bottom: 4px;
+}
+
+.step-help a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.step-help a:hover {
+  text-decoration: underline;
+}
+
+.step-help-inline {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+.step-help-inline a {
+  color: var(--accent-dim);
+  text-decoration: none;
+}
+
+.step-help-inline a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
 /* Messages */
 .messages {
   flex: 1;

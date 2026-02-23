@@ -687,6 +687,7 @@ function buildSetupSummary() {
 
 document.getElementById("btn-start-chat").addEventListener("click", () => {
   hideSetup();
+  hideEmptyState();
   hideOnboardingBanner();
   sessionStorage.removeItem("onboarding-dismissed");
   setTimeout(() => checkKnowledgeOnboarding(), 1000);
@@ -1554,11 +1555,22 @@ async function checkKnowledgeOnboarding() {
   const res = await fetch("/api/knowledge");
   const files = await res.json();
 
-  // Show banner if 0 files or only skills.md
+  // Show empty state if 0 files or only skills.md
   const nonSkillFiles = files.filter((f) => f.path !== "skills.md");
   if (nonSkillFiles.length === 0) {
-    showOnboardingBanner();
+    showEmptyState();
   }
+}
+
+function showEmptyState() {
+  document.getElementById("empty-state").classList.remove("hidden");
+  document.getElementById("dashboard-view").classList.add("hidden");
+}
+
+function hideEmptyState() {
+  document.getElementById("empty-state").classList.add("hidden");
+  document.getElementById("dashboard-view").classList.remove("hidden");
+  sessionStorage.setItem("onboarding-dismissed", "true");
 }
 
 function showOnboardingBanner() {
@@ -1589,6 +1601,29 @@ document.getElementById("banner-setup-btn").addEventListener("click", async () =
 document.getElementById("banner-dismiss-btn").addEventListener("click", () => {
   hideOnboardingBanner();
   sessionStorage.setItem("onboarding-dismissed", "true");
+});
+
+// Empty state buttons
+document.getElementById("empty-state-setup-btn").addEventListener("click", async () => {
+  hideEmptyState();
+  resetSetupWizard();
+  showSetup();
+
+  // Skip to repo discovery if already configured via env vars
+  try {
+    const res = await fetch("/api/setup/status");
+    const status = await res.json();
+    if (status.configured && status.org && status.projectNumber) {
+      setupState.org = status.org;
+      setupState.selectedProject = status.projectNumber;
+      goToSetupStep(4);
+      discoverRepos();
+    }
+  } catch {}
+});
+
+document.getElementById("empty-state-dismiss-btn").addEventListener("click", () => {
+  hideEmptyState();
 });
 
 // --- Settings ---
