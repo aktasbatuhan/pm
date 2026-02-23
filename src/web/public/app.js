@@ -721,9 +721,21 @@ function resetSetupWizard() {
   goToSetupStep(1);
 }
 
-document.getElementById("reconfigure-btn").addEventListener("click", () => {
+document.getElementById("reconfigure-btn").addEventListener("click", async () => {
   resetSetupWizard();
   showSetup();
+
+  // If already configured (env vars set), skip token/org/project steps and go to repo discovery
+  try {
+    const res = await fetch("/api/setup/status");
+    const status = await res.json();
+    if (status.configured && status.org && status.projectNumber) {
+      setupState.org = status.org;
+      setupState.selectedProject = status.projectNumber;
+      goToSetupStep(4);
+      discoverRepos();
+    }
+  } catch {}
 });
 
 // --- Main App ---
@@ -1557,9 +1569,21 @@ function hideOnboardingBanner() {
   document.getElementById("onboarding-banner").classList.add("hidden");
 }
 
-document.getElementById("banner-setup-btn").addEventListener("click", () => {
+document.getElementById("banner-setup-btn").addEventListener("click", async () => {
   resetSetupWizard();
   showSetup();
+
+  // If already configured, skip to repo discovery
+  try {
+    const res = await fetch("/api/setup/status");
+    const status = await res.json();
+    if (status.configured && status.org && status.projectNumber) {
+      setupState.org = status.org;
+      setupState.selectedProject = status.projectNumber;
+      goToSetupStep(4);
+      discoverRepos();
+    }
+  } catch {}
 });
 
 document.getElementById("banner-dismiss-btn").addEventListener("click", () => {
