@@ -1,52 +1,16 @@
 # PM Agent — Project Context for Claude Code
 
-## Architecture: Two-Repo Strategy
-
-This project follows a **two-repo architecture**. When making changes, always consider which repo is affected and whether the other needs updating.
-
-### Repo 1: `pm-agent` (this repo)
-- **What**: The PM agent itself — self-hostable, potentially open-source
-- **Deploy**: Each customer gets their own Railway instance running this exact code
-- **Config**: All customer-specific config is via env vars (GitHub token, Slack tokens, org, etc.)
-- **Key principle**: This repo must remain self-contained and deployable independently. No SaaS/billing/multi-tenant logic belongs here.
-
-### Repo 2: `pm-platform` (separate repo, the SaaS layer)
-- **What**: Landing page, billing (Stripe), onboarding, instance provisioning via Railway API
-- **Deploy**: One central deployment that manages customer agent instances
-- **Key principle**: This repo provisions and manages instances of `pm-agent`. It doesn't contain agent logic.
-
-### Decision Guide: Where Does a Change Go?
-
-| Change type | Goes in |
-|---|---|
-| New agent capability (tool, MCP server, prompt improvement) | `pm-agent` |
-| UI feature (dashboard, chat, settings) | `pm-agent` |
-| New integration (Linear, PostHog, etc.) | `pm-agent` |
-| Billing, pricing, subscription management | `pm-platform` |
-| Customer onboarding / provisioning | `pm-platform` |
-| Landing page, marketing | `pm-platform` |
-| Instance management (start/stop/update) | `pm-platform` |
-| Feature flags or plan-based limits | Both — `pm-agent` checks limits, `pm-platform` sets them |
-
-### Feature Parity Rule
-Every customer instance runs the **exact same agent code**. Differentiation happens through:
-- Env vars (AGENT_NAME, GITHUB_ORG, model choice, etc.)
-- Settings in the DB (configured via the agent's Settings page)
-- Plan-based feature flags (future — stored as env vars set by platform)
-
-### Deployment Instances
-- Each deployment is just `pm-agent` + customer-specific env vars
-- No instance is special — do NOT add instance-specific logic to the codebase
-- Railway project/service IDs are stored in each customer's platform record, not in code
+## What This Is
+An open-source AI product management agent. It connects to your team's GitHub, Slack, and other tools to help with sprint planning, status tracking, risk detection, and coordination.
 
 ## Tech Stack
 - **Runtime**: Bun
 - **Framework**: Hono (web server)
-- **DB**: SQLite via Drizzle ORM (each instance has its own DB)
+- **DB**: SQLite via Drizzle ORM
 - **Agent**: Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`)
 - **LLM routing**: OpenRouter (default model: `google/gemini-3-flash-preview`)
 - **MCP servers**: GitHub, Knowledge, Scheduler, Slack, Visualization, PostHog, Dashboard, Sandbox + remote MCP
-- **Deploy**: Railway (one instance per customer)
+- **Deploy**: Docker or any platform (Railway, Fly, etc.)
 
 ## Key Env Vars
 - `AGENT_NAME` — Agent's display name (default: "Dash")
@@ -61,6 +25,12 @@ Every customer instance runs the **exact same agent code**. Differentiation happ
 - **Slack**: `src/slack/bot.ts` — Socket Mode bot, thread-based conversations
 - **Scheduler**: `src/scheduler/loop.ts` — Recurring jobs, tab refresh
 - **Agent core**: `src/agent/core.ts` — Shared `chat()` function used by all entry points
+
+## Git Remotes
+- `origin` → public open-source repo (github.com/aktasbatuhan/pm)
+- `heydash` → private repo for deployed instances (github.com/aktasbatuhan/heydash)
+- Push to both when making changes: `git push heydash main` then `git push origin main`
+- Never commit secrets, company-specific knowledge files, or database files
 
 ## Common Pitfalls
 - **Config drift between web and Slack**: Both entry points build their own `AgentConfig`. When adding a new MCP server or tool, update BOTH `routes.ts` and `bot.ts`. Consider refactoring into a shared `buildAgentConfig()` function.

@@ -48,7 +48,7 @@ const readFileTool = tool(
   "knowledge_read_file",
   "Read the contents of a specific knowledge file",
   {
-    path: z.string().describe("Relative path within knowledge/ (e.g. 'overview.md' or 'repos/kai-backend.md')"),
+    path: z.string().describe("Relative path within knowledge/ (e.g. 'overview.md' or 'repos/my-repo.md')"),
   },
   async ({ path: filePath }) => {
     const resolved = resolveSafe(filePath);
