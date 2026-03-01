@@ -21,6 +21,32 @@ import { getSettingArray } from "../db/settings.ts";
 // Track active threads to prevent concurrent processing
 const activeThreads = new Set<string>();
 
+// Event deduplication — Slack/Bolt can deliver the same event multiple times
+// during Socket Mode reconnections or slow acknowledgments.
+const recentEvents = new Map<string, number>(); // eventKey → timestamp
+const DEDUP_WINDOW_MS = 30_000;
+
+function isDuplicateEvent(event: { client_msg_id?: string; event_ts?: string; ts?: string }): boolean {
+  const key = event.client_msg_id || event.event_ts || event.ts;
+  if (!key) return false;
+
+  const now = Date.now();
+
+  // Clean old entries periodically
+  if (recentEvents.size > 200) {
+    for (const [k, t] of recentEvents) {
+      if (now - t > DEDUP_WINDOW_MS) recentEvents.delete(k);
+    }
+  }
+
+  if (recentEvents.has(key)) {
+    console.log(`[slack] Ignoring duplicate event (key=${key})`);
+    return true;
+  }
+  recentEvents.set(key, now);
+  return false;
+}
+
 /**
  * Check if a Slack user/channel is allowed to interact with the bot.
  * Defaults to allow all if no restrictions configured.
@@ -301,6 +327,7 @@ export function startSlackBot(): void {
   // Handle DMs
   app.message(async ({ message, client }) => {
     if ("bot_id" in message || message.subtype) return;
+    if (isDuplicateEvent(message as any)) return;
 
     const userId = ("user" in message) ? message.user as string : undefined;
     if (!userId || !isSlackAccessAllowed(userId, message.channel)) return;
@@ -426,6 +453,7 @@ export function startSlackBot(): void {
 
   // Handle @mentions in channels
   app.event("app_mention", async ({ event, client }) => {
+    if (isDuplicateEvent(event as any)) return;
     if (!event.user || !isSlackAccessAllowed(event.user, event.channel)) return;
 
     const threadTs = event.thread_ts || event.ts;
