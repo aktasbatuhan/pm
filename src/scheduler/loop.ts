@@ -71,6 +71,21 @@ async function executeJob(job: typeof jobs.$inferSelect): Promise<void> {
   const db = getDb();
   const now = new Date();
 
+  // Immediately advance nextRunAt (or mark completed) BEFORE executing,
+  // so the next tick() doesn't pick up this job again while it's running.
+  if (job.type === "recurring" && job.intervalMs) {
+    const nextRun = new Date(now.getTime() + job.intervalMs);
+    db.update(jobs)
+      .set({ nextRunAt: nextRun, updatedAt: now })
+      .where(eq(jobs.id, job.id))
+      .run();
+  } else {
+    db.update(jobs)
+      .set({ status: "completed", updatedAt: now })
+      .where(eq(jobs.id, job.id))
+      .run();
+  }
+
   console.log(`[scheduler] Executing job ${job.id} (${job.content ? "direct message" : "agent task"})`);
 
   if (job.content) {
@@ -130,19 +145,17 @@ async function executeJob(job: typeof jobs.$inferSelect): Promise<void> {
     await deliverOutput(job, fullResponse);
   }
 
-  // Update job state
+  // Record lastRunAt (nextRunAt was already advanced before execution)
+  const completedAt = new Date();
+  db.update(jobs)
+    .set({ lastRunAt: completedAt, updatedAt: completedAt })
+    .where(eq(jobs.id, job.id))
+    .run();
+
   if (job.type === "recurring" && job.intervalMs) {
-    const nextRun = new Date(now.getTime() + job.intervalMs);
-    db.update(jobs)
-      .set({ nextRunAt: nextRun, lastRunAt: now, updatedAt: now })
-      .where(eq(jobs.id, job.id))
-      .run();
-    console.log(`[scheduler] Job ${job.id} next run: ${nextRun.toISOString()}`);
+    const nextRun = db.select().from(jobs).where(eq(jobs.id, job.id)).get()?.nextRunAt;
+    console.log(`[scheduler] Job ${job.id} done. Next run: ${nextRun ? new Date(nextRun).toISOString() : "unknown"}`);
   } else {
-    db.update(jobs)
-      .set({ status: "completed", lastRunAt: now, updatedAt: now })
-      .where(eq(jobs.id, job.id))
-      .run();
     console.log(`[scheduler] Job ${job.id} completed`);
   }
 }
