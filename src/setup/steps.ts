@@ -107,51 +107,79 @@ export async function discoverReposFromProject(
   org: string,
   projectNumber: number
 ): Promise<string[]> {
-  try {
-    const res = await fetch("https://api.github.com/graphql", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: `query($org: String!, $num: Int!) {
-          organization(login: $org) {
-            projectV2(number: $num) {
-              items(first: 100) {
-                nodes {
-                  content {
-                    ... on Issue { repository { name } }
-                    ... on PullRequest { repository { name } }
+  // Try organization first, then user — GitHub projects can live under either
+  for (const ownerType of ["organization", "user"] as const) {
+    try {
+      const res = await fetch("https://api.github.com/graphql", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: `query($login: String!, $num: Int!) {
+            ${ownerType}(login: $login) {
+              projectV2(number: $num) {
+                items(first: 100) {
+                  nodes {
+                    content {
+                      ... on Issue { repository { name } }
+                      ... on PullRequest { repository { name } }
+                    }
                   }
+                }
+                repositories(first: 50) {
+                  nodes { name }
                 }
               }
             }
-          }
-        }`,
-        variables: { org, num: projectNumber },
-      }),
-    });
-    const json = (await res.json()) as {
-      data?: {
-        organization: {
-          projectV2: {
-            items: {
-              nodes: Array<{ content: { repository?: { name: string } } | null }>;
-            };
-          };
-        };
-      };
-    };
-    const names = new Set<string>();
-    for (const item of json.data?.organization?.projectV2?.items?.nodes || []) {
-      const name = item.content?.repository?.name;
-      if (name) names.add(name);
+          }`,
+          variables: { login: org, num: projectNumber },
+        }),
+      });
+      const json = await res.json() as any;
+      const project = json.data?.[ownerType]?.projectV2;
+      if (!project) continue; // wrong owner type, try next
+
+      const names = new Set<string>();
+
+      // Get repos from project items (issues/PRs)
+      for (const item of project.items?.nodes || []) {
+        const name = item?.content?.repository?.name;
+        if (name) names.add(name);
+      }
+
+      // Also get repos linked directly to the project
+      for (const repo of project.repositories?.nodes || []) {
+        if (repo?.name) names.add(repo.name);
+      }
+
+      return [...names];
+    } catch {
+      continue;
     }
-    return [...names];
-  } catch {
-    return [];
   }
+
+  // Fallback: list org/user repos if project query fails
+  try {
+    const res = await fetch(`https://api.github.com/orgs/${org}/repos?per_page=50&sort=updated`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      const repos = await res.json() as Array<{ name: string }>;
+      return repos.map(r => r.name);
+    }
+    // Try as user
+    const userRes = await fetch(`https://api.github.com/users/${org}/repos?per_page=50&sort=updated`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (userRes.ok) {
+      const repos = await userRes.json() as Array<{ name: string }>;
+      return repos.map(r => r.name);
+    }
+  } catch {}
+
+  return [];
 }
 
 export async function generateKnowledge(
