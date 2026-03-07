@@ -21,6 +21,7 @@ import {
 } from "../db/settings.ts";
 import { getDb, newId } from "../db/index.ts";
 import { chatSessions, messages, users, invites, dashboardWidgets, dashboardTabs } from "../db/schema.ts";
+import * as schema from "../db/schema.ts";
 import { desc, eq } from "drizzle-orm";
 import { refreshTab } from "../scheduler/tab-refresh.ts";
 import { KNOWLEDGE_DIR } from "../paths.ts";
@@ -964,6 +965,46 @@ export function createRoutes() {
         500,
       );
     }
+  });
+
+  // --- Insights API ---
+
+  app.get("/insights", (c) => {
+    const status = c.req.query("status");
+    const category = c.req.query("category");
+    let query = getDb().select().from(schema.insights);
+
+    const rows = query.orderBy(desc(schema.insights.createdAt)).all();
+    const filtered = rows.filter((r) => {
+      if (status && r.status !== status) return false;
+      if (category && r.category !== category) return false;
+      return true;
+    });
+    return c.json({ insights: filtered });
+  });
+
+  app.patch("/insights/:id", async (c) => {
+    const id = c.req.param("id");
+    const body = await c.req.json<{ status?: string }>();
+    if (body.status) {
+      getDb()
+        .update(schema.insights)
+        .set({ status: body.status, updatedAt: new Date() })
+        .where(eq(schema.insights.id, id))
+        .run();
+    }
+    return c.json({ success: true });
+  });
+
+  app.get("/signals/recent", (c) => {
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    const rows = getDb()
+      .select()
+      .from(schema.signals)
+      .orderBy(desc(schema.signals.createdAt))
+      .limit(limit)
+      .all();
+    return c.json({ signals: rows });
   });
 
   // --- Settings API ---
