@@ -36,3 +36,9 @@ An open-source AI product management agent. It connects to your team's GitHub, S
 - **Config drift between web and Slack**: Both entry points build their own `AgentConfig`. When adding a new MCP server or tool, update BOTH `routes.ts` and `bot.ts`. Consider refactoring into a shared `buildAgentConfig()` function.
 - **Hardcoded models**: All model references should use `process.env.AGENT_MODEL || "google/gemini-3-flash-preview"`. Never hardcode a specific model.
 - **System prompt**: `buildSystemPrompt()` in `system-prompt.ts` is the single source. Slack wraps it with `buildSlackSystemPrompt()` which strips visualization and adds Slack formatting rules.
+
+## Status (as of March 2026)
+- **Version**: 0.1.0 (MIT licensed)
+- **Branch**: main (clean)
+- **State**: Shipped. All core features working (chat, GitHub, knowledge, Slack, auth, deployment).
+- **Next**: Email notifications, GitHub webhook listener, session pruning, visual sprint board.

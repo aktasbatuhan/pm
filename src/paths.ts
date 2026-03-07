@@ -11,3 +11,4 @@ const DATA_DIR = process.env.DATA_DIR || process.cwd();
 
 export const DB_PATH = path.join(DATA_DIR, "pm-agent.db");
 export const KNOWLEDGE_DIR = path.join(DATA_DIR, "knowledge");
+export const MEMORY_DIR = path.join(DATA_DIR, "memory");

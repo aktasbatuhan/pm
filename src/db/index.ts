@@ -148,6 +148,36 @@ function migrate() {
   try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN refresh_prompt TEXT`); } catch {}
   try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN refresh_interval_ms INTEGER`); } catch {}
   try { getDb().run(sql`ALTER TABLE dashboard_tabs ADD COLUMN last_refreshed_at INTEGER`); } catch {}
+
+  // Signal store
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS signals (
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL,
+      type TEXT NOT NULL,
+      data TEXT NOT NULL,
+      summary TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_signals_source ON signals(source, type)`);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_signals_time ON signals(created_at)`);
+
+  // Insights
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS insights (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      signal_ids TEXT,
+      category TEXT NOT NULL DEFAULT 'recommendation',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      status TEXT NOT NULL DEFAULT 'new',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_insights_status ON insights(status)`);
 }
 
 // Helper to generate IDs

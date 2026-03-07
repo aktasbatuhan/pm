@@ -94,6 +94,7 @@ export async function* chat(
         "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*",
         "mcp__dashboard__*", "mcp__exa__*",
         "mcp__sandbox__*", "mcp__linear__*",
+        "mcp__memory__*", "mcp__signals__*",
       ],
       includePartialMessages: true,
       resume: config.resume,

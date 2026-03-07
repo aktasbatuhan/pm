@@ -96,3 +96,31 @@ export type DashboardTab = typeof dashboardTabs.$inferSelect;
 export type NewDashboardTab = typeof dashboardTabs.$inferInsert;
 export type DashboardWidget = typeof dashboardWidgets.$inferSelect;
 export type NewDashboardWidget = typeof dashboardWidgets.$inferInsert;
+
+// --- Signal Store ---
+
+export const signals = sqliteTable("signals", {
+  id: text("id").primaryKey(),
+  source: text("source").notNull(), // e.g. 'google-analytics', 'stripe', 'app-store'
+  type: text("type").notNull(), // e.g. 'metric', 'event', 'review', 'revenue'
+  data: text("data").notNull(), // JSON string
+  summary: text("summary"), // human-readable one-liner
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export const insights = sqliteTable("insights", {
+  id: text("id").primaryKey(),
+  title: text("title").notNull(),
+  summary: text("summary").notNull(),
+  signalIds: text("signal_ids"), // comma-separated signal IDs
+  category: text("category").notNull().default("recommendation"), // anomaly, trend, recommendation, risk, opportunity
+  priority: text("priority").notNull().default("medium"), // low, medium, high, critical
+  status: text("status").notNull().default("new"), // new, acknowledged, actioned, dismissed
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export type Signal = typeof signals.$inferSelect;
+export type NewSignal = typeof signals.$inferInsert;
+export type Insight = typeof insights.$inferSelect;
+export type NewInsight = typeof insights.$inferInsert;

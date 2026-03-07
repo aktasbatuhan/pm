@@ -46,6 +46,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Sandbox workspace
 workspace
 
+# Memory (agent-generated, user-specific)
+data/memory/
+
 # Generated knowledge (user-specific)
 knowledge/overview.md
 knowledge/company.md

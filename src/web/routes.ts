@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
 import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
@@ -44,6 +44,8 @@ let visualizationServer: ReturnType<typeof createVisualizationMcpServer> | null 
 let posthogServer: ReturnType<typeof createPostHogMcpServer> | null = null;
 let dashboardServer: ReturnType<typeof createDashboardMcpServer> | null = null;
 let sandboxServer: ReturnType<typeof createSandboxMcpServer> | null = null;
+let memoryServer: ReturnType<typeof createMemoryMcpServer> | null = null;
+let signalsServer: ReturnType<typeof createSignalsMcpServer> | null = null;
 
 function resetMcpServers() {
   githubServer = null;
@@ -54,6 +56,8 @@ function resetMcpServers() {
   posthogServer = null;
   dashboardServer = null;
   sandboxServer = null;
+  memoryServer = null;
+  signalsServer = null;
 }
 
 function getGitHubServer() {
@@ -96,6 +100,16 @@ function getSandboxServer() {
   return sandboxServer;
 }
 
+function getMemoryServer() {
+  if (!memoryServer) memoryServer = createMemoryMcpServer();
+  return memoryServer;
+}
+
+function getSignalsServer() {
+  if (!signalsServer) signalsServer = createSignalsMcpServer();
+  return signalsServer;
+}
+
 // Human-readable tool labels
 const TOOL_LABELS: Record<string, string> = {
   "mcp__github__github_list_project_items": "Fetching project items",
@@ -132,6 +146,19 @@ const TOOL_LABELS: Record<string, string> = {
   "mcp__linear__linear_list_cycles": "Listing Linear cycles",
   "mcp__exa__web_search_exa": "Searching the web",
   "mcp__exa__company_research_exa": "Researching company",
+  "mcp__memory__memory_list": "Listing memory",
+  "mcp__memory__memory_read": "Reading memory",
+  "mcp__memory__memory_search": "Searching memory",
+  "mcp__memory__memory_follow_link": "Following memory link",
+  "mcp__memory__memory_write": "Writing to memory",
+  "mcp__memory__memory_update": "Updating memory",
+  "mcp__memory__memory_delete": "Deleting memory",
+  "mcp__signals__signal_store": "Storing signal",
+  "mcp__signals__signal_query": "Querying signals",
+  "mcp__signals__signal_sources": "Listing signal sources",
+  "mcp__signals__insight_create": "Creating insight",
+  "mcp__signals__insight_query": "Querying insights",
+  "mcp__signals__insight_update": "Updating insight",
 };
 
 function formatToolName(name: string): string {
@@ -383,6 +410,8 @@ export function createRoutes() {
         posthog: getPostHogServer(),
         dashboard: getDashboardServer(),
         sandbox: getSandboxServer(),
+        memory: getMemoryServer(),
+        signals: getSignalsServer(),
         ...getRemoteMcpServers(),
       },
       resume: session?.sessionId ?? undefined,

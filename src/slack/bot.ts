@@ -10,6 +10,8 @@ import {
   createDashboardMcpServer,
   createSandboxMcpServer,
   createPostHogMcpServer,
+  createMemoryMcpServer,
+  createSignalsMcpServer,
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
@@ -186,6 +188,8 @@ async function processAgentRequest(
         dashboard: createDashboardMcpServer(),
         sandbox: createSandboxMcpServer(),
         posthog: createPostHogMcpServer(),
+        memory: createMemoryMcpServer(),
+        signals: createSignalsMcpServer(),
         ...getRemoteMcpServers(),
       },
       allowedTools: [
@@ -198,6 +202,8 @@ async function processAgentRequest(
         "mcp__sandbox__*",
         "mcp__linear__*",
         "mcp__posthog__*",
+        "mcp__memory__*",
+        "mcp__signals__*",
       ],
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
