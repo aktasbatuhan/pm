@@ -12,6 +12,7 @@ export interface ProjectNode {
 
 export interface SetupStatus {
   configured: boolean;
+  hasToken: boolean;
   org: string;
   projectNumber: number;
 }
@@ -19,6 +20,7 @@ export interface SetupStatus {
 export function getSetupStatus(): SetupStatus {
   return {
     configured: !!(process.env.GITHUB_ORG && process.env.GITHUB_PROJECT_NUMBER),
+    hasToken: !!process.env.GITHUB_TOKEN,
     org: process.env.GITHUB_ORG || "",
     projectNumber: parseInt(process.env.GITHUB_PROJECT_NUMBER || "0", 10),
   };

@@ -726,15 +726,46 @@ document.getElementById("reconfigure-btn").addEventListener("click", async () =>
   resetSetupWizard();
   showSetup();
 
-  // If already configured (env vars set), skip token/org/project steps and go to repo discovery
+  // If already configured, validate existing token and skip to org/project selection
   try {
     const res = await fetch("/api/setup/status");
     const status = await res.json();
-    if (status.configured && status.org && status.projectNumber) {
-      setupState.org = status.org;
-      setupState.selectedProject = status.projectNumber;
-      goToSetupStep(4);
-      discoverRepos();
+    if (status.configured && status.hasToken) {
+      // Token is in env — validate it and jump to step 2 (org/project)
+      setSetupLoading(true, "Validating existing token...");
+      const valRes = await fetch("/api/setup/validate-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: "__ENV__" }),
+      });
+      const valData = await valRes.json();
+      setSetupLoading(false);
+
+      if (valData.valid) {
+        setupState.token = "__ENV__";
+        setupState.username = valData.username;
+
+        // Pre-fill org
+        const orgEl = document.getElementById("org-options");
+        const orgs = valData.orgs || [];
+        orgEl.innerHTML = [valData.username, ...orgs]
+          .map((o) => `<span class="org-option" data-org="${escapeHtml(o)}">${escapeHtml(o)}</span>`)
+          .join("");
+        orgEl.querySelectorAll(".org-option").forEach((el) => {
+          el.addEventListener("click", () => {
+            orgEl.querySelectorAll(".org-option").forEach((o) => o.classList.remove("selected"));
+            el.classList.add("selected");
+            document.getElementById("setup-org").value = el.dataset.org;
+          });
+        });
+
+        // Pre-select current org
+        document.getElementById("setup-org").value = status.org || orgs[0] || valData.username;
+        const currentOrgEl = orgEl.querySelector(`[data-org="${status.org || orgs[0] || valData.username}"]`);
+        if (currentOrgEl) currentOrgEl.classList.add("selected");
+
+        goToSetupStep(2);
+      }
     }
   } catch {}
 });

@@ -669,7 +669,9 @@ export function createRoutes() {
   });
 
   app.post("/setup/validate-token", async (c) => {
-    const { token } = await c.req.json<{ token: string }>();
+    const { token: rawToken } = await c.req.json<{ token: string }>();
+    // __ENV__ sentinel = reuse token from environment
+    const token = rawToken === "__ENV__" ? (process.env.GITHUB_TOKEN || "") : rawToken;
     const result = await validateToken(token);
     let orgs: string[] = [];
     if (result.valid) {
@@ -679,7 +681,8 @@ export function createRoutes() {
   });
 
   app.post("/setup/projects", async (c) => {
-    const { token, org } = await c.req.json<{ token: string; org: string }>();
+    const { token: rawToken, org } = await c.req.json<{ token: string; org: string }>();
+    const token = rawToken === "__ENV__" ? (process.env.GITHUB_TOKEN || "") : rawToken;
     const projects = await listProjects(token, org);
     return c.json({ projects });
   });
@@ -720,8 +723,9 @@ export function createRoutes() {
       projectNumber: number;
     }>();
 
+    const token = body.token === "__ENV__" ? (process.env.GITHUB_TOKEN || "") : body.token;
     const { created } = saveGitHubConfig({
-      token: body.token,
+      token,
       org: body.org,
       projectNumber: body.projectNumber,
     });
