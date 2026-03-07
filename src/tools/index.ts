@@ -8,6 +8,7 @@ export { createDashboardMcpServer, DASHBOARD_TOOL_NAMES } from "./dashboard.ts";
 export { createSandboxMcpServer, SANDBOX_TOOL_NAMES } from "./sandbox.ts";
 export { createMemoryMcpServer, MEMORY_WRITE_TOOL_NAMES } from "./memory.ts";
 export { createSignalsMcpServer, SIGNALS_WRITE_TOOL_NAMES } from "./signals.ts";
+export { createIntelligenceMcpServer } from "./intelligence.ts";
 
 import { WRITE_TOOL_NAMES as _GH_WRITE } from "./github.ts";
 import { KNOWLEDGE_WRITE_TOOL_NAMES as _K_WRITE } from "./knowledge.ts";

@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
 import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer, createIntelligenceMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
@@ -46,6 +46,7 @@ let dashboardServer: ReturnType<typeof createDashboardMcpServer> | null = null;
 let sandboxServer: ReturnType<typeof createSandboxMcpServer> | null = null;
 let memoryServer: ReturnType<typeof createMemoryMcpServer> | null = null;
 let signalsServer: ReturnType<typeof createSignalsMcpServer> | null = null;
+let intelligenceServer: ReturnType<typeof createIntelligenceMcpServer> | null = null;
 
 function resetMcpServers() {
   githubServer = null;
@@ -58,6 +59,7 @@ function resetMcpServers() {
   sandboxServer = null;
   memoryServer = null;
   signalsServer = null;
+  intelligenceServer = null;
 }
 
 function getGitHubServer() {
@@ -110,6 +112,11 @@ function getSignalsServer() {
   return signalsServer;
 }
 
+function getIntelligenceServer() {
+  if (!intelligenceServer) intelligenceServer = createIntelligenceMcpServer();
+  return intelligenceServer;
+}
+
 // Human-readable tool labels
 const TOOL_LABELS: Record<string, string> = {
   "mcp__github__github_list_project_items": "Fetching project items",
@@ -159,6 +166,8 @@ const TOOL_LABELS: Record<string, string> = {
   "mcp__signals__insight_create": "Creating insight",
   "mcp__signals__insight_query": "Querying insights",
   "mcp__signals__insight_update": "Updating insight",
+  "mcp__intelligence__intelligence_list_skills": "Listing skills",
+  "mcp__intelligence__intelligence_get_skill": "Loading skill",
 };
 
 function formatToolName(name: string): string {
@@ -412,6 +421,7 @@ export function createRoutes() {
         sandbox: getSandboxServer(),
         memory: getMemoryServer(),
         signals: getSignalsServer(),
+        intelligence: getIntelligenceServer(),
         ...getRemoteMcpServers(),
       },
       resume: session?.sessionId ?? undefined,
