@@ -2317,104 +2317,94 @@ function renderMarkdownWidget(container, config) {
 // --- Insights Tab Renderer ---
 
 const PRIORITY_COLORS = { critical: "#ff3d3d", high: "#e8912d", medium: "#d29922", low: "#8b949e" };
-const CATEGORY_LABELS = { anomaly: "Anomaly", trend: "Trend", recommendation: "Recommendation", risk: "Risk", opportunity: "Opportunity" };
+const CATEGORY_LABELS = { anomaly: "Anomaly", trend: "Trend", recommendation: "Rec", risk: "Risk", opportunity: "Opp" };
 
 function renderInsightsTab(grid, insights, signals) {
   grid.innerHTML = "";
 
-  // Stat cards row
   const newCount = insights.filter((i) => i.status === "new").length;
   const criticalCount = insights.filter((i) => i.priority === "critical" || i.priority === "high").length;
   const actionedCount = insights.filter((i) => i.status === "actioned").length;
   const signalCount = signals.length;
 
-  const statsRow = document.createElement("div");
-  statsRow.className = "widget-grid";
-  statsRow.innerHTML = `
-    <div class="widget quarter">
-      <div class="widget-header"><span class="widget-title">New Insights</span></div>
-      <div class="widget-body"><div class="stat-card"><span class="stat-value">${newCount}</span><span class="stat-label">Awaiting review</span></div></div>
-    </div>
-    <div class="widget quarter">
-      <div class="widget-header"><span class="widget-title">High Priority</span></div>
-      <div class="widget-body"><div class="stat-card"><span class="stat-value" style="color:${criticalCount > 0 ? '#ff3d3d' : '#8b949e'}">${criticalCount}</span><span class="stat-label">Critical + High</span></div></div>
-    </div>
-    <div class="widget quarter">
-      <div class="widget-header"><span class="widget-title">Actioned</span></div>
-      <div class="widget-body"><div class="stat-card"><span class="stat-value" style="color:#00c853">${actionedCount}</span><span class="stat-label">Completed</span></div></div>
-    </div>
-    <div class="widget quarter">
-      <div class="widget-header"><span class="widget-title">Signals</span></div>
-      <div class="widget-body"><div class="stat-card"><span class="stat-value">${signalCount}</span><span class="stat-label">Recent (24h)</span></div></div>
-    </div>
-  `;
-  grid.appendChild(statsRow);
+  // Stat cards — use existing widget-stat pattern
+  const stats = [
+    { label: "New", value: newCount, color: newCount > 0 ? "yellow" : "" },
+    { label: "High Priority", value: criticalCount, color: criticalCount > 0 ? "red" : "" },
+    { label: "Actioned", value: actionedCount, color: "green" },
+    { label: "Signals (24h)", value: signalCount, color: "" },
+  ];
+  for (const s of stats) {
+    const el = document.createElement("div");
+    el.className = "widget widget-quarter";
+    const colorClass = s.color ? `color-${s.color}` : "";
+    el.innerHTML = `<div class="widget-stat"><span class="widget-stat-label">${escapeHtml(s.label)}</span><span class="widget-stat-value ${colorClass}">${s.value}</span></div>`;
+    grid.appendChild(el);
+  }
 
-  // Insights list
-  const insightsWidget = document.createElement("div");
-  insightsWidget.className = "widget full";
+  // Insights table or empty state
+  const insightsEl = document.createElement("div");
+  insightsEl.className = "widget widget-full";
   if (insights.length === 0) {
-    insightsWidget.innerHTML = `
+    insightsEl.innerHTML = `
       <div class="widget-header"><span class="widget-title">Insights</span></div>
-      <div class="widget-body"><div class="widget-grid-empty">No insights yet. The agent creates insights when it detects anomalies, trends, or has recommendations. Try asking: "Run anomaly detection" or "Give me a daily briefing".</div></div>
-    `;
+      <div class="widget-body"><div class="insights-empty">
+        <p>No insights yet.</p>
+        <p>The agent creates insights when it detects anomalies, trends, or has recommendations.</p>
+        <p>Try asking: <strong>"Run anomaly detection"</strong> or <strong>"Give me a daily briefing"</strong></p>
+      </div></div>`;
   } else {
     const rows = insights.map((insight) => {
-      const priorityColor = PRIORITY_COLORS[insight.priority] || "#8b949e";
-      const categoryLabel = CATEGORY_LABELS[insight.category] || insight.category;
-      const timeAgo = formatTimeAgo(new Date(typeof insight.createdAt === "number" ? insight.createdAt : insight.created_at));
-      return `<tr data-insight-id="${escapeHtml(insight.id)}">
-        <td><span class="insight-priority" style="color:${priorityColor}">${escapeHtml(insight.priority)}</span></td>
-        <td><span class="insight-category">${escapeHtml(categoryLabel)}</span></td>
-        <td><strong>${escapeHtml(insight.title)}</strong><br><span class="insight-summary">${escapeHtml(insight.summary)}</span></td>
+      const pColor = PRIORITY_COLORS[insight.priority] || "#8b949e";
+      const cat = CATEGORY_LABELS[insight.category] || insight.category;
+      const time = formatTimeAgo(new Date(typeof insight.createdAt === "number" ? insight.createdAt : insight.created_at));
+      return `<tr>
+        <td><span class="insight-pill" style="background:${pColor}20;color:${pColor}">${escapeHtml(insight.priority)}</span></td>
+        <td><span class="insight-pill insight-pill-cat">${escapeHtml(cat)}</span></td>
+        <td class="insight-cell-main"><div class="insight-title">${escapeHtml(insight.title)}</div><div class="insight-summary">${escapeHtml(insight.summary)}</div></td>
         <td><select class="insight-status-select" data-id="${escapeHtml(insight.id)}">
           <option value="new"${insight.status === "new" ? " selected" : ""}>New</option>
-          <option value="acknowledged"${insight.status === "acknowledged" ? " selected" : ""}>Acknowledged</option>
-          <option value="actioned"${insight.status === "actioned" ? " selected" : ""}>Actioned</option>
-          <option value="dismissed"${insight.status === "dismissed" ? " selected" : ""}>Dismissed</option>
+          <option value="acknowledged"${insight.status === "acknowledged" ? " selected" : ""}>Ack</option>
+          <option value="actioned"${insight.status === "actioned" ? " selected" : ""}>Done</option>
+          <option value="dismissed"${insight.status === "dismissed" ? " selected" : ""}>Dismiss</option>
         </select></td>
-        <td>${timeAgo}</td>
+        <td class="insight-cell-time">${time}</td>
       </tr>`;
     }).join("");
-
-    insightsWidget.innerHTML = `
+    insightsEl.innerHTML = `
       <div class="widget-header"><span class="widget-title">Insights (${insights.length})</span></div>
-      <div class="widget-body">
-        <table class="widget-table"><thead><tr><th>Priority</th><th>Category</th><th>Insight</th><th>Status</th><th>Created</th></tr></thead><tbody>${rows}</tbody></table>
-      </div>
-    `;
+      <div class="widget-body"><table class="widget-table insight-table"><thead><tr><th>Priority</th><th>Type</th><th>Insight</th><th>Status</th><th>Time</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
-  grid.appendChild(insightsWidget);
+  grid.appendChild(insightsEl);
 
-  // Attach status change handlers
+  // Status change handlers
   grid.querySelectorAll(".insight-status-select").forEach((sel) => {
     sel.addEventListener("change", async (e) => {
-      const id = e.target.dataset.id;
-      const status = e.target.value;
-      await fetch(`/api/insights/${id}`, {
+      await fetch(`/api/insights/${e.target.dataset.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
+        body: JSON.stringify({ status: e.target.value }),
       });
     });
   });
 
-  // Recent signals
-  if (signals.length > 0) {
-    const signalsWidget = document.createElement("div");
-    signalsWidget.className = "widget full";
-    const signalRows = signals.map((s) => {
-      const timeAgo = formatTimeAgo(new Date(typeof s.createdAt === "number" ? s.createdAt : s.created_at));
-      return `<tr><td>${escapeHtml(s.source)}</td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.summary || s.data?.substring?.(0, 100) || "—")}</td><td>${timeAgo}</td></tr>`;
-    }).join("");
-    signalsWidget.innerHTML = `
+  // Recent signals table
+  const signalsEl = document.createElement("div");
+  signalsEl.className = "widget widget-full";
+  if (signals.length === 0) {
+    signalsEl.innerHTML = `
       <div class="widget-header"><span class="widget-title">Recent Signals</span></div>
-      <div class="widget-body">
-        <table class="widget-table"><thead><tr><th>Source</th><th>Type</th><th>Summary</th><th>When</th></tr></thead><tbody>${signalRows}</tbody></table>
-      </div>
-    `;
-    grid.appendChild(signalsWidget);
+      <div class="widget-body"><div class="insights-empty"><p>No signals ingested yet. Connect analytics, revenue, or app store data to start receiving signals.</p></div></div>`;
+  } else {
+    const rows = signals.map((s) => {
+      const time = formatTimeAgo(new Date(typeof s.createdAt === "number" ? s.createdAt : s.created_at));
+      return `<tr><td><span class="insight-pill insight-pill-cat">${escapeHtml(s.source)}</span></td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.summary || (typeof s.data === "string" ? s.data.substring(0, 120) : "—"))}</td><td class="insight-cell-time">${time}</td></tr>`;
+    }).join("");
+    signalsEl.innerHTML = `
+      <div class="widget-header"><span class="widget-title">Recent Signals</span></div>
+      <div class="widget-body"><table class="widget-table insight-table"><thead><tr><th>Source</th><th>Type</th><th>Summary</th><th>Time</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
+  grid.appendChild(signalsEl);
 }
 
 // Generate default widgets from GitHub project stats
