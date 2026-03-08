@@ -1,23 +1,31 @@
 #!/bin/sh
-# PM Agent entrypoint — seeds knowledge files on first boot
+# PM Agent entrypoint — seeds data files on first boot, preserves on updates
 
 DATA_DIR="${DATA_DIR:-/data}"
 KNOWLEDGE_DIR="$DATA_DIR/knowledge"
+MEMORY_DIR="$DATA_DIR/memory"
 WORKSPACE_DIR="$DATA_DIR/workspace"
 
-# Ensure data dir exists first
-mkdir -p "$DATA_DIR"
-mkdir -p "$WORKSPACE_DIR"
+# Ensure persistent directories exist
+mkdir -p "$DATA_DIR" "$WORKSPACE_DIR" "$MEMORY_DIR"
 
 # Seed knowledge files from image if not already present
 if [ ! -d "$KNOWLEDGE_DIR" ]; then
   echo "[init] Seeding knowledge files to $KNOWLEDGE_DIR..."
   cp -r /app/knowledge-seed "$KNOWLEDGE_DIR"
 else
-  echo "[init] Knowledge directory exists at $KNOWLEDGE_DIR"
+  echo "[init] Knowledge directory exists at $KNOWLEDGE_DIR — preserving user data"
+fi
+
+# Always update skills from the image (they're part of the app, not user data)
+if [ -d /app/skills ]; then
+  mkdir -p "$DATA_DIR/skills"
+  cp -r /app/skills/* "$DATA_DIR/skills/" 2>/dev/null || true
+  echo "[init] Skills updated from image"
 fi
 
 echo "[init] DATA_DIR=$DATA_DIR"
+echo "[init] DB: $DATA_DIR/pm-agent.db"
 echo "[init] Starting PM Agent..."
 
 exec bun run src/index.ts web

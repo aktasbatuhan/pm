@@ -22,6 +22,9 @@ COPY drizzle.config.ts ./
 # Copy knowledge as seed (will be copied to DATA_DIR on first boot)
 COPY knowledge/ ./knowledge-seed/
 
+# Copy skills (updated on every deploy — they're app code, not user data)
+COPY skills/ ./skills/
+
 # Copy entrypoint
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh

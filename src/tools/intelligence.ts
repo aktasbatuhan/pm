@@ -15,7 +15,10 @@ import {
  * intelligence workflows (daily briefing, anomaly detection, etc.).
  */
 
-const SKILLS_DIR = path.join(process.cwd(), "skills");
+const DATA_DIR = process.env.DATA_DIR || process.cwd();
+const SKILLS_DIR = path.join(DATA_DIR, "skills");
+// Fallback to app-bundled skills if DATA_DIR doesn't have them
+const APP_SKILLS_DIR = path.join(process.cwd(), "skills");
 
 const listSkills = tool(
   "intelligence_list_skills",
@@ -23,7 +26,8 @@ const listSkills = tool(
   {},
   async () => {
     try {
-      const files = fs.readdirSync(SKILLS_DIR)
+      const dir = fs.existsSync(SKILLS_DIR) ? SKILLS_DIR : APP_SKILLS_DIR;
+      const files = fs.readdirSync(dir)
         .filter(f => f.endsWith(".md"))
         .map(f => f.replace(".md", ""));
       return {
@@ -52,7 +56,8 @@ const getSkill = tool(
   },
   async ({ name }) => {
     const safeName = name.replace(/[^a-z0-9-]/gi, "");
-    const filePath = path.join(SKILLS_DIR, `${safeName}.md`);
+    const dir = fs.existsSync(SKILLS_DIR) ? SKILLS_DIR : APP_SKILLS_DIR;
+    const filePath = path.join(dir, `${safeName}.md`);
     try {
       const content = fs.readFileSync(filePath, "utf-8");
       return { content: [{ type: "text" as const, text: content }] };
