@@ -118,6 +118,67 @@ function getIntelligenceServer() {
   return intelligenceServer;
 }
 
+/**
+ * Run the initial intelligence bootstrap — scans the project, populates memory and creates first insights.
+ * Called once after setup completes. Runs in background.
+ */
+async function bootstrapIntelligence() {
+  const org = process.env.GITHUB_ORG || "unknown";
+  const projectNumber = process.env.GITHUB_PROJECT_NUMBER || "0";
+
+  console.log("[bootstrap] Starting intelligence bootstrap...");
+
+  const config: AgentConfig = {
+    systemPrompt: buildSystemPrompt(),
+    mcpServers: {
+      github: getGitHubServer(),
+      knowledge: getKnowledgeServer(),
+      dashboard: getDashboardServer(),
+      memory: getMemoryServer(),
+      signals: getSignalsServer(),
+      intelligence: getIntelligenceServer(),
+      ...getRemoteMcpServers(),
+    },
+    model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+    workingDirectory: WORKSPACE_DIR,
+  };
+
+  const prompt = `You just finished initial setup for a new project: ${org} (GitHub Project #${projectNumber}).
+
+Run the following bootstrap sequence to populate the intelligence layer:
+
+1. **Scan the project**: Call github_list_project_items and github_list_project_fields to understand the current sprint state — items, statuses, assignees, priorities.
+
+2. **Populate memory**: Write the following memory files based on what you find:
+   - product.md — project name, repos involved, current sprint, top priorities
+   - team.md — list of assignees you see in the project with their current workload
+   - metrics.md — sprint stats: total items, status breakdown, completion rate
+
+3. **Store signals**: For key metrics (items by status, items by priority, sprint completion %), store each as a signal via signal_store with source "github" and type "metric".
+
+4. **Generate initial insights**: Based on your analysis, create 2-5 insights about:
+   - Sprint health (on track? at risk?)
+   - Any items without assignees
+   - Any blocked or stale items
+   - Workload balance across team members
+   - Any recommendations
+
+5. **Create a dashboard tab**: Use dashboard tools to create an "Intelligence" tab with:
+   - 4 stat cards: sprint completion %, blocked items, unassigned items, team size
+   - A table of your generated insights
+
+Be thorough but concise. This is the user's first impression of the intelligence layer.`;
+
+  let result = "";
+  for await (const msg of chat(prompt, config)) {
+    if (msg.type === "result") {
+      result = msg.content;
+    }
+  }
+
+  console.log("[bootstrap] Intelligence bootstrap complete:", result.substring(0, 200));
+}
+
 // Human-readable tool labels
 const TOOL_LABELS: Record<string, string> = {
   "mcp__github__github_list_project_items": "Fetching project items",
@@ -969,6 +1030,23 @@ export function createRoutes() {
         500,
       );
     }
+  });
+
+  // --- Bootstrap Intelligence (runs after setup) ---
+
+  app.post("/bootstrap-intelligence", async (c) => {
+    const org = process.env.GITHUB_ORG;
+    const projectNumber = process.env.GITHUB_PROJECT_NUMBER;
+    if (!org || !projectNumber) {
+      return c.json({ error: "Not configured" }, 400);
+    }
+
+    // Fire and forget — run in background
+    bootstrapIntelligence().catch((err) =>
+      console.error("[bootstrap] Intelligence bootstrap failed:", err)
+    );
+
+    return c.json({ success: true, message: "Intelligence bootstrap started" });
   });
 
   // --- Insights API ---

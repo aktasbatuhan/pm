@@ -691,6 +691,11 @@ document.getElementById("btn-start-chat").addEventListener("click", () => {
   hideOnboardingBanner();
   sessionStorage.removeItem("onboarding-dismissed");
   setTimeout(() => checkKnowledgeOnboarding(), 1000);
+
+  // Bootstrap intelligence in the background after first setup
+  fetch("/api/bootstrap-intelligence", { method: "POST" })
+    .then(() => { window._bootstrapRunning = true; })
+    .catch(() => {});
 });
 
 // Reconfigure button — reset wizard and show it
@@ -2346,13 +2351,35 @@ function renderInsightsTab(grid, insights, signals) {
   const insightsEl = document.createElement("div");
   insightsEl.className = "widget widget-full";
   if (insights.length === 0) {
+    const isBootstrapping = window._bootstrapRunning;
     insightsEl.innerHTML = `
       <div class="widget-header"><span class="widget-title">Insights</span></div>
-      <div class="widget-body"><div class="insights-empty">
+      <div class="widget-body"><div class="insights-empty">${isBootstrapping ? `
+        <div class="bootstrap-spinner"></div>
+        <p>Analyzing your project...</p>
+        <p>The agent is scanning your sprint, populating memory, and generating initial insights.</p>
+        <p style="color:var(--text-muted);font-size:11px">This usually takes 30-60 seconds. The page will update automatically.</p>
+      ` : `
         <p>No insights yet.</p>
         <p>The agent creates insights when it detects anomalies, trends, or has recommendations.</p>
         <p>Try asking: <strong>"Run anomaly detection"</strong> or <strong>"Give me a daily briefing"</strong></p>
-      </div></div>`;
+      `}</div></div>`;
+    // Auto-refresh while bootstrapping
+    if (isBootstrapping) {
+      setTimeout(async () => {
+        if (activeTabId !== "insights") return;
+        try {
+          const res = await fetch("/api/insights");
+          const data = res.ok ? await res.json() : { insights: [] };
+          if (data.insights.length > 0) {
+            window._bootstrapRunning = false;
+            switchTab("insights");
+          } else {
+            switchTab("insights"); // re-render with spinner
+          }
+        } catch {}
+      }, 10000);
+    }
   } else {
     const rows = insights.map((insight) => {
       const pColor = PRIORITY_COLORS[insight.priority] || "#8b949e";

@@ -2890,6 +2890,17 @@ html, body {
 .insights-empty p { margin: 0; }
 .insights-empty strong { color: var(--text-secondary); }
 
+.bootstrap-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  margin: 0 auto 12px;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 .insight-table th { white-space: nowrap; }
 .insight-table td { vertical-align: top; padding: 8px 10px; }
 

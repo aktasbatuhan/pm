@@ -4,7 +4,7 @@ import { eq, lte, and } from "drizzle-orm";
 import { chat, type AgentConfig } from "../agent/core.ts";
 import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createDashboardMcpServer, createSandboxMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createDashboardMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer, createIntelligenceMcpServer } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { sendSlackMessage } from "../tools/slack.ts";
 import { chatSessions, messages } from "../db/schema.ts";
@@ -38,6 +38,9 @@ function buildJobAgentConfig(resumeSessionId?: string): AgentConfig {
       visualization: createVisualizationMcpServer(),
       dashboard: createDashboardMcpServer(),
       sandbox: createSandboxMcpServer(),
+      memory: createMemoryMcpServer(),
+      signals: createSignalsMcpServer(),
+      intelligence: createIntelligenceMcpServer(),
       ...getRemoteMcpServers(),
     },
     resume: sdkResumeId,
