@@ -24,6 +24,14 @@ if [ -d /app/skills ]; then
   echo "[init] Skills updated from image"
 fi
 
+# Load persistent .env if it exists (user reconfiguration survives redeploys)
+if [ -f "$DATA_DIR/.env" ]; then
+  echo "[init] Loading persistent .env from $DATA_DIR/.env"
+  set -a
+  . "$DATA_DIR/.env"
+  set +a
+fi
+
 echo "[init] DATA_DIR=$DATA_DIR"
 echo "[init] DB: $DATA_DIR/pm-agent.db"
 echo "[init] Starting PM Agent..."

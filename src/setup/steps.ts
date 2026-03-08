@@ -4,7 +4,9 @@ import { join } from "path";
 import { generateFullKnowledge } from "../knowledge/generator.ts";
 import { KNOWLEDGE_DIR, MEMORY_DIR } from "../paths.ts";
 
-const ENV_PATH = join(import.meta.dir, "../../.env");
+const DATA_DIR = process.env.DATA_DIR || process.cwd();
+// Store .env on the persistent volume so reconfiguration survives redeploys
+const ENV_PATH = join(DATA_DIR, ".env");
 
 export interface ProjectNode {
   number: number;
