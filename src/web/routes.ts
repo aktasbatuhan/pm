@@ -147,27 +147,49 @@ async function bootstrapIntelligence() {
 
 Run the following bootstrap sequence to populate the intelligence layer:
 
-1. **Scan the project**: Call github_list_project_items and github_list_project_fields to understand the current sprint state — items, statuses, assignees, priorities.
+## Step 1: Scan the project board
+Call github_list_project_items and github_list_project_fields to understand the current sprint state — items, statuses, assignees, priorities.
 
-2. **Populate memory**: Write the following memory files based on what you find:
+## Step 2: Choose your path based on what you find
+
+### PATH A — Board has items (normal project):
+1. **Populate memory**: Write memory files based on the sprint data:
    - product.md — project name, repos involved, current sprint, top priorities
-   - team.md — list of assignees you see in the project with their current workload
+   - team.md — list of assignees with their current workload
    - metrics.md — sprint stats: total items, status breakdown, completion rate
+2. **Store signals**: For key metrics (items by status, priority, completion %), store each via signal_store with source "github" and type "metric".
+3. **Generate insights** (2-5) about: sprint health, unassigned items, blocked/stale items, workload balance.
 
-3. **Store signals**: For key metrics (items by status, items by priority, sprint completion %), store each as a signal via signal_store with source "github" and type "metric".
+### PATH B — Board is empty or nearly empty:
+The project board has no items yet. This is a fresh project. Become the PM and bootstrap the backlog.
 
-4. **Generate initial insights**: Based on your analysis, create 2-5 insights about:
-   - Sprint health (on track? at risk?)
-   - Any items without assignees
-   - Any blocked or stale items
-   - Workload balance across team members
-   - Any recommendations
+1. **Discover repos**: Use github_cli to list repos under ${org}: \`repo list ${org} --json name,description,language,updatedAt --limit 20\`
+2. **Examine the code**: For each active repo (up to 3-4 most recently updated):
+   - Read the README: \`api repos/${org}/<repo>/contents/README.md\`
+   - List the top-level structure: \`api repos/${org}/<repo>/contents\`
+   - Check for open issues: \`issue list --repo ${org}/<repo> --json number,title,labels,state --limit 20\`
+   - Check for open PRs: \`pr list --repo ${org}/<repo> --json number,title,state --limit 10\`
+   - Skim key files (package.json, Dockerfile, CI configs) to understand the stack
+3. **Populate memory**: Write memory files based on what you discovered:
+   - product.md — what this project does, tech stack, repos and their purposes, current state
+   - team.md — contributors you see from PRs/issues
+   - metrics.md — repo stats, open issues/PRs count, last activity dates
+4. **Store signals**: Store repo health metrics (open issues count, last commit age, PR backlog) as signals.
+5. **Generate actionable insights** (3-7) as recommendations. Suggest concrete items for the backlog:
+   - Missing documentation or README improvements
+   - Open issues that should be prioritized
+   - Code quality: missing tests, CI/CD gaps, security concerns (dependency updates, exposed configs)
+   - Architecture observations: tech debt, refactoring opportunities
+   - Feature ideas based on what the code does and what's missing
+   - DevOps improvements: Dockerfile optimization, deployment setup
+   Each insight should be specific enough to become a GitHub issue. Use category "recommendation" and priority based on impact.
 
-5. **Create a dashboard tab**: Use dashboard tools to create an "Intelligence" tab with:
-   - 4 stat cards: sprint completion %, blocked items, unassigned items, team size
-   - A table of your generated insights
+## Step 3: Create a dashboard tab
+Use dashboard tools to create an "Intelligence" tab with:
+- 4 stat cards summarizing what you found
+- A table of your generated insights
 
-Be thorough but concise. This is the user's first impression of the intelligence layer.`;
+Be thorough but concise. This is the user's first impression of the intelligence layer — make it count.`;
 
   let result = "";
   for await (const msg of chat(prompt, config)) {
