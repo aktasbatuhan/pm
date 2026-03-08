@@ -9,6 +9,7 @@ export { createSandboxMcpServer, SANDBOX_TOOL_NAMES } from "./sandbox.ts";
 export { createMemoryMcpServer, MEMORY_WRITE_TOOL_NAMES } from "./memory.ts";
 export { createSignalsMcpServer, SIGNALS_WRITE_TOOL_NAMES } from "./signals.ts";
 export { createIntelligenceMcpServer } from "./intelligence.ts";
+export { createAgentsMcpServer, AGENTS_WRITE_TOOL_NAMES } from "./agents.ts";
 
 import { WRITE_TOOL_NAMES as _GH_WRITE } from "./github.ts";
 import { KNOWLEDGE_WRITE_TOOL_NAMES as _K_WRITE } from "./knowledge.ts";
@@ -19,5 +20,6 @@ import { DASHBOARD_TOOL_NAMES as _D_WRITE } from "./dashboard.ts";
 import { SANDBOX_TOOL_NAMES as _SB_WRITE } from "./sandbox.ts";
 import { MEMORY_WRITE_TOOL_NAMES as _MEM_WRITE } from "./memory.ts";
 import { SIGNALS_WRITE_TOOL_NAMES as _SIG_WRITE } from "./signals.ts";
+import { AGENTS_WRITE_TOOL_NAMES as _AG_WRITE } from "./agents.ts";
 
-export const WRITE_TOOL_NAMES = [..._GH_WRITE, ..._K_WRITE, ..._S_WRITE, ..._SL_WRITE, ..._PH_WRITE, ..._D_WRITE, ..._SB_WRITE, ..._MEM_WRITE, ..._SIG_WRITE];
+export const WRITE_TOOL_NAMES = [..._GH_WRITE, ..._K_WRITE, ..._S_WRITE, ..._SL_WRITE, ..._PH_WRITE, ..._D_WRITE, ..._SB_WRITE, ..._MEM_WRITE, ..._SIG_WRITE, ..._AG_WRITE];

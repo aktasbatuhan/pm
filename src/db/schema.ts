@@ -124,3 +124,65 @@ export type Signal = typeof signals.$inferSelect;
 export type NewSignal = typeof signals.$inferInsert;
 export type Insight = typeof insights.$inferSelect;
 export type NewInsight = typeof insights.$inferInsert;
+
+// --- Multi-Agent System ---
+
+export const subAgents = sqliteTable("sub_agents", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull().unique(), // 'sprint-health', 'code-quality', etc.
+  displayName: text("display_name").notNull(),
+  domain: text("domain").notNull(), // description of what this agent owns
+  status: text("status").$type<"active" | "paused" | "disabled">().notNull().default("active"),
+  scheduleIntervalMs: integer("schedule_interval_ms").notNull(),
+  lastRunAt: integer("last_run_at", { mode: "timestamp" }),
+  nextRunAt: integer("next_run_at", { mode: "timestamp" }),
+  memoryPartition: text("memory_partition").notNull(), // e.g. 'agents/sprint-health'
+  config: text("config", { mode: "json" }).$type<Record<string, unknown>>(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const escalations = sqliteTable("escalations", {
+  id: text("id").primaryKey(),
+  agentId: text("agent_id").notNull(),
+  urgency: text("urgency").$type<"info" | "attention" | "urgent" | "critical">().notNull().default("info"),
+  category: text("category").notNull(), // 'blocker', 'risk', 'opportunity', 'anomaly', 'kpi-breach', 'recommendation'
+  title: text("title").notNull(),
+  summary: text("summary").notNull(),
+  data: text("data", { mode: "json" }).$type<Record<string, unknown>>(),
+  status: text("status").$type<"pending" | "synthesized" | "actioned" | "dismissed">().notNull().default("pending"),
+  synthesizedIn: text("synthesized_in"), // synthesis run ID
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const kpis = sqliteTable("kpis", {
+  id: text("id").primaryKey(),
+  agentId: text("agent_id"), // NULL = org-level
+  name: text("name").notNull(),
+  displayName: text("display_name").notNull(),
+  targetValue: integer("target_value").notNull(),
+  currentValue: integer("current_value"),
+  unit: text("unit").notNull(), // 'percent', 'hours', 'count', 'ratio'
+  direction: text("direction").$type<"higher_is_better" | "lower_is_better">().notNull().default("higher_is_better"),
+  thresholdWarning: integer("threshold_warning"),
+  thresholdCritical: integer("threshold_critical"),
+  measuredAt: integer("measured_at", { mode: "timestamp" }),
+  status: text("status").$type<"on-track" | "at-risk" | "breached">().notNull().default("on-track"),
+  history: text("history", { mode: "json" }).$type<Array<{ value: number; timestamp: number }>>(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
+export const synthesisRuns = sqliteTable("synthesis_runs", {
+  id: text("id").primaryKey(),
+  escalationsProcessed: text("escalations_processed", { mode: "json" }).$type<string[]>(),
+  summary: text("summary").notNull(),
+  actions: text("actions", { mode: "json" }).$type<Record<string, unknown>>(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export type SubAgent = typeof subAgents.$inferSelect;
+export type Escalation = typeof escalations.$inferSelect;
+export type Kpi = typeof kpis.$inferSelect;
+export type SynthesisRun = typeof synthesisRuns.$inferSelect;

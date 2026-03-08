@@ -178,6 +178,75 @@ function migrate() {
     )
   `);
   getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_insights_status ON insights(status)`);
+
+  // --- Multi-Agent System ---
+
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS sub_agents (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      display_name TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      schedule_interval_ms INTEGER NOT NULL,
+      last_run_at INTEGER,
+      next_run_at INTEGER,
+      memory_partition TEXT NOT NULL,
+      config TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS escalations (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT NOT NULL,
+      urgency TEXT NOT NULL DEFAULT 'info',
+      category TEXT NOT NULL,
+      title TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      data TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      synthesized_in TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_escalations_status ON escalations(status)`);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_escalations_agent ON escalations(agent_id)`);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_escalations_urgency ON escalations(urgency)`);
+
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS kpis (
+      id TEXT PRIMARY KEY,
+      agent_id TEXT,
+      name TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      target_value INTEGER NOT NULL,
+      current_value INTEGER,
+      unit TEXT NOT NULL,
+      direction TEXT NOT NULL DEFAULT 'higher_is_better',
+      threshold_warning INTEGER,
+      threshold_critical INTEGER,
+      measured_at INTEGER,
+      status TEXT NOT NULL DEFAULT 'on-track',
+      history TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_kpis_agent ON kpis(agent_id)`);
+
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS synthesis_runs (
+      id TEXT PRIMARY KEY,
+      escalations_processed TEXT,
+      summary TEXT NOT NULL,
+      actions TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
 }
 
 // Helper to generate IDs

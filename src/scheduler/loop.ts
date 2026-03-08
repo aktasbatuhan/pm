@@ -8,6 +8,7 @@ import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServ
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { sendSlackMessage } from "../tools/slack.ts";
 import { chatSessions, messages } from "../db/schema.ts";
+import { runDueSubAgents } from "../agents/loop.ts";
 
 const CHECK_INTERVAL_MS = 30_000; // Check every 30 seconds
 let running = false;
@@ -197,10 +198,12 @@ export function startJobLoop(): void {
   // Initial check after a short delay (let the server start first)
   setTimeout(async () => {
     await tick();
+    await runDueSubAgents();
     // Then check on interval
     setInterval(async () => {
       try {
         await tick();
+        await runDueSubAgents();
       } catch (err) {
         console.error("[scheduler] Tick error:", err);
       }

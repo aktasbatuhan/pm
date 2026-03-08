@@ -13,6 +13,7 @@ import {
   createMemoryMcpServer,
   createSignalsMcpServer,
   createIntelligenceMcpServer,
+  createAgentsMcpServer,
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
@@ -192,6 +193,7 @@ async function processAgentRequest(
         memory: createMemoryMcpServer(),
         signals: createSignalsMcpServer(),
         intelligence: createIntelligenceMcpServer(),
+        agents: createAgentsMcpServer(),
         ...getRemoteMcpServers(),
       },
       allowedTools: [

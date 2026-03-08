@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
 import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer, createIntelligenceMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer, createIntelligenceMcpServer, createAgentsMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
@@ -48,6 +48,7 @@ let sandboxServer: ReturnType<typeof createSandboxMcpServer> | null = null;
 let memoryServer: ReturnType<typeof createMemoryMcpServer> | null = null;
 let signalsServer: ReturnType<typeof createSignalsMcpServer> | null = null;
 let intelligenceServer: ReturnType<typeof createIntelligenceMcpServer> | null = null;
+let agentsServer: ReturnType<typeof createAgentsMcpServer> | null = null;
 
 function resetMcpServers() {
   githubServer = null;
@@ -61,6 +62,7 @@ function resetMcpServers() {
   memoryServer = null;
   signalsServer = null;
   intelligenceServer = null;
+  agentsServer = null;
 }
 
 function getGitHubServer() {
@@ -118,6 +120,11 @@ function getIntelligenceServer() {
   return intelligenceServer;
 }
 
+function getAgentsServer() {
+  if (!agentsServer) agentsServer = createAgentsMcpServer();
+  return agentsServer;
+}
+
 /**
  * Run the initial intelligence bootstrap — scans the project, populates memory and creates first insights.
  * Called once after setup completes. Runs in background.
@@ -137,6 +144,7 @@ async function bootstrapIntelligence() {
       memory: getMemoryServer(),
       signals: getSignalsServer(),
       intelligence: getIntelligenceServer(),
+      agents: getAgentsServer(),
       ...getRemoteMcpServers(),
     },
     model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
@@ -252,6 +260,14 @@ const TOOL_LABELS: Record<string, string> = {
   "mcp__signals__insight_update": "Updating insight",
   "mcp__intelligence__intelligence_list_skills": "Listing skills",
   "mcp__intelligence__intelligence_get_skill": "Loading skill",
+  "mcp__agents__agents_list": "Listing sub-agents",
+  "mcp__agents__agents_pause": "Managing sub-agent",
+  "mcp__agents__agents_escalation_inbox": "Reading escalations",
+  "mcp__agents__agents_escalation_update": "Updating escalation",
+  "mcp__agents__agents_kpi_list": "Checking KPIs",
+  "mcp__agents__agents_kpi_set": "Updating KPI",
+  "mcp__agents__agents_run_synthesis": "Triggering synthesis",
+  "mcp__agents__agents_synthesis_history": "Viewing synthesis history",
 };
 
 function formatToolName(name: string): string {
