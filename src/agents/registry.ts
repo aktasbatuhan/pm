@@ -3,7 +3,7 @@
  */
 
 import { getDb, newId } from "../db/index.ts";
-import { subAgents, kpis } from "../db/schema.ts";
+import { subAgents } from "../db/schema.ts";
 import type { SubAgent } from "../db/schema.ts";
 import { eq } from "drizzle-orm";
 import type { AgentConfig } from "../agent/core.ts";
@@ -38,15 +38,6 @@ interface AgentDefinition {
   domain: string;
   scheduleIntervalMs: number;
   memoryPartition: string;
-  kpis: Array<{
-    name: string;
-    displayName: string;
-    targetValue: number;
-    unit: string;
-    direction: "higher_is_better" | "lower_is_better";
-    thresholdWarning: number;
-    thresholdCritical: number;
-  }>;
 }
 
 const DEFAULT_AGENTS: AgentDefinition[] = [
@@ -56,10 +47,6 @@ const DEFAULT_AGENTS: AgentDefinition[] = [
     domain: "Sprint velocity, completion rates, blocked items, delivery pace",
     scheduleIntervalMs: 4 * H,
     memoryPartition: "agents/sprint-health",
-    kpis: [
-      { name: "sprint_completion_rate", displayName: "Sprint Completion Rate", targetValue: 80, unit: "percent", direction: "higher_is_better", thresholdWarning: 70, thresholdCritical: 60 },
-      { name: "items_blocked_count", displayName: "Blocked Items", targetValue: 0, unit: "count", direction: "lower_is_better", thresholdWarning: 2, thresholdCritical: 5 },
-    ],
   },
   {
     name: "code-quality",
@@ -67,10 +54,6 @@ const DEFAULT_AGENTS: AgentDefinition[] = [
     domain: "PR health, review cycles, code quality signals, tech debt",
     scheduleIntervalMs: 6 * H,
     memoryPartition: "agents/code-quality",
-    kpis: [
-      { name: "avg_pr_review_time_hours", displayName: "Avg PR Review Time", targetValue: 24, unit: "hours", direction: "lower_is_better", thresholdWarning: 48, thresholdCritical: 72 },
-      { name: "prs_without_review_count", displayName: "PRs Without Review", targetValue: 0, unit: "count", direction: "lower_is_better", thresholdWarning: 3, thresholdCritical: 5 },
-    ],
   },
   {
     name: "product-signals",
@@ -78,9 +61,6 @@ const DEFAULT_AGENTS: AgentDefinition[] = [
     domain: "Analytics, user feedback, revenue signals, external product health",
     scheduleIntervalMs: 8 * H,
     memoryPartition: "agents/product-signals",
-    kpis: [
-      { name: "signal_anomaly_count", displayName: "Signal Anomalies Detected", targetValue: 0, unit: "count", direction: "lower_is_better", thresholdWarning: 3, thresholdCritical: 7 },
-    ],
   },
   {
     name: "team-dynamics",
@@ -88,9 +68,6 @@ const DEFAULT_AGENTS: AgentDefinition[] = [
     domain: "Workload balance, contributor activity patterns, collaboration health",
     scheduleIntervalMs: 12 * H,
     memoryPartition: "agents/team-dynamics",
-    kpis: [
-      { name: "workload_balance_score", displayName: "Workload Balance", targetValue: 80, unit: "percent", direction: "higher_is_better", thresholdWarning: 60, thresholdCritical: 40 },
-    ],
   },
 ];
 
@@ -123,27 +100,12 @@ export function initSubAgents(): void {
       updatedAt: now,
     }).run();
 
-    // Seed KPIs
-    for (const kpi of def.kpis) {
-      db.insert(kpis).values({
-        id: newId(),
-        agentId,
-        name: kpi.name,
-        displayName: kpi.displayName,
-        targetValue: kpi.targetValue,
-        unit: kpi.unit,
-        direction: kpi.direction,
-        thresholdWarning: kpi.thresholdWarning,
-        thresholdCritical: kpi.thresholdCritical,
-        status: "on-track",
-        history: [],
-        createdAt: now,
-        updatedAt: now,
-      }).run();
-    }
-
     console.log(`[agents] Seeded sub-agent: ${def.displayName} (first run: ${firstRun.toISOString()})`);
   }
+
+  // KPIs are NOT seeded here — the main agent (Head of Product) sets them
+  // during the first synthesis run after analyzing the actual project state.
+  console.log("[agents] Sub-agents initialized. KPIs will be set by the Head of Product during first synthesis.");
 }
 
 /**

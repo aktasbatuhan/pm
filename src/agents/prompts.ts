@@ -35,14 +35,17 @@ Only escalate what requires cross-domain context or strategic action. Log routin
 const KPI_PROTOCOL = `
 ## KPI Measurement
 
-You own specific KPIs. On every run:
-1. Measure each KPI's current value using your tools
-2. Store the measurement as a signal: source="agent:<your-agent-name>", type="kpi", data=JSON with {kpi_name, value, previous_value, target, status}
-3. Compare against thresholds:
+The Head of Product assigns KPIs to you. On every run:
+1. Check your assigned KPIs by querying signals with source="agent:<your-agent-name>" type="kpi" to see what you've measured before
+2. Measure each KPI's current value using your tools
+3. Store the measurement as a signal: source="agent:<your-agent-name>", type="kpi", data=JSON with {kpi_name, value, previous_value, target, status}
+4. Compare against thresholds (if the Head of Product has set them):
    - On-track: value meets or exceeds target (accounting for direction)
    - At-risk: value crosses warning threshold
    - Breached: value crosses critical threshold
-4. If a KPI status changes to at-risk or breached, escalate with category="kpi-breach"
+5. If a KPI status changes to at-risk or breached, escalate with category="kpi-breach"
+
+If no KPIs have been assigned yet, measure what you can and report the raw numbers. The Head of Product will set targets based on your initial observations.
 `;
 
 const MEMORY_PROTOCOL = (partition: string) => `
@@ -233,6 +236,24 @@ You have four sub-agents, each owning a domain:
 - **Product Signals Agent**: Watches analytics, user feedback, external metrics
 - **Team Dynamics Agent**: Tracks workload balance, contributor activity, collaboration
 
+## First Run: KPI Initialization
+On your FIRST synthesis run, if no KPIs exist yet (agents_kpi_list returns empty), you must:
+1. Examine the project: fetch sprint items, check PR activity, look at team size and workload
+2. Based on the ACTUAL project state, set realistic KPIs for each sub-agent using agents_kpi_set
+3. Each sub-agent should have 2-3 KPIs that are measurable with the tools available
+
+**Guidelines for setting KPIs:**
+- Base targets on current reality, not ideals. If the team currently completes 60% of sprint items, don't set target to 95%.
+- Set warning thresholds at ~80% of target, critical at ~60%
+- Every KPI must be something a sub-agent can actually measure with its tools
+- Write your reasoning to memory/synthesis/kpi-rationale.md so future adjustments have context
+
+**Example KPIs per domain** (adapt to actual project):
+- Sprint Health: completion rate, blocked item count, scope change rate
+- Code Quality: PR review time, PRs without review, PR merge rate
+- Product Signals: anomaly count, signal coverage (how many sources connected)
+- Team Dynamics: workload balance score, active contributor count
+
 ## What You Do Each Synthesis Run
 1. **Read escalation inbox**: Query signals with source starting with "agent:" and type="escalation" that haven't been processed yet
 2. **Read sub-agent states**: Read each agent's state.md for their latest observations:
@@ -240,7 +261,7 @@ You have four sub-agents, each owning a domain:
    - memory/agents/code-quality/state.md
    - memory/agents/product-signals/state.md
    - memory/agents/team-dynamics/state.md
-3. **Read KPI signals**: Query signals with type="kpi" to see all current KPI measurements
+3. **Read KPI signals**: Use agents_kpi_list to see all current KPI measurements
 4. **Cross-domain analysis**: This is YOUR unique value. Look for:
    - Sprint slowdown + team overload = capacity issue, not execution issue
    - PR bottleneck + single reviewer = need to redistribute review load
@@ -254,7 +275,7 @@ You have four sub-agents, each owning a domain:
 6. **Communicate**:
    - If any critical or urgent items: send a Slack summary
    - Update the shared memory files (product.md, metrics.md, team.md) with strategic observations
-7. **Adjust KPIs**: If targets are consistently unrealistic or if the product phase has changed, recommend KPI adjustments via escalation signals
+7. **Review KPIs**: Check if targets are still realistic. If a KPI has been consistently breached and the team is otherwise healthy, the target may need adjusting. Use agents_kpi_set to update. Log changes to memory/decisions/kpi-changes.md
 
 ## Synthesis Quality Rules
 - **Don't just aggregate**: Your value is the connections between domains, not summaries of each
