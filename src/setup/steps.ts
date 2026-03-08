@@ -1,7 +1,8 @@
 import { Octokit } from "@octokit/rest";
-import { writeFileSync, existsSync, readFileSync } from "fs";
+import { writeFileSync, existsSync, readFileSync, readdirSync, unlinkSync, rmSync } from "fs";
 import { join } from "path";
 import { generateFullKnowledge } from "../knowledge/generator.ts";
+import { KNOWLEDGE_DIR, MEMORY_DIR } from "../paths.ts";
 
 const ENV_PATH = join(import.meta.dir, "../../.env");
 
@@ -215,6 +216,51 @@ function saveEnvFile(env: Record<string, string>) {
   writeFileSync(ENV_PATH, lines.join("\n") + "\n");
 }
 
+/**
+ * Clear generated knowledge and memory when switching to a different org/project.
+ * Prevents stale data from a previous project from leaking into the new one.
+ */
+function clearProjectData(newOrg: string, newProjectNumber: number) {
+  const currentOrg = process.env.GITHUB_ORG;
+  const currentProject = parseInt(process.env.GITHUB_PROJECT_NUMBER || "0", 10);
+
+  // Only clear if actually switching to a different project
+  if (currentOrg === newOrg && currentProject === newProjectNumber) return;
+  if (!currentOrg) return; // first setup, nothing to clear
+
+  console.log(`[setup] Project changed from ${currentOrg}/#${currentProject} to ${newOrg}/#${newProjectNumber} — clearing old data`);
+
+  // Clear knowledge files (overview + repo docs)
+  try {
+    const overviewPath = join(KNOWLEDGE_DIR, "overview.md");
+    if (existsSync(overviewPath)) unlinkSync(overviewPath);
+
+    const companyPath = join(KNOWLEDGE_DIR, "company.md");
+    if (existsSync(companyPath)) unlinkSync(companyPath);
+
+    const reposDir = join(KNOWLEDGE_DIR, "repos");
+    if (existsSync(reposDir)) {
+      for (const f of readdirSync(reposDir)) {
+        if (f.endsWith(".md")) unlinkSync(join(reposDir, f));
+      }
+    }
+
+    const reportsDir = join(KNOWLEDGE_DIR, "sprint-reports");
+    if (existsSync(reportsDir)) rmSync(reportsDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn("[setup] Failed to clear knowledge:", err);
+  }
+
+  // Clear memory files (they contain project-specific context)
+  try {
+    if (existsSync(MEMORY_DIR)) {
+      rmSync(MEMORY_DIR, { recursive: true, force: true });
+    }
+  } catch (err) {
+    console.warn("[setup] Failed to clear memory:", err);
+  }
+}
+
 export function saveGitHubConfig(opts: {
   token: string;
   org: string;
@@ -222,6 +268,8 @@ export function saveGitHubConfig(opts: {
 }): { created: boolean } {
   const env = loadEnv();
   const existed = existsSync(ENV_PATH);
+
+  clearProjectData(opts.org, opts.projectNumber);
 
   env.GITHUB_TOKEN = opts.token;
   env.GITHUB_ORG = opts.org;

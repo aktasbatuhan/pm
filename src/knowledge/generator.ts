@@ -12,7 +12,7 @@ function getOctokit() {
 
 // --- LLM helper ---
 
-const DEFAULT_MODEL = process.env.AGENT_MODEL || "google/gemini-3-flash-preview";
+const DEFAULT_MODEL = process.env.AGENT_MODEL || "minimax/minimax-m2.5";
 
 async function callLLM(system: string, user: string): Promise<string> {
   // Prefer OpenRouter when available (supports all model providers)

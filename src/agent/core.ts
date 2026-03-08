@@ -44,7 +44,7 @@ export async function* chat(
   // Ensure sub-agents use the same model as the main agent (not haiku default)
   const effectiveModel = config.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview";
   if (!process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
-    process.env.CLAUDE_CODE_SUBAGENT_MODEL = effectiveModel;
+    process.env.CLAUDE_CODE_SUBAGENT_MODEL = process.env.SUBAGENT_MODEL || "qwen/qwen3.5-plus-02-15";
   }
 
   // Build prompt: multimodal if images are attached, plain string otherwise
