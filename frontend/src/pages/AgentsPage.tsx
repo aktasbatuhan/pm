@@ -1,7 +1,17 @@
 import { useState } from "react";
 import { useSubAgents, useEscalations, useKpis, useSynthesisRuns } from "@/hooks/use-agents";
 import { cn } from "@/lib/utils";
-import type { SubAgent, Escalation } from "@/types/agents";
+
+
+import type { SubAgent, Escalation, Kpi, SynthesisRun } from "@/types/agents";
+
+// Pixel-art style agent avatars using emoji + colored backgrounds
+const agentAvatars: Record<string, { emoji: string; bg: string; border: string }> = {
+  "sprint-health": { emoji: "🏃", bg: "bg-blue-500/15", border: "border-blue-500/30" },
+  "code-quality": { emoji: "🔧", bg: "bg-purple-500/15", border: "border-purple-500/30" },
+  "product-signals": { emoji: "📡", bg: "bg-green-500/15", border: "border-green-500/30" },
+  "team-dynamics": { emoji: "👥", bg: "bg-orange-500/15", border: "border-orange-500/30" },
+};
 
 const statusColors: Record<string, string> = {
   active: "text-success",
@@ -26,17 +36,18 @@ function timeAgo(dateStr?: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-type Tab = "agents" | "escalations" | "kpis" | "synthesis";
+type Tab = "team" | "escalations" | "kpis" | "synthesis";
 
 export function AgentsPage() {
-  const [activeTab, setActiveTab] = useState<Tab>("agents");
+  const [activeTab, setActiveTab] = useState<Tab>("team");
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const { data: agents, isLoading: agentsLoading } = useSubAgents();
   const { data: escalations, isLoading: escLoading } = useEscalations();
   const { data: kpis, isLoading: kpisLoading } = useKpis();
   const { data: runs, isLoading: synthLoading } = useSynthesisRuns(20);
 
   const tabs: { id: Tab; label: string; count?: number }[] = [
-    { id: "agents", label: "Sub-Agents", count: agents?.length },
+    { id: "team", label: "Team", count: agents ? agents.length + 1 : undefined },
     { id: "escalations", label: "Escalations", count: escalations?.length },
     { id: "kpis", label: "KPIs", count: kpis?.length },
     { id: "synthesis", label: "Synthesis", count: runs?.length },
@@ -46,7 +57,7 @@ export function AgentsPage() {
     <div className="p-6 max-w-[1400px] mx-auto">
       <div className="mb-6">
         <h1 className="text-lg font-medium text-foreground">Agent Team</h1>
-        <p className="text-xs text-muted-foreground mt-0.5">Sub-agent management, escalations, and KPI tracking</p>
+        <p className="text-xs text-muted-foreground mt-0.5">Your autonomous PM team</p>
       </div>
 
       {/* Tab bar */}
@@ -54,7 +65,7 @@ export function AgentsPage() {
         {tabs.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => { setActiveTab(tab.id); setSelectedAgent(null); }}
             className={cn(
               "px-3 py-2 text-xs transition-colors border-b-2 -mb-px",
               activeTab === tab.id
@@ -70,14 +81,21 @@ export function AgentsPage() {
         ))}
       </div>
 
-      {activeTab === "agents" && (
-        <AgentsTab agents={agents || []} loading={agentsLoading} />
+      {activeTab === "team" && (
+        <TeamTab
+          agents={agents || []}
+          kpis={kpis || []}
+          escalations={escalations || []}
+          loading={agentsLoading}
+          selectedAgent={selectedAgent}
+          onSelectAgent={setSelectedAgent}
+        />
       )}
       {activeTab === "escalations" && (
-        <EscalationsTab escalations={escalations || []} loading={escLoading} />
+        <EscalationsTab escalations={escalations || []} agents={agents || []} loading={escLoading} />
       )}
       {activeTab === "kpis" && (
-        <KpisTab kpis={kpis || []} loading={kpisLoading} />
+        <KpisTab kpis={kpis || []} agents={agents || []} loading={kpisLoading} />
       )}
       {activeTab === "synthesis" && (
         <SynthesisTab runs={runs || []} loading={synthLoading} />
@@ -86,44 +104,212 @@ export function AgentsPage() {
   );
 }
 
-function AgentsTab({ agents, loading }: { agents: SubAgent[]; loading: boolean }) {
+function TeamTab({
+  agents, kpis, escalations, loading, selectedAgent, onSelectAgent,
+}: {
+  agents: SubAgent[];
+  kpis: Kpi[];
+  escalations: Escalation[];
+  loading: boolean;
+  selectedAgent: string | null;
+  onSelectAgent: (id: string | null) => void;
+}) {
   if (loading) return <Skeleton rows={4} />;
+  if (agents.length === 0) return <EmptyState text="No agents configured" sub="Complete setup to initialize the agent team" />;
 
-  if (agents.length === 0) {
-    return <EmptyState text="No agents configured" sub="Complete setup to initialize the agent team" />;
-  }
+  const selected = selectedAgent ? agents.find((a) => a.id === selectedAgent) : null;
 
   return (
-    <div className="space-y-3">
-      {agents.map((agent) => (
-        <div key={agent.id} className="bg-card border border-border rounded-md p-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-foreground">{agent.displayName}</span>
-              <span className={cn("text-[10px] px-1.5 py-0.5 rounded bg-muted", statusColors[agent.status])}>
-                {agent.status}
-              </span>
+    <div className="flex gap-6">
+      {/* Agent grid */}
+      <div className="flex-1">
+        {/* Head of Product card */}
+        <div className="mb-4">
+          <div className="bg-card border border-primary/20 rounded-md p-4">
+            <div className="flex items-center gap-3 mb-2">
+              <div className="w-10 h-10 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center text-lg">
+                🧠
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-foreground">Head of Product</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-primary/15 text-primary">lead</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground">Cross-domain synthesis, KPI management, strategic decisions</p>
+              </div>
             </div>
-            <span className="text-[10px] text-muted-foreground">ID: {agent.name}</span>
-          </div>
-          <p className="text-xs text-muted-foreground mb-3">{agent.domain}</p>
-          <div className="grid grid-cols-4 gap-4">
-            <MetaItem label="CYCLE" value={formatInterval(agent.scheduleIntervalMs)} />
-            <MetaItem label="LAST RUN" value={timeAgo(agent.lastRunAt)} />
-            <MetaItem label="NEXT RUN" value={timeAgo(agent.nextRunAt)} />
-            <MetaItem label="MEMORY" value={agent.memoryPartition} />
+            <div className="grid grid-cols-3 gap-3 mt-3">
+              <MetaItem label="TOOLS" value="All MCP servers" />
+              <MetaItem label="TRIGGER" value="2h / critical esc." />
+              <MetaItem label="MEMORY" value="synthesis/" />
+            </div>
           </div>
         </div>
-      ))}
+
+        {/* Sub-agent cards */}
+        <div className="grid grid-cols-2 gap-3">
+          {agents.map((agent) => {
+            const avatar = agentAvatars[agent.name] || { emoji: "🤖", bg: "bg-muted", border: "border-border" };
+            const agentKpis = kpis.filter((k) => k.agentId === agent.id);
+            const agentEsc = escalations.filter((e) => e.agentId === agent.id && e.status === "pending");
+            const isSelected = selectedAgent === agent.id;
+
+            return (
+              <button
+                key={agent.id}
+                onClick={() => onSelectAgent(isSelected ? null : agent.id)}
+                className={cn(
+                  "bg-card border rounded-md p-4 text-left transition-all",
+                  isSelected ? "border-primary/50 ring-1 ring-primary/20" : "border-border hover:border-border/80"
+                )}
+              >
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={cn("w-10 h-10 rounded-lg flex items-center justify-center text-lg border", avatar.bg, avatar.border)}>
+                    {avatar.emoji}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-foreground">{agent.displayName}</span>
+                      <span className={cn("text-[9px]", statusColors[agent.status])}>
+                        {agent.status === "active" ? "●" : agent.status === "paused" ? "◆" : "○"}
+                      </span>
+                    </div>
+                    <p className="text-[10px] text-muted-foreground truncate">{agent.domain}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <span className="label-uppercase">CYCLE</span>
+                    <p className="text-[10px] text-foreground mt-0.5">{formatInterval(agent.scheduleIntervalMs)}</p>
+                  </div>
+                  <div>
+                    <span className="label-uppercase">LAST</span>
+                    <p className="text-[10px] text-foreground mt-0.5">{timeAgo(agent.lastRunAt)}</p>
+                  </div>
+                  <div>
+                    <span className="label-uppercase">ALERTS</span>
+                    <p className={cn("text-[10px] mt-0.5", agentEsc.length > 0 ? "text-warning" : "text-foreground")}>
+                      {agentEsc.length > 0 ? `${agentEsc.length} pending` : "none"}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Mini KPI bars */}
+                {agentKpis.length > 0 && (
+                  <div className="mt-3 pt-2 border-t border-border/50 space-y-1.5">
+                    {agentKpis.slice(0, 2).map((kpi) => {
+                      const pct = Math.max(0, Math.min(100, ((kpi.currentValue ?? 0) / (kpi.targetValue || 1)) * 100));
+                      const color = kpi.status === "on-track" ? "bg-success" : kpi.status === "at-risk" ? "bg-warning" : "bg-destructive";
+                      return (
+                        <div key={kpi.id}>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[9px] text-muted-foreground">{kpi.displayName}</span>
+                            <span className="text-[9px] text-foreground">{kpi.currentValue ?? 0}/{kpi.targetValue}</span>
+                          </div>
+                          <div className="h-1 bg-muted rounded-full overflow-hidden mt-0.5">
+                            <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Detail panel */}
+      {selected && (
+        <div className="w-80 shrink-0">
+          <AgentDetail agent={selected} kpis={kpis} escalations={escalations} />
+        </div>
+      )}
     </div>
   );
 }
 
-function EscalationsTab({ escalations, loading }: { escalations: Escalation[]; loading: boolean }) {
+function AgentDetail({ agent, kpis, escalations }: { agent: SubAgent; kpis: Kpi[]; escalations: Escalation[] }) {
+  const avatar = agentAvatars[agent.name] || { emoji: "🤖", bg: "bg-muted", border: "border-border" };
+  const agentKpis = kpis.filter((k) => k.agentId === agent.id);
+  const agentEsc = escalations.filter((e) => e.agentId === agent.id);
+
+  return (
+    <div className="bg-card border border-border rounded-md p-4 sticky top-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className={cn("w-12 h-12 rounded-lg flex items-center justify-center text-xl border", avatar.bg, avatar.border)}>
+          {avatar.emoji}
+        </div>
+        <div>
+          <h3 className="text-sm font-medium text-foreground">{agent.displayName}</h3>
+          <p className="text-[10px] text-muted-foreground">{agent.name}</p>
+        </div>
+      </div>
+
+      <p className="text-xs text-muted-foreground mb-4">{agent.domain}</p>
+
+      <div className="space-y-3">
+        <div className="grid grid-cols-2 gap-3">
+          <MetaItem label="STATUS" value={agent.status} />
+          <MetaItem label="CYCLE" value={formatInterval(agent.scheduleIntervalMs)} />
+          <MetaItem label="LAST RUN" value={timeAgo(agent.lastRunAt)} />
+          <MetaItem label="NEXT RUN" value={timeAgo(agent.nextRunAt)} />
+        </div>
+
+        <div>
+          <MetaItem label="MEMORY PARTITION" value={agent.memoryPartition} />
+        </div>
+
+        {/* KPIs */}
+        {agentKpis.length > 0 && (
+          <div className="border-t border-border pt-3">
+            <span className="label-uppercase">ASSIGNED KPIS</span>
+            <div className="space-y-2 mt-2">
+              {agentKpis.map((kpi) => {
+                const statusColor = kpi.status === "on-track" ? "text-success" : kpi.status === "at-risk" ? "text-warning" : "text-destructive";
+                return (
+                  <div key={kpi.id} className="bg-muted/30 rounded px-3 py-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-foreground">{kpi.displayName}</span>
+                      <span className={cn("text-[9px]", statusColor)}>{kpi.status}</span>
+                    </div>
+                    <span className="text-[9px] text-muted-foreground">
+                      {kpi.currentValue ?? "?"} / {kpi.targetValue} {kpi.unit}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Recent escalations */}
+        {agentEsc.length > 0 && (
+          <div className="border-t border-border pt-3">
+            <span className="label-uppercase">RECENT ESCALATIONS</span>
+            <div className="space-y-1.5 mt-2">
+              {agentEsc.slice(0, 5).map((esc) => (
+                <div key={esc.id} className="text-[10px]">
+                  <span className="text-foreground">{esc.title}</span>
+                  <span className="text-muted-foreground ml-1">· {timeAgo(esc.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EscalationsTab({ escalations, agents, loading }: { escalations: Escalation[]; agents: SubAgent[]; loading: boolean }) {
   if (loading) return <Skeleton rows={5} />;
   if (escalations.length === 0) return <EmptyState text="No escalations" sub="All agents operating normally" />;
 
-  const urgencyOrder = { critical: 0, urgent: 1, attention: 2, info: 3 };
+  const agentMap = new Map(agents.map((a) => [a.id, a]));
+  const urgencyOrder: Record<string, number> = { critical: 0, urgent: 1, attention: 2, info: 3 };
   const sorted = [...escalations].sort(
     (a, b) => (urgencyOrder[a.urgency] ?? 4) - (urgencyOrder[b.urgency] ?? 4)
   );
@@ -150,40 +336,51 @@ function EscalationsTab({ escalations, loading }: { escalations: Escalation[]; l
             <th className="text-left px-3 py-2 label-uppercase font-normal">Title</th>
             <th className="text-left px-3 py-2 label-uppercase font-normal w-20">Urgency</th>
             <th className="text-left px-3 py-2 label-uppercase font-normal w-24">Status</th>
-            <th className="text-left px-3 py-2 label-uppercase font-normal w-28">Agent</th>
+            <th className="text-left px-3 py-2 label-uppercase font-normal w-36">Agent</th>
             <th className="text-left px-3 py-2 label-uppercase font-normal w-20">Time</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map((esc) => (
-            <tr key={esc.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
-              <td className="px-3 py-2">
-                <div className="text-foreground">{esc.title}</div>
-                <div className="text-muted-foreground mt-0.5 line-clamp-1">{esc.summary}</div>
-              </td>
-              <td className="px-3 py-2">
-                <span className={cn("text-[9px] px-1.5 py-0.5 rounded", urgencyBadge[esc.urgency])}>
-                  {esc.urgency}
-                </span>
-              </td>
-              <td className="px-3 py-2">
-                <span className={cn("text-[9px] px-1.5 py-0.5 rounded", statusBadge[esc.status])}>
-                  {esc.status}
-                </span>
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">{esc.agentId}</td>
-              <td className="px-3 py-2 text-muted-foreground">{timeAgo(esc.createdAt)}</td>
-            </tr>
-          ))}
+          {sorted.map((esc) => {
+            const agent = agentMap.get(esc.agentId);
+            const avatar = agent ? agentAvatars[agent.name] : undefined;
+            return (
+              <tr key={esc.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
+                <td className="px-3 py-2">
+                  <div className="text-foreground">{esc.title}</div>
+                  <div className="text-muted-foreground mt-0.5 line-clamp-1">{esc.summary}</div>
+                </td>
+                <td className="px-3 py-2">
+                  <span className={cn("text-[9px] px-1.5 py-0.5 rounded", urgencyBadge[esc.urgency])}>
+                    {esc.urgency}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <span className={cn("text-[9px] px-1.5 py-0.5 rounded", statusBadge[esc.status])}>
+                    {esc.status}
+                  </span>
+                </td>
+                <td className="px-3 py-2">
+                  <div className="flex items-center gap-1.5">
+                    {avatar && <span className="text-xs">{avatar.emoji}</span>}
+                    <span className="text-muted-foreground">{agent?.displayName || esc.agentId.slice(0, 8)}</span>
+                  </div>
+                </td>
+                <td className="px-3 py-2 text-muted-foreground">{timeAgo(esc.createdAt)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function KpisTab({ kpis, loading }: { kpis: import("@/types/agents").Kpi[]; loading: boolean }) {
+function KpisTab({ kpis, agents, loading }: { kpis: Kpi[]; agents: SubAgent[]; loading: boolean }) {
   if (loading) return <Skeleton rows={4} />;
   if (kpis.length === 0) return <EmptyState text="No KPIs set" sub="The Head of Product will assign KPIs after first synthesis run" />;
+
+  const agentMap = new Map(agents.map((a) => [a.id, a]));
 
   const statusColor: Record<string, string> = {
     "on-track": "text-success",
@@ -203,11 +400,16 @@ function KpisTab({ kpis, loading }: { kpis: import("@/types/agents").Kpi[]; load
         const current = kpi.currentValue ?? 0;
         const target = kpi.targetValue || 1;
         const pct = Math.max(0, Math.min(100, (current / target) * 100));
+        const agent = kpi.agentId ? agentMap.get(kpi.agentId) : undefined;
+        const avatar = agent ? agentAvatars[agent.name] : undefined;
 
         return (
           <div key={kpi.id} className="bg-card border border-border rounded-md p-4">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-medium text-foreground">{kpi.displayName}</span>
+              <div className="flex items-center gap-2">
+                {avatar && <span className="text-sm">{avatar.emoji}</span>}
+                <span className="text-xs font-medium text-foreground">{kpi.displayName}</span>
+              </div>
               <span className={cn("text-[10px]", statusColor[kpi.status])}>{kpi.status}</span>
             </div>
             <div className="flex items-baseline gap-1 mb-2">
@@ -220,12 +422,11 @@ function KpisTab({ kpis, loading }: { kpis: import("@/types/agents").Kpi[]; load
                 style={{ width: `${pct}%` }}
               />
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex items-center gap-4">
               <MetaItem label="DIRECTION" value={kpi.direction === "higher_is_better" ? "Higher =" : "Lower ="} />
-              {kpi.thresholdWarning != null && <MetaItem label="WARNING" value={String(kpi.thresholdWarning)} />}
-              {kpi.thresholdCritical != null && <MetaItem label="CRITICAL" value={String(kpi.thresholdCritical)} />}
-              {kpi.agentId && <MetaItem label="AGENT" value={kpi.agentId} />}
-              {kpi.measuredAt && <MetaItem label="MEASURED" value={timeAgo(kpi.measuredAt)} />}
+              {kpi.thresholdWarning != null && <MetaItem label="WARN" value={String(kpi.thresholdWarning)} />}
+              {kpi.thresholdCritical != null && <MetaItem label="CRIT" value={String(kpi.thresholdCritical)} />}
+              {agent && <MetaItem label="OWNER" value={agent.displayName} />}
             </div>
           </div>
         );
@@ -234,7 +435,7 @@ function KpisTab({ kpis, loading }: { kpis: import("@/types/agents").Kpi[]; load
   );
 }
 
-function SynthesisTab({ runs, loading }: { runs: import("@/types/agents").SynthesisRun[]; loading: boolean }) {
+function SynthesisTab({ runs, loading }: { runs: SynthesisRun[]; loading: boolean }) {
   if (loading) return <Skeleton rows={3} />;
   if (runs.length === 0) return <EmptyState text="No synthesis runs yet" sub="Synthesis runs automatically every 2 hours or on critical escalations" />;
 
@@ -242,16 +443,21 @@ function SynthesisTab({ runs, loading }: { runs: import("@/types/agents").Synthe
     <div className="space-y-3">
       {runs.map((run) => (
         <div key={run.id} className="bg-card border border-border rounded-md p-4">
-          <div className="flex items-center justify-between mb-2">
-            <span className="label-uppercase">SYNTHESIS RUN</span>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm">🧠</span>
+            <span className="text-xs font-medium text-foreground">Head of Product</span>
+            <span className="text-[8px] text-muted-foreground/40">·</span>
             <span className="text-[10px] text-muted-foreground">{timeAgo(run.createdAt)}</span>
+            {run.escalationsProcessed && run.escalationsProcessed.length > 0 && (
+              <>
+                <span className="text-[8px] text-muted-foreground/40">·</span>
+                <span className="text-[9px] text-muted-foreground">
+                  {run.escalationsProcessed.length} escalation{run.escalationsProcessed.length !== 1 ? "s" : ""}
+                </span>
+              </>
+            )}
           </div>
-          <p className="text-xs text-foreground leading-relaxed">{run.summary}</p>
-          {run.escalationsProcessed && run.escalationsProcessed.length > 0 && (
-            <span className="text-[9px] text-muted-foreground mt-2 block">
-              Processed {run.escalationsProcessed.length} escalation{run.escalationsProcessed.length !== 1 ? "s" : ""}
-            </span>
-          )}
+          <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{run.summary}</p>
         </div>
       ))}
     </div>

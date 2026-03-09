@@ -46,6 +46,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Sandbox workspace
 workspace
 
+# Production data snapshot (local testing)
+data-prod/
+
 # Memory (agent-generated, user-specific)
 data/memory/
 
