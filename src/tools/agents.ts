@@ -169,6 +169,50 @@ const setKpi = tool(
   { annotations: { readOnly: false } }
 );
 
+// --- Schedule management ---
+
+const setSchedule = tool(
+  "agents_set_schedule",
+  `Change a sub-agent's run interval. Any agent can adjust its own schedule or the Head of Product can adjust any agent's schedule.
+
+Guidelines for self-adjustment:
+- Increase frequency (shorter interval) when: sprint end is near, critical issues detected, high activity period
+- Decrease frequency (longer interval) when: stable period, no escalations, low project activity
+- Minimum: 1 hour. Maximum: 24 hours.
+- Also optionally set next_run_at to control when the next run happens (e.g. "run again in 30 minutes")`,
+  {
+    name: z.string().describe("Sub-agent name (e.g. 'sprint-health')"),
+    interval_hours: z.number().optional().describe("New interval in hours (min: 1, max: 24)"),
+    next_run_in_minutes: z.number().optional().describe("Schedule next run in N minutes from now (overrides normal schedule for one cycle)"),
+  },
+  async ({ name, interval_hours, next_run_in_minutes }) => {
+    const db = getDb();
+    const agent = db.select().from(subAgents).where(eq(subAgents.name, name)).get();
+    if (!agent) return { content: [{ type: "text" as const, text: `Sub-agent not found: ${name}` }], isError: true };
+
+    const updates: Record<string, unknown> = { updatedAt: new Date() };
+
+    if (interval_hours != null) {
+      const clamped = Math.max(1, Math.min(24, interval_hours));
+      updates.scheduleIntervalMs = clamped * 3600000;
+    }
+
+    if (next_run_in_minutes != null) {
+      const mins = Math.max(1, next_run_in_minutes);
+      updates.nextRunAt = new Date(Date.now() + mins * 60000);
+    }
+
+    db.update(subAgents).set(updates as any).where(eq(subAgents.id, agent.id)).run();
+
+    const parts: string[] = [];
+    if (interval_hours != null) parts.push(`interval → ${Math.max(1, Math.min(24, interval_hours))}h`);
+    if (next_run_in_minutes != null) parts.push(`next run → in ${Math.max(1, next_run_in_minutes)} min`);
+
+    return { content: [{ type: "text" as const, text: `${agent.displayName} schedule updated: ${parts.join(", ")}` }] };
+  },
+  { annotations: { readOnly: false } }
+);
+
 // --- Synthesis ---
 
 const triggerSynthesis = tool(
@@ -222,7 +266,7 @@ const recentSynthesis = tool(
 // --- Export ---
 
 const READ_TOOLS = [listSubAgents, readEscalations, listKpis, recentSynthesis];
-const WRITE_TOOLS = [pauseSubAgent, updateEscalation, setKpi, triggerSynthesis];
+const WRITE_TOOLS = [pauseSubAgent, setSchedule, updateEscalation, setKpi, triggerSynthesis];
 
 export const AGENTS_WRITE_TOOL_NAMES = WRITE_TOOLS.map(t => t.name);
 

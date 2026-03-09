@@ -8,6 +8,7 @@ import { InsightsPage } from "./pages/InsightsPage";
 import { AgentsPage } from "./pages/AgentsPage";
 import { KnowledgePage } from "./pages/KnowledgePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { ActionsPage } from "./pages/ActionsPage";
 
 export function App() {
   return (
@@ -19,6 +20,7 @@ export function App() {
             <Route path="project" element={<ProjectPage />} />
             <Route path="insights" element={<InsightsPage />} />
             <Route path="agents" element={<AgentsPage />} />
+            <Route path="actions" element={<ActionsPage />} />
             <Route path="knowledge" element={<KnowledgePage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

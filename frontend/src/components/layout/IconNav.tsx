@@ -7,6 +7,7 @@ import {
   BookOpen,
   Settings,
   MessageSquare,
+  CheckCircle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ const navItems = [
   { to: "/project", icon: KanbanSquare, label: "Project" },
   { to: "/insights", icon: Lightbulb, label: "Insights" },
   { to: "/agents", icon: Bot, label: "Agents" },
+  { to: "/actions", icon: CheckCircle, label: "Actions" },
   { to: "/knowledge", icon: BookOpen, label: "Knowledge" },
   { to: "/settings", icon: Settings, label: "Settings" },
 ];

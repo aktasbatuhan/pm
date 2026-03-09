@@ -247,6 +247,24 @@ function migrate() {
       created_at INTEGER NOT NULL
     )
   `);
+
+  // Action queue (agent-proposed actions requiring human approval)
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS actions (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      source_insight_id TEXT,
+      source_escalation_id TEXT,
+      execution_result TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status)`);
 }
 
 // Helper to generate IDs

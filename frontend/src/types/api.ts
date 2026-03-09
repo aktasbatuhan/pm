@@ -115,3 +115,17 @@ export interface KnowledgeFile {
 export interface SettingsMap {
   [key: string]: unknown;
 }
+
+export interface Action {
+  id: string;
+  type: "github_issue" | "github_comment" | "slack_dm" | "github_label" | "custom";
+  title: string;
+  description: string;
+  payload: Record<string, unknown>;
+  status: "pending" | "approved" | "rejected" | "executed" | "failed";
+  sourceInsightId?: string | null;
+  sourceEscalationId?: string | null;
+  executionResult?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}

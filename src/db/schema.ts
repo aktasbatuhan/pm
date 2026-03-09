@@ -182,7 +182,24 @@ export const synthesisRuns = sqliteTable("synthesis_runs", {
   createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
 });
 
+// --- Action Queue (agent-proposed actions requiring human approval) ---
+
+export const actions = sqliteTable("actions", {
+  id: text("id").primaryKey(),
+  type: text("type").$type<"github_issue" | "github_comment" | "slack_dm" | "github_label" | "custom">().notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+  status: text("status").$type<"pending" | "approved" | "rejected" | "executed" | "failed">().notNull().default("pending"),
+  sourceInsightId: text("source_insight_id"),
+  sourceEscalationId: text("source_escalation_id"),
+  executionResult: text("execution_result"),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
 export type SubAgent = typeof subAgents.$inferSelect;
 export type Escalation = typeof escalations.$inferSelect;
 export type Kpi = typeof kpis.$inferSelect;
 export type SynthesisRun = typeof synthesisRuns.$inferSelect;
+export type Action = typeof actions.$inferSelect;

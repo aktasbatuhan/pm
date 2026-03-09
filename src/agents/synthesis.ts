@@ -1,5 +1,9 @@
 /**
  * Synthesis loop — the Head of Product reads escalations and produces cross-domain analysis.
+ *
+ * Event-driven: synthesis triggers when escalation thresholds are met,
+ * not on a fixed timer. The Head of Product can also schedule its own
+ * next run via the scheduler after each synthesis.
  */
 
 import { getDb, newId } from "../db/index.ts";
@@ -9,45 +13,53 @@ import { chat } from "../agent/core.ts";
 import { buildSynthesisConfig } from "./registry.ts";
 import { sendSlackMessage } from "../tools/slack.ts";
 
-const SYNTHESIS_INTERVAL_MS = 2 * 60 * 60 * 1000; // 2 hours
+// Event-driven thresholds
+const ESCALATION_THRESHOLD = 3; // Run synthesis when N+ pending escalations accumulate
+const COOLDOWN_MS = 30 * 60 * 1000; // Minimum 30 min between synthesis runs (prevents rapid re-triggers)
 let lastSynthesisAt = 0;
 
 /**
  * Check whether synthesis should run.
- * Triggers on:
- * 1. Regular interval (every 2 hours)
- * 2. Critical escalation exists
+ * Event-driven triggers:
+ * 1. Any critical escalation exists (immediate)
+ * 2. N+ pending escalations accumulated (batch)
+ * 3. Manual trigger (critical escalation from agentId="manual")
  */
 export function shouldRunSynthesis(): boolean {
   const db = getDb();
   const now = Date.now();
 
-  // Check for critical escalations
-  const criticalCount = db.select()
-    .from(escalations)
-    .where(and(
-      eq(escalations.status, "pending"),
-      eq(escalations.urgency, "critical"),
-    ))
-    .all().length;
+  // Respect cooldown (except for critical)
+  const withinCooldown = now - lastSynthesisAt < COOLDOWN_MS;
 
-  if (criticalCount > 0) {
-    console.log(`[synthesis] Triggered by ${criticalCount} critical escalation(s)`);
+  const pendingEscalations = db.select()
+    .from(escalations)
+    .where(eq(escalations.status, "pending"))
+    .all();
+
+  if (pendingEscalations.length === 0) return false;
+
+  // Critical escalations bypass cooldown
+  const hasCritical = pendingEscalations.some(e => e.urgency === "critical");
+  if (hasCritical) {
+    console.log(`[synthesis] Triggered by critical escalation`);
     return true;
   }
 
-  // Check regular interval
-  if (now - lastSynthesisAt >= SYNTHESIS_INTERVAL_MS) {
-    // Only run if there are pending escalations
-    const pendingCount = db.select()
-      .from(escalations)
-      .where(eq(escalations.status, "pending"))
-      .all().length;
+  // Within cooldown, don't trigger for non-critical
+  if (withinCooldown) return false;
 
-    if (pendingCount > 0) {
-      console.log(`[synthesis] Regular interval — ${pendingCount} pending escalation(s)`);
-      return true;
-    }
+  // Urgent escalations trigger immediately (outside cooldown)
+  const hasUrgent = pendingEscalations.some(e => e.urgency === "urgent");
+  if (hasUrgent) {
+    console.log(`[synthesis] Triggered by urgent escalation`);
+    return true;
+  }
+
+  // Batch threshold: enough pending escalations accumulated
+  if (pendingEscalations.length >= ESCALATION_THRESHOLD) {
+    console.log(`[synthesis] Triggered by ${pendingEscalations.length} pending escalations (threshold: ${ESCALATION_THRESHOLD})`);
+    return true;
   }
 
   return false;
@@ -89,7 +101,13 @@ ${escalationSummary}
 
 ---
 
-Now: read each sub-agent's state.md, cross-reference the escalations, query KPI signals, and produce your synthesis. Focus on connections between domains that individual agents can't see. Be specific and actionable.`;
+Now: read each sub-agent's state.md, cross-reference the escalations, query KPI signals, and produce your synthesis. Focus on connections between domains that individual agents can't see. Be specific and actionable.
+
+After completing your synthesis, decide when the next synthesis should run based on what you found:
+- If things are stable, you can schedule yourself to run in 4-6 hours
+- If there are emerging issues, schedule for 1-2 hours
+- If things are critical, schedule for 30-60 minutes
+Use agents_set_schedule or the scheduler to set your next run.`;
 
   // Create session
   const sessionId = newId();

@@ -14,6 +14,7 @@ import {
   createSignalsMcpServer,
   createIntelligenceMcpServer,
   createAgentsMcpServer,
+  createActionsMcpServer,
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
@@ -194,6 +195,7 @@ async function processAgentRequest(
         signals: createSignalsMcpServer(),
         intelligence: createIntelligenceMcpServer(),
         agents: createAgentsMcpServer(),
+        actions: createActionsMcpServer(),
         ...getRemoteMcpServers(),
       },
       allowedTools: [
@@ -209,6 +211,7 @@ async function processAgentRequest(
         "mcp__memory__*",
         "mcp__signals__*",
         "mcp__intelligence__*",
+        "mcp__actions__*",
       ],
       resume: sdkResumeId,
       model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",

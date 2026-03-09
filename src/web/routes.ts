@@ -6,7 +6,7 @@ import { streamSSE } from "hono/streaming";
 import { chat, type AgentConfig, type ImageAttachment } from "../agent/core.ts";
 import { WORKSPACE_DIR } from "../agent/sandbox.ts";
 import { buildSystemPrompt } from "../agent/system-prompt.ts";
-import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer, createIntelligenceMcpServer, createAgentsMcpServer } from "../tools/index.ts";
+import { createGitHubMcpServer, createKnowledgeMcpServer, createSchedulerMcpServer, createSlackMcpServer, createVisualizationMcpServer, createPostHogMcpServer, createSandboxMcpServer, createMemoryMcpServer, createSignalsMcpServer, createIntelligenceMcpServer, createAgentsMcpServer, createActionsMcpServer } from "../tools/index.ts";
 import { WRITE_TOOL_NAMES } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { fetchProjectItems, fetchRecentActivity, type ProjectItem } from "../tools/github.ts";
@@ -49,6 +49,7 @@ let memoryServer: ReturnType<typeof createMemoryMcpServer> | null = null;
 let signalsServer: ReturnType<typeof createSignalsMcpServer> | null = null;
 let intelligenceServer: ReturnType<typeof createIntelligenceMcpServer> | null = null;
 let agentsServer: ReturnType<typeof createAgentsMcpServer> | null = null;
+let actionsServer: ReturnType<typeof createActionsMcpServer> | null = null;
 
 function resetMcpServers() {
   githubServer = null;
@@ -63,6 +64,7 @@ function resetMcpServers() {
   signalsServer = null;
   intelligenceServer = null;
   agentsServer = null;
+  actionsServer = null;
 }
 
 function getGitHubServer() {
@@ -125,6 +127,11 @@ function getAgentsServer() {
   return agentsServer;
 }
 
+function getActionsServer() {
+  if (!actionsServer) actionsServer = createActionsMcpServer();
+  return actionsServer;
+}
+
 /**
  * Run the initial intelligence bootstrap — scans the project, populates memory and creates first insights.
  * Called once after setup completes. Runs in background.
@@ -145,6 +152,7 @@ async function bootstrapIntelligence() {
       signals: getSignalsServer(),
       intelligence: getIntelligenceServer(),
       agents: getAgentsServer(),
+      actions: getActionsServer(),
       ...getRemoteMcpServers(),
     },
     model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
@@ -266,8 +274,11 @@ const TOOL_LABELS: Record<string, string> = {
   "mcp__agents__agents_escalation_update": "Updating escalation",
   "mcp__agents__agents_kpi_list": "Checking KPIs",
   "mcp__agents__agents_kpi_set": "Updating KPI",
+  "mcp__agents__agents_set_schedule": "Adjusting agent schedule",
   "mcp__agents__agents_run_synthesis": "Triggering synthesis",
   "mcp__agents__agents_synthesis_history": "Viewing synthesis history",
+  "mcp__actions__propose_action": "Proposing action for approval",
+  "mcp__actions__list_actions": "Checking action queue",
 };
 
 function formatToolName(name: string): string {
@@ -522,6 +533,7 @@ export function createRoutes() {
         memory: getMemoryServer(),
         signals: getSignalsServer(),
         intelligence: getIntelligenceServer(),
+        actions: getActionsServer(),
         ...getRemoteMcpServers(),
       },
       resume: session?.sessionId ?? undefined,
@@ -1165,6 +1177,53 @@ export function createRoutes() {
     return c.json({ runs: rows });
   });
 
+  // --- Actions API (agent-proposed actions requiring human approval) ---
+
+  app.get("/actions", (c) => {
+    const status = c.req.query("status") as string | undefined;
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    let rows = getDb()
+      .select()
+      .from(schema.actions)
+      .orderBy(desc(schema.actions.createdAt))
+      .limit(limit)
+      .all();
+    if (status) {
+      rows = rows.filter((r) => r.status === status);
+    }
+    return c.json({ actions: rows });
+  });
+
+  app.post("/actions/:id/approve", async (c) => {
+    const id = c.req.param("id");
+    const db = getDb();
+    const action = db.select().from(schema.actions).where(eq(schema.actions.id, id)).get();
+    if (!action) return c.json({ error: "Action not found" }, 404);
+    if (action.status !== "pending") return c.json({ error: `Action already ${action.status}` }, 400);
+
+    db.update(schema.actions)
+      .set({ status: "approved", updatedAt: new Date() })
+      .where(eq(schema.actions.id, id))
+      .run();
+
+    return c.json({ status: "approved", id });
+  });
+
+  app.post("/actions/:id/reject", async (c) => {
+    const id = c.req.param("id");
+    const db = getDb();
+    const action = db.select().from(schema.actions).where(eq(schema.actions.id, id)).get();
+    if (!action) return c.json({ error: "Action not found" }, 404);
+    if (action.status !== "pending") return c.json({ error: `Action already ${action.status}` }, 400);
+
+    db.update(schema.actions)
+      .set({ status: "rejected", updatedAt: new Date() })
+      .where(eq(schema.actions.id, id))
+      .run();
+
+    return c.json({ status: "rejected", id });
+  });
+
   // --- Settings API ---
 
   app.get("/settings", (c) => {
@@ -1254,6 +1313,87 @@ export function createRoutes() {
     pending.resolve(approved);
     pendingApprovals.delete(id);
     return c.json({ status: approved ? "approved" : "denied" });
+  });
+
+  // --- GitHub Webhooks ---
+
+  app.post("/webhooks/github", async (c) => {
+    const event = c.req.header("x-github-event") || "unknown";
+    const body = await c.req.json<Record<string, unknown>>();
+    const action = (body.action as string) || "";
+
+    console.log(`[webhook] GitHub event: ${event} (action: ${action})`);
+
+    // Store as signal for the intelligence layer
+    const db = getDb();
+    db.insert(schema.signals).values({
+      id: newId(),
+      source: "github-webhook",
+      type: event,
+      data: JSON.stringify({
+        event,
+        action,
+        repo: (body.repository as Record<string, unknown>)?.full_name,
+        sender: (body.sender as Record<string, unknown>)?.login,
+        ...(event === "pull_request" ? {
+          pr_number: (body.pull_request as Record<string, unknown>)?.number,
+          pr_title: (body.pull_request as Record<string, unknown>)?.title,
+          pr_state: (body.pull_request as Record<string, unknown>)?.state,
+        } : {}),
+        ...(event === "issues" ? {
+          issue_number: (body.issue as Record<string, unknown>)?.number,
+          issue_title: (body.issue as Record<string, unknown>)?.title,
+          issue_state: (body.issue as Record<string, unknown>)?.state,
+        } : {}),
+      }),
+      summary: `GitHub ${event}${action ? `:${action}` : ""} on ${(body.repository as Record<string, unknown>)?.full_name || "unknown"}`,
+      createdAt: new Date(),
+    }).run();
+
+    // Map events to relevant sub-agents and trigger early runs
+    const agentsToTrigger: string[] = [];
+
+    switch (event) {
+      case "push":
+      case "pull_request":
+      case "pull_request_review":
+        agentsToTrigger.push("code-quality");
+        break;
+      case "issues":
+      case "project_v2_item":
+        agentsToTrigger.push("sprint-health");
+        break;
+      case "issue_comment":
+      case "pull_request_review_comment":
+        agentsToTrigger.push("code-quality", "team-dynamics");
+        break;
+      case "member":
+      case "team":
+        agentsToTrigger.push("team-dynamics");
+        break;
+    }
+
+    // Bring forward the next run for relevant agents (run within 2 minutes)
+    if (agentsToTrigger.length > 0) {
+      const soonRun = new Date(Date.now() + 2 * 60 * 1000);
+      for (const agentName of agentsToTrigger) {
+        const agent = db.select().from(schema.subAgents)
+          .where(eq(schema.subAgents.name, agentName))
+          .get();
+        if (agent && agent.status === "active") {
+          // Only bring forward if next run is further out than 2 minutes
+          if (!agent.nextRunAt || agent.nextRunAt > soonRun) {
+            db.update(schema.subAgents)
+              .set({ nextRunAt: soonRun, updatedAt: new Date() })
+              .where(eq(schema.subAgents.id, agent.id))
+              .run();
+            console.log(`[webhook] Triggered early run for ${agentName}`);
+          }
+        }
+      }
+    }
+
+    return c.json({ received: true, event, agentsTriggered: agentsToTrigger });
   });
 
   return app;

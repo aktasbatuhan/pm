@@ -17,6 +17,8 @@ import {
   createSlackMcpServer,
   createVisualizationMcpServer,
   createPostHogMcpServer,
+  createActionsMcpServer,
+  createAgentsMcpServer,
 } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
@@ -130,6 +132,7 @@ function buildMcpServers(agentName: string): Record<string, ReturnType<typeof cr
     signals: createSignalsMcpServer(),
     memory: createMemoryMcpServer(),
     intelligence: createIntelligenceMcpServer(),
+    agents: createAgentsMcpServer(),
   };
 
   switch (agentName) {
@@ -155,7 +158,12 @@ function buildMcpServers(agentName: string): Record<string, ReturnType<typeof cr
  * Build allowed tools list for a sub-agent.
  */
 function buildAllowedTools(agentName: string): string[] {
-  const base = ["mcp__signals__*", "mcp__memory__*", "mcp__intelligence__*"];
+  // All sub-agents can read agent state and adjust their own schedule
+  const base = [
+    "mcp__signals__*", "mcp__memory__*", "mcp__intelligence__*",
+    "mcp__agents__agents_list", "mcp__agents__agents_set_schedule",
+    "mcp__agents__agents_kpi_list",
+  ];
 
   switch (agentName) {
     case "sprint-health":
@@ -224,13 +232,15 @@ export function buildSynthesisConfig(): AgentConfig {
       signals: createSignalsMcpServer(),
       intelligence: createIntelligenceMcpServer(),
       posthog: createPostHogMcpServer(),
+      actions: createActionsMcpServer(),
+      agents: createAgentsMcpServer(),
       ...getRemoteMcpServers(),
     },
     allowedTools: [
       "mcp__github__*", "mcp__knowledge__*", "mcp__scheduler__*",
       "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*",
       "mcp__dashboard__*", "mcp__memory__*", "mcp__signals__*",
-      "mcp__intelligence__*",
+      "mcp__intelligence__*", "mcp__actions__*", "mcp__agents__*",
     ],
     model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
     workingDirectory: WORKSPACE_DIR,
