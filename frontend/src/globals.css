@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #050a0f;
+  --color-foreground: #e6edf3;
+  --color-card: #0a0e13;
+  --color-card-foreground: #e6edf3;
+  --color-popover: #111519;
+  --color-popover-foreground: #e6edf3;
+  --color-primary: #e8912d;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #111519;
+  --color-secondary-foreground: #8b949e;
+  --color-muted: #181c21;
+  --color-muted-foreground: #484f58;
+  --color-accent: #e8912d;
+  --color-accent-foreground: #ffffff;
+  --color-destructive: #ff3d3d;
+  --color-destructive-foreground: #ffffff;
+  --color-success: #00c853;
+  --color-warning: #d29922;
+  --color-border: #1e2328;
+  --color-input: #1e2328;
+  --color-ring: #e8912d;
+
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+
+  --font-mono: "SF Mono", "Fira Code", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  background-color: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100vh;
+}
+
+#root {
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e2328;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2d333b;
+}
+
+/* Selection */
+::selection {
+  background: rgba(232, 145, 45, 0.3);
+  color: #e6edf3;
+}
+
+/* Label style utility */
+.label-uppercase {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--color-muted-foreground);
+}

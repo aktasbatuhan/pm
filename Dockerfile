@@ -14,6 +14,12 @@ RUN apt-get update && \
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production
 
+# Build frontend
+COPY frontend/package.json frontend/bun.lock ./frontend/
+RUN cd frontend && bun install --frozen-lockfile
+COPY frontend/ ./frontend/
+RUN cd frontend && bun run build
+
 # Copy source
 COPY src/ ./src/
 COPY tsconfig.json ./

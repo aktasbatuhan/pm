@@ -1127,6 +1127,44 @@ export function createRoutes() {
     return c.json({ signals: rows });
   });
 
+  // --- Agents API (REST endpoints for frontend) ---
+
+  app.get("/agents", (c) => {
+    const rows = getDb().select().from(schema.subAgents).all();
+    return c.json({ agents: rows });
+  });
+
+  app.get("/agents/escalations", (c) => {
+    const status = c.req.query("status") as "pending" | "synthesized" | "actioned" | "dismissed" | undefined;
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    let rows = getDb()
+      .select()
+      .from(schema.escalations)
+      .orderBy(desc(schema.escalations.createdAt))
+      .limit(limit)
+      .all();
+    if (status) {
+      rows = rows.filter((r) => r.status === status);
+    }
+    return c.json({ escalations: rows });
+  });
+
+  app.get("/agents/kpis", (c) => {
+    const rows = getDb().select().from(schema.kpis).all();
+    return c.json({ kpis: rows });
+  });
+
+  app.get("/agents/synthesis", (c) => {
+    const limit = parseInt(c.req.query("limit") || "10", 10);
+    const rows = getDb()
+      .select()
+      .from(schema.synthesisRuns)
+      .orderBy(desc(schema.synthesisRuns.createdAt))
+      .limit(limit)
+      .all();
+    return c.json({ runs: rows });
+  });
+
   // --- Settings API ---
 
   app.get("/settings", (c) => {

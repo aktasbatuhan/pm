@@ -29,8 +29,18 @@ export function createServer() {
   const api = createRoutes();
   app.route("/api", api);
 
-  // Static files
+  // Static files — serve React SPA from frontend/dist, fall back to old public
+  app.use("/*", serveStatic({ root: "./frontend/dist" }));
   app.use("/*", serveStatic({ root: "./src/web/public" }));
+
+  // SPA fallback — serve index.html for client-side routes
+  app.get("/*", async (c) => {
+    const file = Bun.file("./frontend/dist/index.html");
+    if (await file.exists()) {
+      return c.html(await file.text());
+    }
+    return c.text("Not found", 404);
+  });
 
   return app;
 }
