@@ -132,15 +132,6 @@ function promoteEscalations(agent: SubAgent): number {
   const now = new Date();
 
   for (const signal of recentSignals) {
-    // Check if this signal was already promoted (by looking for matching escalation)
-    const existing = db.select()
-      .from(escalations)
-      .where(and(
-        eq(escalations.agentId, agent.id),
-        eq(escalations.title, tryParseTitle(signal.data)),
-      ))
-      .all();
-
     // Skip if we already have an escalation with this exact title from this agent (dedup)
     const title = tryParseTitle(signal.data);
     if (!title) continue;
@@ -150,11 +141,18 @@ function promoteEscalations(agent: SubAgent): number {
     const windowStart = new Date(Date.now() - windowMs);
     if (signal.createdAt < windowStart) continue;
 
-    // Check for existing escalation with same title that's still pending
-    const alreadyExists = existing.some(e =>
-      e.status === "pending" && e.title === title
-    );
-    if (alreadyExists) continue;
+    // Check for existing escalation with same title in the last 24h (any status)
+    const dedup24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const existing = db.select()
+      .from(escalations)
+      .where(and(
+        eq(escalations.agentId, agent.id),
+        eq(escalations.title, title),
+        gte(escalations.createdAt, dedup24h),
+      ))
+      .all();
+
+    if (existing.length > 0) continue;
 
     try {
       const parsed = JSON.parse(signal.data);

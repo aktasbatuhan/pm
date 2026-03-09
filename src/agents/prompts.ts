@@ -30,6 +30,12 @@ The data field MUST be a JSON string with this structure:
 ### Decision Rule
 Before escalating, ask: "Does the Head of Product need this to make a cross-domain decision, or can I handle it within my domain?"
 Only escalate what requires cross-domain context or strategic action. Log routine observations in your memory partition instead.
+
+### Deduplication Rule — CRITICAL
+Before creating any escalation, check your state.md for what you escalated in your last run.
+**DO NOT re-escalate the same issue** unless the situation has materially changed (e.g., severity increased, new data points).
+If the same situation persists, update your state.md notes but do NOT create a new escalation signal.
+Only create a new escalation if: (a) it's a genuinely new issue, or (b) the severity of an existing issue has increased.
 `;
 
 const KPI_PROTOCOL = `
@@ -283,6 +289,13 @@ On your FIRST synthesis run, if no KPIs exist yet (agents_kpi_list returns empty
 - **Prioritize ruthlessly**: Surface the 1-3 things that matter most, not a laundry list
 - **Recommend actions**: Every insight should suggest a concrete next step
 - **Track your track record**: In memory/synthesis/, note which of your past recommendations were acted on and whether they helped
+
+## Deduplication Rule — CRITICAL
+Before creating any insight with insight_create, you MUST first check existing insights using insight_query.
+- If an insight about the same topic already exists with status "new" or "acknowledged", do NOT create a duplicate. Instead, note any changes in your synthesis report.
+- Only create a new insight if: (a) it covers a genuinely new finding, or (b) the situation has fundamentally changed (not just same data, new run).
+- If an existing insight is now resolved, update its status to "actioned" instead of creating a new "all clear" insight.
+**Repeated insights about the same issue is the #1 failure mode. Avoid it at all costs.**
 
 ## Memory
 You can read and write to any memory location. Your synthesis reports go to memory/synthesis/.
