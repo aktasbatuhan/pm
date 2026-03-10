@@ -127,11 +127,14 @@ Use agents_set_schedule or the scheduler to set your next run.`;
   }).run();
 
   let fullResponse = "";
+  const textBlocks: string[] = []; // Completed text blocks (final responses, not narration)
 
   try {
     for await (const msg of chat(prompt, config)) {
       if (msg.type === "partial") {
         fullResponse += msg.content;
+      } else if (msg.type === "text" && msg.content) {
+        textBlocks.push(msg.content);
       }
     }
   } catch (err) {
@@ -139,7 +142,7 @@ Use agents_set_schedule or the scheduler to set your next run.`;
     console.error("[synthesis] Failed:", err);
   }
 
-  // Save response
+  // Save full response (including narration) to chat session for audit
   if (fullResponse) {
     db.insert(messages).values({
       id: newId(),
@@ -150,12 +153,19 @@ Use agents_set_schedule or the scheduler to set your next run.`;
     }).run();
   }
 
-  // Record synthesis run
+  // For the synthesis summary, use the last substantial text block (the actual report)
+  // rather than the full streaming output which includes narration between tool calls.
+  // Fall back to the full response if no text blocks captured.
+  const summarySource = textBlocks.length > 0
+    ? (textBlocks.filter(b => b.length > 100).pop() ?? textBlocks[textBlocks.length - 1] ?? fullResponse)
+    : fullResponse;
+
+  // Record synthesis run (store up to 8000 chars to avoid cutting off reports)
   const runId = newId();
   db.insert(synthesisRuns).values({
     id: runId,
     escalationsProcessed: pending.map(e => e.id),
-    summary: fullResponse.slice(0, 2000),
+    summary: summarySource.slice(0, 8000),
     createdAt: new Date(),
   }).run();
 

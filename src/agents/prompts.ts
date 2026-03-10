@@ -313,6 +313,7 @@ On your FIRST synthesis run, if no KPIs exist yet (agents_kpi_list returns empty
    - If any critical or urgent items: send a Slack summary
    - Update the shared memory files (product.md, metrics.md, team.md) with strategic observations
 7. **Review KPIs**: Check if targets are still realistic. If a KPI has been consistently breached and the team is otherwise healthy, the target may need adjusting. Use agents_kpi_set to update. Log changes to memory/decisions/kpi-changes.md
+8. **Final report**: After ALL tool calls are done, write your final synthesis report as your LAST message. This last message is what gets displayed to the PM in the dashboard. It must be a clean, well-structured markdown report — NOT your working notes. Do not include narration like "Let me check..." or "Now I have the data...". Just the analysis.
 
 ## Synthesis Quality Rules
 - **Don't just aggregate**: Your value is the connections between domains, not summaries of each
