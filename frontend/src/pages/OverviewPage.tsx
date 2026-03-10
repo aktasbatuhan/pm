@@ -1,8 +1,12 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useSubAgents, useEscalations, useKpis, useSynthesisRuns } from "@/hooks/use-agents";
 import { apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { ExpandableText } from "@/components/ui/expandable-text";
+import { MarkdownContent } from "@/components/ui/markdown-content";
 import type { DashboardResponse, DashboardWidget } from "@/types/api";
+import type { SubAgent, Escalation } from "@/types/agents";
 
 // Agent avatars (shared with AgentsPage)
 const agentAvatars: Record<string, { emoji: string; color: string }> = {
@@ -74,11 +78,7 @@ export function OverviewPage() {
             )}
           </div>
           {latestSynthesis ? (
-            <p className="text-xs text-foreground/90 leading-relaxed whitespace-pre-wrap">
-              {latestSynthesis.summary.length > 800
-                ? latestSynthesis.summary.slice(0, 800) + "..."
-                : latestSynthesis.summary}
-            </p>
+            <ExpandableText content={latestSynthesis.summary} collapsedLines={6} />
           ) : (
             <p className="text-xs text-muted-foreground">Waiting for first synthesis run...</p>
           )}
@@ -208,26 +208,9 @@ export function OverviewPage() {
           </h2>
           {pendingEsc.length > 0 ? (
             <div className="space-y-1.5">
-              {pendingEsc.slice(0, 8).map((esc) => {
-                const agent = agents?.find((a) => a.id === esc.agentId);
-                const av = agent ? agentAvatars[agent.name] : undefined;
-                const urgencyDot = esc.urgency === "critical" ? "bg-destructive" : esc.urgency === "urgent" ? "bg-orange-400" : esc.urgency === "attention" ? "bg-warning" : "bg-blue-400";
-
-                return (
-                  <div key={esc.id} className="bg-card border border-border rounded-md px-3 py-2">
-                    <div className="flex items-center gap-2 mb-0.5">
-                      <div className={cn("w-1.5 h-1.5 rounded-full shrink-0", urgencyDot)} />
-                      <span className="text-[10px] font-medium text-foreground truncate">{esc.title}</span>
-                    </div>
-                    <div className="flex items-center gap-2 pl-3.5">
-                      {av && <span className="text-[10px]">{av.emoji}</span>}
-                      <span className="text-[9px] text-muted-foreground">{agent?.displayName || "unknown"}</span>
-                      <span className="text-[8px] text-muted-foreground/40">·</span>
-                      <span className="text-[9px] text-muted-foreground">{timeAgo(esc.createdAt)}</span>
-                    </div>
-                  </div>
-                );
-              })}
+              {pendingEsc.slice(0, 8).map((esc) => (
+                <EscalationCard key={esc.id} esc={esc} agents={agents} />
+              ))}
             </div>
           ) : (
             <div className="bg-card border border-border rounded-md p-4 text-center">
@@ -288,7 +271,7 @@ function WidgetContent({ widget }: { widget: DashboardWidget }) {
   }
 
   if (widget.type === "markdown") {
-    return <p className="text-xs text-foreground/80 leading-relaxed whitespace-pre-wrap">{String(config.content || "")}</p>;
+    return <ExpandableText content={String(config.content || "")} collapsedLines={8} />;
   }
 
   if (widget.type === "list") {
@@ -322,4 +305,33 @@ function WidgetContent({ widget }: { widget: DashboardWidget }) {
   }
 
   return <p className="text-[10px] text-muted-foreground">Widget type: {widget.type}</p>;
+}
+
+function EscalationCard({ esc, agents }: { esc: Escalation; agents?: SubAgent[] }) {
+  const [expanded, setExpanded] = useState(false);
+  const agent = agents?.find((a) => a.id === esc.agentId);
+  const av = agent ? agentAvatars[agent.name] : undefined;
+  const urgencyDot = esc.urgency === "critical" ? "bg-destructive" : esc.urgency === "urgent" ? "bg-orange-400" : esc.urgency === "attention" ? "bg-warning" : "bg-blue-400";
+
+  return (
+    <div className={cn("bg-card border border-border rounded-md overflow-hidden", expanded && "border-border/80")}>
+      <button onClick={() => setExpanded(!expanded)} className="w-full px-3 py-2 text-left">
+        <div className="flex items-start gap-2 mb-0.5">
+          <div className={cn("w-1.5 h-1.5 rounded-full shrink-0 mt-1", urgencyDot)} />
+          <span className="text-[10px] font-medium text-foreground leading-snug">{esc.title}</span>
+        </div>
+        <div className="flex items-center gap-2 pl-3.5">
+          {av && <span className="text-[10px]">{av.emoji}</span>}
+          <span className="text-[9px] text-muted-foreground">{agent?.displayName || "unknown"}</span>
+          <span className="text-[8px] text-muted-foreground/40">·</span>
+          <span className="text-[9px] text-muted-foreground">{timeAgo(esc.createdAt)}</span>
+        </div>
+      </button>
+      {expanded && esc.summary && (
+        <div className="px-3 pb-2.5 pt-1 border-t border-border/50">
+          <MarkdownContent content={esc.summary} />
+        </div>
+      )}
+    </div>
+  );
 }

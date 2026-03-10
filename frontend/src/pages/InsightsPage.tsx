@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPatch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { Brain, GitBranch, BarChart3, Shield, Lightbulb, AlertTriangle, TrendingUp, ChevronDown, ChevronRight } from "lucide-react";
+import { MarkdownContent } from "@/components/ui/markdown-content";
 import type { Insight } from "@/types/api";
 
 const categoryConfig: Record<string, { icon: typeof Brain; color: string; bg: string }> = {
@@ -165,9 +166,9 @@ export function InsightsPage() {
                     {/* Expanded content */}
                     {isExpanded && (
                       <div className="px-4 pb-3 border-t border-border/50">
-                        <p className="text-xs text-muted-foreground leading-relaxed mt-3 whitespace-pre-wrap">
-                          {insight.summary}
-                        </p>
+                        <div className="mt-3">
+                          <MarkdownContent content={insight.summary} />
+                        </div>
                         <div className="flex items-center justify-between mt-3 pt-2 border-t border-border/30">
                           <div className="flex items-center gap-2">
                             <span className="label-uppercase">SOURCE</span>

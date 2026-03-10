@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useSubAgents, useEscalations, useKpis, useSynthesisRuns } from "@/hooks/use-agents";
 import { cn } from "@/lib/utils";
-
-
+import { ExpandableText } from "@/components/ui/expandable-text";
 import type { SubAgent, Escalation, Kpi, SynthesisRun } from "@/types/agents";
 
 // Pixel-art style agent avatars using emoji + colored backgrounds
@@ -348,7 +347,7 @@ function EscalationsTab({ escalations, agents, loading }: { escalations: Escalat
               <tr key={esc.id} className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors">
                 <td className="px-3 py-2">
                   <div className="text-foreground">{esc.title}</div>
-                  <div className="text-muted-foreground mt-0.5 line-clamp-1">{esc.summary}</div>
+                  <ExpandableText content={esc.summary} collapsedLines={2} className="mt-0.5 text-muted-foreground" />
                 </td>
                 <td className="px-3 py-2">
                   <span className={cn("text-[9px] px-1.5 py-0.5 rounded", urgencyBadge[esc.urgency])}>
@@ -437,7 +436,7 @@ function KpisTab({ kpis, agents, loading }: { kpis: Kpi[]; agents: SubAgent[]; l
 
 function SynthesisTab({ runs, loading }: { runs: SynthesisRun[]; loading: boolean }) {
   if (loading) return <Skeleton rows={3} />;
-  if (runs.length === 0) return <EmptyState text="No synthesis runs yet" sub="Synthesis runs automatically every 2 hours or on critical escalations" />;
+  if (runs.length === 0) return <EmptyState text="No synthesis runs yet" sub="Synthesis triggers when escalations accumulate or on critical events" />;
 
   return (
     <div className="space-y-3">
@@ -457,7 +456,7 @@ function SynthesisTab({ runs, loading }: { runs: SynthesisRun[]; loading: boolea
               </>
             )}
           </div>
-          <p className="text-xs text-foreground leading-relaxed whitespace-pre-wrap">{run.summary}</p>
+          <ExpandableText content={run.summary} collapsedLines={6} />
         </div>
       ))}
     </div>
