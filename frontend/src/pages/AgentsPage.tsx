@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useSubAgents, useEscalations, useKpis, useSynthesisRuns } from "@/hooks/use-agents";
+import { useSubAgents, useEscalations, useKpis, useSynthesisRuns, useReplySynthesis } from "@/hooks/use-agents";
 import { cn } from "@/lib/utils";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import type { SubAgent, Escalation, Kpi, SynthesisRun } from "@/types/agents";
@@ -435,8 +435,19 @@ function KpisTab({ kpis, agents, loading }: { kpis: Kpi[]; agents: SubAgent[]; l
 }
 
 function SynthesisTab({ runs, loading }: { runs: SynthesisRun[]; loading: boolean }) {
+  const [replyingTo, setReplyingTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const replySynthesis = useReplySynthesis();
+
   if (loading) return <Skeleton rows={3} />;
   if (runs.length === 0) return <EmptyState text="No synthesis runs yet" sub="Synthesis triggers when escalations accumulate or on critical events" />;
+
+  const handleReply = (runId: string) => {
+    if (!replyText.trim()) return;
+    replySynthesis.mutate({ id: runId, message: replyText });
+    setReplyText("");
+    setReplyingTo(null);
+  };
 
   return (
     <div className="space-y-3">
@@ -457,6 +468,44 @@ function SynthesisTab({ runs, loading }: { runs: SynthesisRun[]; loading: boolea
             )}
           </div>
           <ExpandableText content={run.summary} collapsedLines={6} />
+
+          {/* Reply button */}
+          <div className="mt-3 pt-2 border-t border-border/50">
+            {replyingTo === run.id ? (
+              <div className="space-y-2">
+                <textarea
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  placeholder='Give context or directives, e.g. "ignore PR #91, erhant is on vacation", "we started a marketing campaign", "watch conversion rate closely"'
+                  className="w-full bg-muted/30 border border-border rounded-md px-3 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary/50"
+                  rows={3}
+                  autoFocus
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleReply(run.id)}
+                    disabled={!replyText.trim() || replySynthesis.isPending}
+                    className="px-3 py-1 rounded text-[10px] font-medium bg-primary/15 text-primary hover:bg-primary/25 disabled:opacity-50 transition-colors"
+                  >
+                    {replySynthesis.isPending ? "Saving..." : "Save directive"}
+                  </button>
+                  <button
+                    onClick={() => { setReplyingTo(null); setReplyText(""); }}
+                    className="px-3 py-1 rounded text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setReplyingTo(run.id)}
+                className="text-[10px] text-muted-foreground hover:text-primary transition-colors"
+              >
+                Reply with context or directive...
+              </button>
+            )}
+          </div>
         </div>
       ))}
     </div>

@@ -60,6 +60,15 @@ export function useApproveAction() {
   });
 }
 
+export function useReplySynthesis() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, message }: { id: string; message: string }) =>
+      apiPost(`/agents/synthesis/${id}/reply`, { message }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["synthesis"] }),
+  });
+}
+
 export function useRejectAction() {
   const qc = useQueryClient();
   return useMutation({

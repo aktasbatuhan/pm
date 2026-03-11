@@ -248,6 +248,9 @@ function migrate() {
     )
   `);
 
+  // Synthesis run: add chat_session_id for reply/discussion
+  try { getDb().run(sql`ALTER TABLE synthesis_runs ADD COLUMN chat_session_id TEXT`); } catch {}
+
   // Action queue (agent-proposed actions requiring human approval)
   getDb().run(sql`
     CREATE TABLE IF NOT EXISTS actions (

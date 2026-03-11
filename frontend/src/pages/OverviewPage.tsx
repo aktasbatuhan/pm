@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSubAgents, useEscalations, useKpis, useSynthesisRuns } from "@/hooks/use-agents";
+import { useSubAgents, useEscalations, useKpis, useSynthesisRuns, useReplySynthesis } from "@/hooks/use-agents";
 import { apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ExpandableText } from "@/components/ui/expandable-text";
@@ -82,6 +82,7 @@ export function OverviewPage() {
           ) : (
             <p className="text-xs text-muted-foreground">Waiting for first synthesis run...</p>
           )}
+          {latestSynthesis && <SynthesisReply synthesisId={latestSynthesis.id} />}
         </div>
       </section>
 
@@ -332,6 +333,56 @@ function EscalationCard({ esc, agents }: { esc: Escalation; agents?: SubAgent[] 
           <MarkdownContent content={esc.summary} />
         </div>
       )}
+    </div>
+  );
+}
+
+function SynthesisReply({ synthesisId }: { synthesisId: string }) {
+  const [open, setOpen] = useState(false);
+  const [message, setMessage] = useState("");
+  const reply = useReplySynthesis();
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-3 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+      >
+        💬 Reply with directive...
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-3 border-t border-border/50 pt-3">
+      <textarea
+        value={message}
+        onChange={(e) => setMessage(e.target.value)}
+        placeholder="e.g. Ignore the traffic spike — we started a campaign. Keep an eye on churn rate next week."
+        className="w-full bg-background border border-border rounded px-2.5 py-2 text-xs text-foreground placeholder:text-muted-foreground/50 resize-none focus:outline-none focus:ring-1 focus:ring-primary/30"
+        rows={3}
+        autoFocus
+      />
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={() => {
+            if (!message.trim()) return;
+            reply.mutate({ id: synthesisId, message: message.trim() });
+            setMessage("");
+            setOpen(false);
+          }}
+          disabled={reply.isPending || !message.trim()}
+          className="px-3 py-1 text-[10px] font-medium bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+        >
+          {reply.isPending ? "Saving..." : "Save directive"}
+        </button>
+        <button
+          onClick={() => { setOpen(false); setMessage(""); }}
+          className="px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }

@@ -176,6 +176,7 @@ export const kpis = sqliteTable("kpis", {
 
 export const synthesisRuns = sqliteTable("synthesis_runs", {
   id: text("id").primaryKey(),
+  chatSessionId: text("chat_session_id"), // session ID for reply/discussion
   escalationsProcessed: text("escalations_processed", { mode: "json" }).$type<string[]>(),
   summary: text("summary").notNull(),
   actions: text("actions", { mode: "json" }).$type<Record<string, unknown>>(),

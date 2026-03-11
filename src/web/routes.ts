@@ -1177,6 +1177,28 @@ export function createRoutes() {
     return c.json({ runs: rows });
   });
 
+  // Reply to a synthesis run — saves PM directive to memory for future runs
+  app.post("/agents/synthesis/:id/reply", async (c) => {
+    const id = c.req.param("id");
+    const { message } = await c.req.json<{ message: string }>();
+    if (!message?.trim()) return c.json({ error: "Message required" }, 400);
+
+    const db = getDb();
+    const run = db.select().from(schema.synthesisRuns).where(eq(schema.synthesisRuns.id, id)).get();
+    if (!run) return c.json({ error: "Synthesis run not found" }, 404);
+
+    // Append directive to memory file so all future synthesis runs see it
+    const directivesPath = path.join(KNOWLEDGE_DIR, "..", "memory", "synthesis", "pm-directives.md");
+    const dir = path.dirname(directivesPath);
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+    const timestamp = new Date().toISOString().split("T")[0];
+    const entry = `\n## ${timestamp}\n${message.trim()}\n`;
+    fs.appendFileSync(directivesPath, entry);
+
+    return c.json({ saved: true, path: "memory/synthesis/pm-directives.md" });
+  });
+
   // --- Actions API (agent-proposed actions requiring human approval) ---
 
   app.get("/actions", (c) => {

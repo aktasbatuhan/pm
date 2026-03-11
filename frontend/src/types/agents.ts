@@ -44,6 +44,7 @@ export interface Kpi {
 
 export interface SynthesisRun {
   id: string;
+  chatSessionId?: string;
   escalationsProcessed?: string[];
   summary: string;
   actions?: Record<string, unknown>;
