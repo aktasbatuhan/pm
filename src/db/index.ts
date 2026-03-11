@@ -268,6 +268,22 @@ function migrate() {
     )
   `);
   getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_actions_status ON actions(status)`);
+
+  // Suggestions (discussable items from synthesis)
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS suggestions (
+      id TEXT PRIMARY KEY,
+      synthesis_run_id TEXT,
+      category TEXT NOT NULL DEFAULT 'build',
+      title TEXT NOT NULL,
+      rationale TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'new',
+      chat_session_id TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(status)`);
 }
 
 // Helper to generate IDs

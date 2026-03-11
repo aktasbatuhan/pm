@@ -199,8 +199,23 @@ export const actions = sqliteTable("actions", {
   updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
 });
 
+// --- Suggestions (discussable items from synthesis) ---
+
+export const suggestions = sqliteTable("suggestions", {
+  id: text("id").primaryKey(),
+  synthesisRunId: text("synthesis_run_id"),
+  category: text("category").$type<"build" | "investigate" | "improve" | "fix" | "experiment">().notNull().default("build"),
+  title: text("title").notNull(),
+  rationale: text("rationale").notNull(), // markdown explanation of why
+  status: text("status").$type<"new" | "discussing" | "accepted" | "dismissed">().notNull().default("new"),
+  chatSessionId: text("chat_session_id"), // discussion thread
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp" }).notNull(),
+});
+
 export type SubAgent = typeof subAgents.$inferSelect;
 export type Escalation = typeof escalations.$inferSelect;
 export type Kpi = typeof kpis.$inferSelect;
 export type SynthesisRun = typeof synthesisRuns.$inferSelect;
 export type Action = typeof actions.$inferSelect;
+export type Suggestion = typeof suggestions.$inferSelect;

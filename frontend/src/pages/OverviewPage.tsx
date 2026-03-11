@@ -1,11 +1,12 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSubAgents, useEscalations, useKpis, useSynthesisRuns, useReplySynthesis } from "@/hooks/use-agents";
+import { useSubAgents, useEscalations, useKpis, useSynthesisRuns, useReplySynthesis, useSuggestions, useDiscussSuggestion, useUpdateSuggestionStatus } from "@/hooks/use-agents";
 import { apiGet } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ExpandableText } from "@/components/ui/expandable-text";
 import { MarkdownContent } from "@/components/ui/markdown-content";
-import type { DashboardResponse, DashboardWidget } from "@/types/api";
+import { openChatSession } from "@/components/layout/AppShell";
+import type { DashboardResponse, DashboardWidget, Suggestion } from "@/types/api";
 import type { SubAgent, Escalation } from "@/types/agents";
 
 // Agent avatars (shared with AgentsPage)
@@ -42,12 +43,14 @@ export function OverviewPage() {
     queryFn: () => apiGet<{ widgets: DashboardWidget[] }>("/dashboard/layout"),
     refetchInterval: 120_000,
   });
+  const { data: suggestions } = useSuggestions();
 
   const latestSynthesis = synthesisRuns?.[0];
   const pendingEsc = escalations?.filter((e) => e.status === "pending") || [];
   const criticalEsc = pendingEsc.filter((e) => e.urgency === "critical" || e.urgency === "urgent");
   const overview = dashboard?.stats?.overview;
   const widgets = widgetsData?.widgets || [];
+  const activeSuggestions = suggestions?.filter((s) => s.status !== "dismissed") || [];
 
   return (
     <div className="p-6 max-w-[1400px] mx-auto">
@@ -221,6 +224,21 @@ export function OverviewPage() {
         </section>
       </div>
 
+      {/* Suggestions from synthesis */}
+      {activeSuggestions.length > 0 && (
+        <section className="mt-6">
+          <h2 className="label-uppercase mb-3">
+            SUGGESTIONS
+            <span className="text-[9px] text-muted-foreground ml-2">{activeSuggestions.length} open</span>
+          </h2>
+          <div className="grid grid-cols-2 gap-3">
+            {activeSuggestions.slice(0, 6).map((s) => (
+              <SuggestionCard key={s.id} suggestion={s} />
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Agent-generated dashboard widgets */}
       {widgets.length > 0 && (
         <section className="mt-6">
@@ -383,6 +401,93 @@ function SynthesisReply({ synthesisId }: { synthesisId: string }) {
           Cancel
         </button>
       </div>
+    </div>
+  );
+}
+
+const categoryConfig: Record<string, { icon: string; color: string }> = {
+  build: { icon: "🔨", color: "text-blue-400" },
+  investigate: { icon: "🔍", color: "text-yellow-400" },
+  improve: { icon: "📈", color: "text-green-400" },
+  fix: { icon: "🔧", color: "text-orange-400" },
+  experiment: { icon: "🧪", color: "text-purple-400" },
+};
+
+function SuggestionCard({ suggestion }: { suggestion: Suggestion }) {
+  const [expanded, setExpanded] = useState(false);
+  const discuss = useDiscussSuggestion();
+  const updateStatus = useUpdateSuggestionStatus();
+  const cat = categoryConfig[suggestion.category] || { icon: "💡", color: "text-muted-foreground" };
+
+  const handleDiscuss = () => {
+    discuss.mutate(suggestion.id, {
+      onSuccess: (data) => {
+        openChatSession(
+          data.chatSessionId,
+          `I'd like to discuss this suggestion: "${suggestion.title}". What's the full context and what would the implementation look like?`
+        );
+      },
+    });
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-md overflow-hidden">
+      <button onClick={() => setExpanded(!expanded)} className="w-full px-3 py-2.5 text-left">
+        <div className="flex items-start gap-2">
+          <span className="text-sm">{cat.icon}</span>
+          <div className="flex-1 min-w-0">
+            <span className="text-[10px] font-medium text-foreground leading-snug block">{suggestion.title}</span>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className={cn("text-[9px]", cat.color)}>{suggestion.category}</span>
+              <span className="text-[8px] text-muted-foreground/40">·</span>
+              <span className="text-[9px] text-muted-foreground">{timeAgo(suggestion.createdAt)}</span>
+              {suggestion.status === "discussing" && (
+                <>
+                  <span className="text-[8px] text-muted-foreground/40">·</span>
+                  <span className="text-[9px] text-primary">discussing</span>
+                </>
+              )}
+              {suggestion.status === "accepted" && (
+                <>
+                  <span className="text-[8px] text-muted-foreground/40">·</span>
+                  <span className="text-[9px] text-success">accepted</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-3 pb-3 border-t border-border/50">
+          <div className="pt-2">
+            <MarkdownContent content={suggestion.rationale} />
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button
+              onClick={handleDiscuss}
+              disabled={discuss.isPending}
+              className="px-3 py-1 text-[10px] font-medium bg-primary text-primary-foreground rounded hover:bg-primary/90 disabled:opacity-50"
+            >
+              {discuss.isPending ? "Opening..." : suggestion.chatSessionId ? "Continue discussion" : "Discuss"}
+            </button>
+            {suggestion.status !== "accepted" && (
+              <button
+                onClick={() => updateStatus.mutate({ id: suggestion.id, status: "accepted" })}
+                className="px-3 py-1 text-[10px] text-success hover:bg-success/10 rounded"
+              >
+                Accept
+              </button>
+            )}
+            <button
+              onClick={() => updateStatus.mutate({ id: suggestion.id, status: "dismissed" })}
+              className="px-3 py-1 text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

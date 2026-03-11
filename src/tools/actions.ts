@@ -12,11 +12,12 @@ import {
 } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod/v4";
 import { getDb, newId } from "../db/index.ts";
-import { actions } from "../db/schema.ts";
+import { actions, suggestions } from "../db/schema.ts";
 import { desc } from "drizzle-orm";
 
 export const ACTIONS_WRITE_TOOL_NAMES = [
   "mcp__actions__propose_action",
+  "mcp__actions__propose_suggestion",
 ];
 
 const proposeAction = tool(
@@ -101,10 +102,50 @@ const listActions = tool(
   { annotations: { readOnly: true } }
 );
 
+const proposeSuggestion = tool(
+  "propose_suggestion",
+  `Create a discussable suggestion for the PM. Unlike actions (which are concrete tasks to approve/reject), suggestions are strategic ideas that invite discussion.
+
+Use this for:
+- Feature ideas worth exploring ("Build an onboarding flow for new users")
+- Issues that need investigation ("Users might be churning due to slow load times")
+- Process improvements ("Consider splitting the monorepo")
+- Experiments to try ("A/B test the pricing page")
+
+The PM can click "Discuss" on any suggestion to start a focused conversation about it.`,
+  {
+    category: z.enum(["build", "investigate", "improve", "fix", "experiment"]).describe("Type of suggestion"),
+    title: z.string().describe("Short, clear title (what to do)"),
+    rationale: z.string().describe("Markdown explanation: why this matters, supporting data, potential impact"),
+    synthesis_run_id: z.string().optional().describe("Link to the synthesis run that produced this"),
+  },
+  async ({ category, title, rationale, synthesis_run_id }) => {
+    const db = getDb();
+    const now = new Date();
+    const id = newId();
+
+    db.insert(suggestions).values({
+      id,
+      synthesisRunId: synthesis_run_id || null,
+      category,
+      title,
+      rationale,
+      status: "new",
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
+    return {
+      content: [{ type: "text" as const, text: `Suggestion created: "${title}" (${category}). PM can discuss or dismiss it. ID: ${id}` }],
+    };
+  },
+  { annotations: { readOnly: false } }
+);
+
 export function createActionsMcpServer(): McpSdkServerConfigWithInstance {
   return createSdkMcpServer({
     name: "actions",
     version: "1.0.0",
-    tools: [proposeAction, listActions],
+    tools: [proposeAction, listActions, proposeSuggestion],
   });
 }

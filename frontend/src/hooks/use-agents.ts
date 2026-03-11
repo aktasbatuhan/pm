@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost } from "@/lib/api";
 import type { SubAgent, Escalation, Kpi, SynthesisRun } from "@/types/agents";
-import type { Action } from "@/types/api";
+import type { Action, Suggestion } from "@/types/api";
 
 export function useSubAgents() {
   return useQuery({
@@ -74,5 +74,36 @@ export function useRejectAction() {
   return useMutation({
     mutationFn: (id: string) => apiPost(`/actions/${id}/reject`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["actions"] }),
+  });
+}
+
+export function useSuggestions(status?: string) {
+  return useQuery({
+    queryKey: ["suggestions", status],
+    queryFn: () =>
+      apiGet<{ suggestions: Suggestion[] }>(
+        `/suggestions${status ? `?status=${status}` : ""}`
+      ).then((r) => r.suggestions),
+    refetchInterval: 30_000,
+  });
+}
+
+export function useDiscussSuggestion() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      apiPost<{ chatSessionId: string; suggestion: Suggestion }>(
+        `/suggestions/${id}/discuss`
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["suggestions"] }),
+  });
+}
+
+export function useUpdateSuggestionStatus() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
+      apiPost(`/suggestions/${id}/status`, { status }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["suggestions"] }),
   });
 }

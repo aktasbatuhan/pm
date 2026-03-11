@@ -1246,6 +1246,79 @@ export function createRoutes() {
     return c.json({ status: "rejected", id });
   });
 
+  // --- Suggestions API (discussable ideas from synthesis) ---
+
+  app.get("/suggestions", (c) => {
+    const status = c.req.query("status") as string | undefined;
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    let rows = getDb()
+      .select()
+      .from(schema.suggestions)
+      .orderBy(desc(schema.suggestions.createdAt))
+      .limit(limit)
+      .all();
+    if (status) {
+      rows = rows.filter((r) => r.status === status);
+    }
+    return c.json({ suggestions: rows });
+  });
+
+  app.post("/suggestions/:id/discuss", async (c) => {
+    const id = c.req.param("id");
+    const db = getDb();
+    const suggestion = db.select().from(schema.suggestions).where(eq(schema.suggestions.id, id)).get();
+    if (!suggestion) return c.json({ error: "Suggestion not found" }, 404);
+
+    // If already has a discussion thread, return it
+    if (suggestion.chatSessionId) {
+      return c.json({ chatSessionId: suggestion.chatSessionId, suggestion });
+    }
+
+    // Create a new chat session for this discussion
+    const sessionId = crypto.randomUUID();
+    db.insert(schema.chatSessions).values({
+      id: sessionId,
+      name: `Discussion: ${suggestion.title}`,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }).run();
+
+    // Seed with a system message providing context
+    db.insert(schema.messages).values({
+      id: crypto.randomUUID(),
+      chatSessionId: sessionId,
+      role: "system",
+      content: `This is a focused discussion about a suggestion from the Head of Product synthesis.\n\n**${suggestion.title}** (${suggestion.category})\n\n${suggestion.rationale}`,
+      createdAt: new Date(),
+    }).run();
+
+    // Link the session to the suggestion
+    db.update(schema.suggestions)
+      .set({ chatSessionId: sessionId, status: "discussing", updatedAt: new Date() })
+      .where(eq(schema.suggestions.id, id))
+      .run();
+
+    return c.json({ chatSessionId: sessionId, suggestion });
+  });
+
+  app.post("/suggestions/:id/status", async (c) => {
+    const id = c.req.param("id");
+    const { status } = await c.req.json<{ status: string }>();
+    if (!["new", "discussing", "accepted", "dismissed"].includes(status)) {
+      return c.json({ error: "Invalid status" }, 400);
+    }
+    const db = getDb();
+    const suggestion = db.select().from(schema.suggestions).where(eq(schema.suggestions.id, id)).get();
+    if (!suggestion) return c.json({ error: "Suggestion not found" }, 404);
+
+    db.update(schema.suggestions)
+      .set({ status: status as "new" | "discussing" | "accepted" | "dismissed", updatedAt: new Date() })
+      .where(eq(schema.suggestions.id, id))
+      .run();
+
+    return c.json({ id, status });
+  });
+
   // --- Settings API ---
 
   app.get("/settings", (c) => {

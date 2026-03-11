@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useEffect } from "react";
+import { useCallback, useRef, useState, useEffect, useImperativeHandle, forwardRef } from "react";
 import { X, Send, Square, Wrench, Brain } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useChat } from "@/hooks/use-chat";
@@ -8,7 +8,11 @@ interface ChatDrawerProps {
   onClose: () => void;
 }
 
-export function ChatDrawer({ open, onClose }: ChatDrawerProps) {
+export interface ChatDrawerHandle {
+  loadSession: (sessionId: string, initialMessage?: string) => void;
+}
+
+export const ChatDrawer = forwardRef<ChatDrawerHandle, ChatDrawerProps>(function ChatDrawer({ open, onClose }, ref) {
   const [width, setWidth] = useState(() => {
     const saved = localStorage.getItem("chat-drawer-width");
     return saved ? parseInt(saved) : 480;
@@ -19,6 +23,16 @@ export function ChatDrawer({ open, onClose }: ChatDrawerProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const chat = useChat();
+
+  useImperativeHandle(ref, () => ({
+    loadSession: (sessionId: string, initialMessage?: string) => {
+      chat.loadMessages(sessionId).then(() => {
+        if (initialMessage) {
+          chat.sendMessage(initialMessage);
+        }
+      });
+    },
+  }), [chat]);
 
   const onMouseDown = useCallback(() => {
     dragging.current = true;
@@ -212,4 +226,4 @@ export function ChatDrawer({ open, onClose }: ChatDrawerProps) {
       </div>
     </div>
   );
-}
+});

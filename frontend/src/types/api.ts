@@ -129,3 +129,15 @@ export interface Action {
   createdAt: string;
   updatedAt: string;
 }
+
+export interface Suggestion {
+  id: string;
+  synthesisRunId?: string | null;
+  category: "build" | "investigate" | "improve" | "fix" | "experiment";
+  title: string;
+  rationale: string;
+  status: "new" | "discussing" | "accepted" | "dismissed";
+  chatSessionId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
