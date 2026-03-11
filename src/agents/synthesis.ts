@@ -8,11 +8,9 @@
 
 import { getDb, newId } from "../db/index.ts";
 import { escalations, synthesisRuns, chatSessions, messages } from "../db/schema.ts";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { chat } from "../agent/core.ts";
 import { buildSynthesisConfig } from "./registry.ts";
-import { sendSlackMessage } from "../tools/slack.ts";
-import { toSlackMarkdown, splitMessage } from "../slack/formatter.ts";
 
 // Event-driven thresholds
 const ESCALATION_THRESHOLD = 3; // Run synthesis when N+ pending escalations accumulate
@@ -177,16 +175,6 @@ Use agents_set_schedule or the scheduler to set your next run.`;
       .set({ status: "synthesized", synthesizedIn: runId, updatedAt: new Date() })
       .where(eq(escalations.id, esc.id))
       .run();
-  }
-
-  // Send Slack alert if there were urgent/critical items
-  const hasUrgent = pending.some(e => e.urgency === "critical" || e.urgency === "urgent");
-  if (hasUrgent && summarySource) {
-    // Convert to Slack-friendly format, keep it short
-    const slackBody = toSlackMarkdown(summarySource.slice(0, 2000));
-    const slackMsg = `*Synthesis Report* (${pending.length} escalations)\n\n${slackBody}`;
-    const chunks = splitMessage(slackMsg);
-    await sendSlackMessage(chunks[0]);
   }
 
   console.log(`[synthesis] Complete — processed ${pending.length} escalations`);
