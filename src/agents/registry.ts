@@ -245,7 +245,7 @@ export function buildSynthesisConfig(): AgentConfig {
       "mcp__intelligence__*", "mcp__actions__*", "mcp__agents__*",
       "mcp__pm_channel__*",
     ],
-    model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+    model: process.env.AGENT_MODEL || "openrouter/hunter-alpha",
     workingDirectory: WORKSPACE_DIR,
   };
 }

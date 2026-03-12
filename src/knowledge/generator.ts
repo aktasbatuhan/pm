@@ -47,7 +47,7 @@ async function callLLM(system: string, user: string): Promise<string> {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-20250514",
+      model: process.env.ANTHROPIC_MODEL || "google/gemini-3-flash-preview",
       max_tokens: 4096,
       system,
       messages: [{ role: "user", content: user }],

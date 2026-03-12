@@ -155,7 +155,7 @@ async function bootstrapIntelligence() {
       actions: getActionsServer(),
       ...getRemoteMcpServers(),
     },
-    model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+    model: process.env.AGENT_MODEL || "openrouter/hunter-alpha",
     workingDirectory: WORKSPACE_DIR,
   };
 
@@ -537,7 +537,7 @@ export function createRoutes() {
         ...getRemoteMcpServers(),
       },
       resume: session?.sessionId ?? undefined,
-      model: body.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+      model: body.model || process.env.AGENT_MODEL || "openrouter/hunter-alpha",
       workingDirectory: WORKSPACE_DIR,
     };
 

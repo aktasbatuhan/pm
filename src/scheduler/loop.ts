@@ -45,7 +45,7 @@ function buildJobAgentConfig(resumeSessionId?: string): AgentConfig {
       ...getRemoteMcpServers(),
     },
     resume: sdkResumeId,
-    model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+    model: process.env.AGENT_MODEL || "openrouter/hunter-alpha",
     workingDirectory: WORKSPACE_DIR,
   };
 }

@@ -25,7 +25,7 @@ export async function refreshTab(tab: { id: string; name: string; refreshPrompt:
       dashboard: createDashboardMcpServer(),
     },
     allowedTools: ["mcp__github__*", "mcp__knowledge__*", "mcp__dashboard__*"],
-    model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
+    model: process.env.AGENT_MODEL || "openrouter/hunter-alpha",
   };
 
   const prompt = `Refresh the dashboard tab "${tab.name}" (id: ${tab.id}). ${tab.refreshPrompt}`;

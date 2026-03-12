@@ -42,7 +42,7 @@ export async function* chat(
   images?: ImageAttachment[]
 ): AsyncGenerator<AgentMessage> {
   // Ensure sub-agents use the same model as the main agent (not haiku default)
-  const effectiveModel = config.model || process.env.AGENT_MODEL || "google/gemini-3-flash-preview";
+  const effectiveModel = config.model || process.env.AGENT_MODEL || "openrouter/hunter-alpha";
   if (!process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
     process.env.CLAUDE_CODE_SUBAGENT_MODEL = process.env.SUBAGENT_MODEL || "qwen/qwen3.5-plus-02-15";
   }
