@@ -12,9 +12,9 @@ import { eq, desc } from "drizzle-orm";
 import { chat } from "../agent/core.ts";
 import { buildSynthesisConfig } from "./registry.ts";
 
-// Event-driven thresholds
-const ESCALATION_THRESHOLD = 3; // Run synthesis when N+ pending escalations accumulate
-const COOLDOWN_MS = 30 * 60 * 1000; // Minimum 30 min between synthesis runs (prevents rapid re-triggers)
+// Event-driven thresholds — target ~2 synthesis runs per day in steady state
+const ESCALATION_THRESHOLD = 6; // Batch trigger: 6+ pending escalations
+const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h cooldown between runs (except critical)
 let lastSynthesisAt = 0;
 
 /**

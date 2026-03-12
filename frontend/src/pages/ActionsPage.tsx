@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useActions, useApproveAction, useRejectAction } from "@/hooks/use-agents";
+import { useActions, useApproveAction, useRejectAction, useResolveAction } from "@/hooks/use-agents";
 import { cn } from "@/lib/utils";
 import type { Action } from "@/types/api";
 
@@ -17,6 +17,7 @@ const STATUS_STYLES: Record<string, { bg: string; text: string }> = {
   rejected: { bg: "bg-muted", text: "text-muted-foreground" },
   executed: { bg: "bg-success/10", text: "text-success" },
   failed: { bg: "bg-destructive/10", text: "text-destructive" },
+  resolved: { bg: "bg-blue-500/10", text: "text-blue-400" },
 };
 
 function timeAgo(dateStr?: string): string {
@@ -35,6 +36,7 @@ export function ActionsPage() {
   const { data: actions } = useActions(filter);
   const approve = useApproveAction();
   const reject = useRejectAction();
+  const resolve = useResolveAction();
 
   const pending = actions?.filter((a) => a.status === "pending") || [];
   const history = actions?.filter((a) => a.status !== "pending") || [];
@@ -55,6 +57,7 @@ export function ActionsPage() {
           { label: "Pending", value: "pending" },
           { label: "Approved", value: "approved" },
           { label: "Rejected", value: "rejected" },
+          { label: "Resolved", value: "resolved" },
         ].map((tab) => (
           <button
             key={tab.label}
@@ -88,6 +91,7 @@ export function ActionsPage() {
                 action={action}
                 onApprove={() => approve.mutate(action.id)}
                 onReject={() => reject.mutate(action.id)}
+                onResolve={() => resolve.mutate(action.id)}
               />
             ))}
           </div>
@@ -123,11 +127,13 @@ function ActionCard({
   action,
   onApprove,
   onReject,
+  onResolve,
   compact,
 }: {
   action: Action;
   onApprove?: () => void;
   onReject?: () => void;
+  onResolve?: () => void;
   compact?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -176,7 +182,7 @@ function ActionCard({
           )}
         </div>
 
-        {/* Approve/Reject buttons for pending */}
+        {/* Action buttons for pending */}
         {action.status === "pending" && onApprove && onReject && (
           <div className="flex gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
             <button
@@ -186,8 +192,14 @@ function ActionCard({
               Approve
             </button>
             <button
+              onClick={onResolve}
+              className="px-3 py-1.5 rounded text-[10px] font-medium bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 transition-colors"
+            >
+              Resolved
+            </button>
+            <button
               onClick={onReject}
-              className="px-3 py-1.5 rounded text-[10px] font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+              className="px-3 py-1.5 rounded text-[10px] font-medium bg-muted text-muted-foreground hover:bg-muted/80 transition-colors"
             >
               Reject
             </button>

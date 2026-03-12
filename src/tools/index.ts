@@ -11,6 +11,7 @@ export { createSignalsMcpServer, SIGNALS_WRITE_TOOL_NAMES } from "./signals.ts";
 export { createIntelligenceMcpServer } from "./intelligence.ts";
 export { createAgentsMcpServer, AGENTS_WRITE_TOOL_NAMES } from "./agents.ts";
 export { createActionsMcpServer, ACTIONS_WRITE_TOOL_NAMES } from "./actions.ts";
+export { createPmChannelMcpServer, PM_CHANNEL_WRITE_TOOL_NAMES } from "./pm-channel.ts";
 
 import { WRITE_TOOL_NAMES as _GH_WRITE } from "./github.ts";
 import { KNOWLEDGE_WRITE_TOOL_NAMES as _K_WRITE } from "./knowledge.ts";
@@ -23,5 +24,6 @@ import { MEMORY_WRITE_TOOL_NAMES as _MEM_WRITE } from "./memory.ts";
 import { SIGNALS_WRITE_TOOL_NAMES as _SIG_WRITE } from "./signals.ts";
 import { AGENTS_WRITE_TOOL_NAMES as _AG_WRITE } from "./agents.ts";
 import { ACTIONS_WRITE_TOOL_NAMES as _ACT_WRITE } from "./actions.ts";
+import { PM_CHANNEL_WRITE_TOOL_NAMES as _PM_WRITE } from "./pm-channel.ts";
 
-export const WRITE_TOOL_NAMES = [..._GH_WRITE, ..._K_WRITE, ..._S_WRITE, ..._SL_WRITE, ..._PH_WRITE, ..._D_WRITE, ..._SB_WRITE, ..._MEM_WRITE, ..._SIG_WRITE, ..._AG_WRITE, ..._ACT_WRITE];
+export const WRITE_TOOL_NAMES = [..._GH_WRITE, ..._K_WRITE, ..._S_WRITE, ..._SL_WRITE, ..._PH_WRITE, ..._D_WRITE, ..._SB_WRITE, ..._MEM_WRITE, ..._SIG_WRITE, ..._AG_WRITE, ..._ACT_WRITE, ..._PM_WRITE];

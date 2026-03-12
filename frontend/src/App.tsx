@@ -9,6 +9,7 @@ import { AgentsPage } from "./pages/AgentsPage";
 import { KnowledgePage } from "./pages/KnowledgePage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { ActionsPage } from "./pages/ActionsPage";
+import { ChannelPage } from "./pages/ChannelPage";
 
 export function App() {
   return (
@@ -16,7 +17,8 @@ export function App() {
       <BrowserRouter>
         <Routes>
           <Route element={<AppShell />}>
-            <Route index element={<OverviewPage />} />
+            <Route index element={<ChannelPage />} />
+            <Route path="overview" element={<OverviewPage />} />
             <Route path="project" element={<ProjectPage />} />
             <Route path="insights" element={<InsightsPage />} />
             <Route path="agents" element={<AgentsPage />} />

@@ -43,13 +43,13 @@ export function createSlackMcpServer(): McpSdkServerConfigWithInstance {
  * Send a message to Slack via Bot API.
  * Requires SLACK_BOT_TOKEN and SLACK_DEFAULT_CHANNEL env vars.
  */
-export async function sendSlackMessage(text: string, channel?: string): Promise<boolean> {
+export async function sendSlackMessage(text: string, channel?: string): Promise<{ ts: string; channel: string } | null> {
   const botToken = process.env.SLACK_BOT_TOKEN;
   const targetChannel = channel || process.env.SLACK_DEFAULT_CHANNEL;
 
   if (!botToken || !targetChannel) {
     console.warn(`[slack] sendSlackMessage: missing config — botToken=${!!botToken}, channel=${targetChannel || "(none)"}`);
-    return false;
+    return null;
   }
 
   try {
@@ -61,13 +61,14 @@ export async function sendSlackMessage(text: string, channel?: string): Promise<
       },
       body: JSON.stringify({ channel: targetChannel, text }),
     });
-    const data = (await res.json()) as { ok: boolean; error?: string };
+    const data = (await res.json()) as { ok: boolean; ts?: string; channel?: string; error?: string };
     if (!data.ok) {
       console.error(`[slack] chat.postMessage failed: ${data.error} (channel=${targetChannel})`);
+      return null;
     }
-    return data.ok;
+    return { ts: data.ts!, channel: data.channel || targetChannel };
   } catch (err) {
     console.error("[slack] sendSlackMessage error:", err);
-    return false;
+    return null;
   }
 }

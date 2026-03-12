@@ -191,7 +191,7 @@ export const actions = sqliteTable("actions", {
   title: text("title").notNull(),
   description: text("description").notNull(),
   payload: text("payload", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
-  status: text("status").$type<"pending" | "approved" | "rejected" | "executed" | "failed">().notNull().default("pending"),
+  status: text("status").$type<"pending" | "approved" | "rejected" | "executed" | "failed" | "resolved">().notNull().default("pending"),
   sourceInsightId: text("source_insight_id"),
   sourceEscalationId: text("source_escalation_id"),
   executionResult: text("execution_result"),
@@ -219,3 +219,15 @@ export type Kpi = typeof kpis.$inferSelect;
 export type SynthesisRun = typeof synthesisRuns.$inferSelect;
 export type Action = typeof actions.$inferSelect;
 export type Suggestion = typeof suggestions.$inferSelect;
+
+// --- Slack message tracking (ts → session mapping for thread routing) ---
+
+export const slackMessages = sqliteTable("slack_messages", {
+  id: text("id").primaryKey(),
+  ts: text("ts").notNull(),
+  channelId: text("channel_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp" }).notNull(),
+});
+
+export type SlackMessage = typeof slackMessages.$inferSelect;

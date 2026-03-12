@@ -18,7 +18,7 @@ import {
 } from "../tools/index.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
 import { getDb, newId } from "../db/index.ts";
-import { chatSessions, messages } from "../db/schema.ts";
+import { chatSessions, messages, slackMessages as slackMessagesTable } from "../db/schema.ts";
 import { eq, and } from "drizzle-orm";
 import { toSlackMarkdown, splitMessage } from "./formatter.ts";
 import { getSettingArray } from "../db/settings.ts";
@@ -108,6 +108,21 @@ function resolveSession(channelId: string, threadTs: string): {
 } {
   const db = getDb();
 
+  // First: check if this thread_ts maps to a proactive message we sent (e.g. from synthesis)
+  // This routes replies to pm_post messages back to the PM channel session
+  const tracked = db.select()
+    .from(slackMessagesTable)
+    .where(and(eq(slackMessagesTable.ts, threadTs), eq(slackMessagesTable.channelId, channelId)))
+    .get();
+
+  if (tracked) {
+    const trackedSession = db.select().from(chatSessions).where(eq(chatSessions.id, tracked.sessionId)).get();
+    if (trackedSession) {
+      return { sessionId: trackedSession.id, sdkResumeId: trackedSession.sessionId ?? undefined };
+    }
+  }
+
+  // Second: check for existing session by channel + thread_ts (user-initiated threads)
   const existing = db
     .select()
     .from(chatSessions)

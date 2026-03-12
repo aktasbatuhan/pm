@@ -77,6 +77,14 @@ export function useRejectAction() {
   });
 }
 
+export function useResolveAction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => apiPost(`/actions/${id}/resolve`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["actions"] }),
+  });
+}
+
 export function useSuggestions(status?: string) {
   return useQuery({
     queryKey: ["suggestions", status],

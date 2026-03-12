@@ -1,5 +1,6 @@
 import { NavLink } from "react-router-dom";
 import {
+  MessageCircle,
   LayoutDashboard,
   KanbanSquare,
   Lightbulb,
@@ -17,7 +18,8 @@ interface IconNavProps {
 }
 
 const navItems = [
-  { to: "/", icon: LayoutDashboard, label: "Overview" },
+  { to: "/", icon: MessageCircle, label: "PM Channel" },
+  { to: "/overview", icon: LayoutDashboard, label: "Overview" },
   { to: "/project", icon: KanbanSquare, label: "Project" },
   { to: "/insights", icon: Lightbulb, label: "Insights" },
   { to: "/agents", icon: Bot, label: "Agents" },

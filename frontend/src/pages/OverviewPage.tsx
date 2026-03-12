@@ -172,24 +172,28 @@ export function OverviewPage() {
           {kpis && kpis.length > 0 ? (
             <div className="space-y-2">
               {kpis.map((kpi) => {
+                const measured = kpi.currentValue != null;
                 const current = kpi.currentValue ?? 0;
                 const target = kpi.targetValue || 1;
-                const pct = Math.max(0, Math.min(100, (current / target) * 100));
+                const pct = measured ? Math.max(0, Math.min(100, (current / target) * 100)) : 0;
                 const color = kpi.status === "on-track" ? "bg-success" : kpi.status === "at-risk" ? "bg-warning" : "bg-destructive";
-                const textColor = kpi.status === "on-track" ? "text-success" : kpi.status === "at-risk" ? "text-warning" : "text-destructive";
+                const textColor = measured
+                  ? (kpi.status === "on-track" ? "text-success" : kpi.status === "at-risk" ? "text-warning" : "text-destructive")
+                  : "text-muted-foreground";
+                const statusLabel = measured ? kpi.status : "pending";
 
                 return (
                   <div key={kpi.id} className="bg-card border border-border rounded-md px-3 py-2.5">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-[10px] text-foreground">{kpi.displayName}</span>
-                      <span className={cn("text-[9px]", textColor)}>{kpi.status}</span>
+                      <span className={cn("text-[9px]", textColor)}>{statusLabel}</span>
                     </div>
                     <div className="flex items-baseline gap-1 mb-1.5">
-                      <span className="text-sm font-bold text-foreground">{current}</span>
+                      <span className="text-sm font-bold text-foreground">{measured ? current : "—"}</span>
                       <span className="text-[9px] text-muted-foreground">/ {target} {kpi.unit}</span>
                     </div>
                     <div className="h-1 bg-muted rounded-full overflow-hidden">
-                      <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />
+                      {measured && <div className={cn("h-full rounded-full", color)} style={{ width: `${pct}%` }} />}
                     </div>
                   </div>
                 );

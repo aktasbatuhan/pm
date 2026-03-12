@@ -1246,6 +1246,20 @@ export function createRoutes() {
     return c.json({ status: "rejected", id });
   });
 
+  app.post("/actions/:id/resolve", async (c) => {
+    const id = c.req.param("id");
+    const db = getDb();
+    const action = db.select().from(schema.actions).where(eq(schema.actions.id, id)).get();
+    if (!action) return c.json({ error: "Action not found" }, 404);
+
+    db.update(schema.actions)
+      .set({ status: "resolved", updatedAt: new Date() })
+      .where(eq(schema.actions.id, id))
+      .run();
+
+    return c.json({ status: "resolved", id });
+  });
+
   // --- Suggestions API (discussable ideas from synthesis) ---
 
   app.get("/suggestions", (c) => {

@@ -284,6 +284,25 @@ function migrate() {
     )
   `);
   getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_suggestions_status ON suggestions(status)`);
+
+  // Slack message ts tracking (ts → session mapping for thread routing)
+  getDb().run(sql`
+    CREATE TABLE IF NOT EXISTS slack_messages (
+      id TEXT PRIMARY KEY,
+      ts TEXT NOT NULL,
+      channel_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  getDb().run(sql`CREATE INDEX IF NOT EXISTS idx_slack_messages_ts ON slack_messages(ts, channel_id)`);
+
+  // Seed the PM channel session (persistent direct channel between PM and agent)
+  const pmChannelExists = getDb().run(
+    sql`INSERT OR IGNORE INTO chat_sessions (id, name, slack_channel_id, created_at, updated_at)
+        VALUES ('pm-channel', 'PM Channel', ${process.env.SLACK_DEFAULT_CHANNEL || null}, ${Date.now()}, ${Date.now()})`
+  );
+  void pmChannelExists;
 }
 
 // Helper to generate IDs

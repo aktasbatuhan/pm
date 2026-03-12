@@ -19,6 +19,7 @@ import {
   createPostHogMcpServer,
   createActionsMcpServer,
   createAgentsMcpServer,
+  createPmChannelMcpServer,
 } from "../tools/index.ts";
 import { createDashboardMcpServer } from "../tools/dashboard.ts";
 import { getRemoteMcpServers } from "../tools/remote.ts";
@@ -234,6 +235,7 @@ export function buildSynthesisConfig(): AgentConfig {
       posthog: createPostHogMcpServer(),
       actions: createActionsMcpServer(),
       agents: createAgentsMcpServer(),
+      pm_channel: createPmChannelMcpServer(),
       ...getRemoteMcpServers(),
     },
     allowedTools: [
@@ -241,6 +243,7 @@ export function buildSynthesisConfig(): AgentConfig {
       "mcp__slack__*", "mcp__visualization__*", "mcp__posthog__*",
       "mcp__dashboard__*", "mcp__memory__*", "mcp__signals__*",
       "mcp__intelligence__*", "mcp__actions__*", "mcp__agents__*",
+      "mcp__pm_channel__*",
     ],
     model: process.env.AGENT_MODEL || "google/gemini-3-flash-preview",
     workingDirectory: WORKSPACE_DIR,

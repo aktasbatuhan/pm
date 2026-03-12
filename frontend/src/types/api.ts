@@ -122,7 +122,7 @@ export interface Action {
   title: string;
   description: string;
   payload: Record<string, unknown>;
-  status: "pending" | "approved" | "rejected" | "executed" | "failed";
+  status: "pending" | "approved" | "rejected" | "executed" | "failed" | "resolved";
   sourceInsightId?: string | null;
   sourceEscalationId?: string | null;
   executionResult?: string | null;
