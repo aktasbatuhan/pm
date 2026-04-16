@@ -1,0 +1,73 @@
+version: "3.8"
+
+# MongoDB + LocalStack (S3) for kai-agent remote storage
+#
+# Usage:
+#   docker compose -f docker-compose.storage.yml up -d
+#
+# Then configure kai-agent:
+#   export KAI_STORAGE_BACKEND=remote
+#   export MONGODB_URI=mongodb://localhost:27017
+#   export AWS_ACCESS_KEY_ID=test
+#   export AWS_SECRET_ACCESS_KEY=test
+#   export AWS_S3_BUCKET=kai-dev
+#   export AWS_REGION=us-east-1
+#   export AWS_S3_ENDPOINT_URL=http://localhost:4566
+#
+# UIs:
+#   Mongo Express:  http://localhost:8081
+
+services:
+  mongodb:
+    image: mongo:7
+    container_name: kai-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    environment:
+      # No auth for local dev — add MONGO_INITDB_ROOT_USERNAME/PASSWORD for production
+      MONGO_INITDB_DATABASE: kai_agent
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: kai-localstack
+    restart: unless-stopped
+    ports:
+      - "4566:4566"   # S3 API (and all other AWS services)
+    volumes:
+      - localstack_data:/var/lib/localstack
+    environment:
+      SERVICES: s3
+      DEFAULT_REGION: us-east-1
+      # Auto-create the dev bucket on startup
+      EAGER_SERVICE_LOADING: 1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4566/_localstack/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Optional: Mongo Express web UI for inspecting data
+  mongo-express:
+    image: mongo-express:1
+    container_name: kai-mongo-express
+    restart: unless-stopped
+    ports:
+      - "8081:8081"
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongodb:27017
+      ME_CONFIG_BASICAUTH: "false"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+volumes:
+  mongo_data:
+  localstack_data:

@@ -1,0 +1,11 @@
+[phases.setup]
+nixPkgs = ["python312", "git", "gh"]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "python server.py"
+
+# Force Python provider, ignore Node.js
+providers = ["python"]

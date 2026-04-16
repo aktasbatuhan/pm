@@ -1,0 +1,6 @@
+# E2B template config
+# Build with: e2b template build --name kai-agent
+# See: https://e2b.dev/docs/sandbox-template
+
+id = "kai-agent"
+dockerfile = "e2b.Dockerfile"

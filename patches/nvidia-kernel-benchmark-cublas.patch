@@ -1,0 +1,435 @@
+diff --git a/benchmark_framework.py b/benchmark_framework.py
+index 6f8cf2f..7f8cf2f 100644
+--- a/benchmark_framework.py
++++ b/benchmark_framework.py
+@@
+-import torch
+-import time
+-import json
+-import numpy as np
+-import matplotlib.pyplot as plt
+-import seaborn as sns
+-from typing import Dict, List, Tuple, Optional, Any
+-from dataclasses import dataclass, asdict
+-import statistics
+-import subprocess
+-import sys
+-import os
+-from pathlib import Path
+-import importlib.util
+-import warnings
++import contextlib
++import importlib.util
++import json
++import os
++from dataclasses import asdict, dataclass, field
++from pathlib import Path
++import statistics
++import time
++from typing import Any, Dict, List, Optional, Tuple
++
++import matplotlib.pyplot as plt
++import numpy as np
++import seaborn as sns
++import torch
++import warnings
++
++try:
++    import pynvml
++except ImportError:
++    pynvml = None
+@@
+ @dataclass
+ class BenchmarkResult:
+@@
+     gpu_utilization: float
+     warmup_runs: int
+     timing_runs: int
+     confidence_interval: Tuple[float, float]
++    backend_details: Dict[str, Any] = field(default_factory=dict)
++
++@dataclass
++class CuBLASBenchmarkConfig:
++    """Configuration for cuBLAS-backed benchmark runs."""
++    precision: str = "fp16"
++    disable_tf32: bool = True
++    preferred_blas_library: str = "cublas"
++    use_aten_ops: bool = False
++    batched_gemm_mode: str = "baddbmm"
++    verify_dispatch: bool = True
+@@
+ class DataGenerator:
+@@
+-    def generate_fp16_equivalent(m: int, k: int, l: int, device: str = "cuda") -> Tuple[torch.Tensor, torch.Tensor]:
+-        """Generate FP16 equivalent data for cuBLAS comparison.""" 
++    def generate_cublas_equivalent(
++        m: int,
++        k: int,
++        l: int,
++        precision: str = "fp16",
++        device: str = "cuda",
++    ) -> Tuple[torch.Tensor, ...]:
++        """Generate dense tensors for cuBLAS-backed GEMV/GEMM comparisons."""
+         torch.manual_seed(42)
+-        a = torch.randn(m, k, dtype=torch.float16, device=device)
+-        b = torch.randn(k, m if l == 1 else k, dtype=torch.float16, device=device)
+-        return a, b
++        dtype_map = {
++            "fp16": torch.float16,
++            "bf16": torch.bfloat16,
++            "fp32": torch.float32,
++        }
++        if precision not in dtype_map:
++            raise ValueError(f"Unsupported cuBLAS precision: {precision}")
++
++        dtype = dtype_map[precision]
++        if l == 1:
++            mat = torch.randn(m, k, dtype=dtype, device=device)
++            vec = torch.randn(k, dtype=dtype, device=device)
++            bias = torch.zeros(m, dtype=dtype, device=device)
++            return mat, vec, bias
++
++        a = torch.randn(l, m, k, dtype=dtype, device=device)
++        b = torch.randn(l, k, m, dtype=dtype, device=device)
++        bias = torch.zeros(l, m, m, dtype=dtype, device=device)
++        return a, b, bias
+@@
+ class PerformanceProfiler:
+@@
+     def __init__(self):
++        self._nvml_available = False
++        self._nvml_handle = None
+         self.reset()
++        self._init_nvml()
++
++    def _init_nvml(self):
++        """Initialize NVML when available for real GPU utilization metrics."""
++        if pynvml is None or not torch.cuda.is_available():
++            return
++        try:
++            pynvml.nvmlInit()
++            self._nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(torch.cuda.current_device())
++            self._nvml_available = True
++        except Exception:
++            self._nvml_available = False
++            self._nvml_handle = None
+@@
+     def reset(self):
+         """Reset profiler state."""
+         self.gpu_start_util = None
+         self.memory_start = None
++        self.gpu_util_samples = []
++        self.mem_util_samples = []
+@@
+     def start_profiling(self):
+         """Start GPU profiling."""
+         if torch.cuda.is_available():
+             torch.cuda.reset_peak_memory_stats()
+             self.memory_start = torch.cuda.memory_allocated()
+-            # GPU utilization would require nvidia-ml-py, simplified for now
+-            self.gpu_start_util = 0.0
++            self.gpu_start_util = self._read_gpu_util()
++
++    def _read_gpu_util(self) -> float:
++        if not self._nvml_available:
++            return 0.0
++        try:
++            return float(pynvml.nvmlDeviceGetUtilizationRates(self._nvml_handle).gpu)
++        except Exception:
++            return 0.0
++
++    def _read_mem_util(self) -> float:
++        if not self._nvml_available:
++            return 0.0
++        try:
++            return float(pynvml.nvmlDeviceGetUtilizationRates(self._nvml_handle).memory)
++        except Exception:
++            return 0.0
++
++    def sample(self):
++        """Record instantaneous utilization after a CUDA op finishes."""
++        if not torch.cuda.is_available():
++            return
++        self.gpu_util_samples.append(self._read_gpu_util())
++        self.mem_util_samples.append(self._read_mem_util())
+@@
+     def get_metrics(self) -> Dict[str, float]:
+         """Get performance metrics."""
+         if not torch.cuda.is_available():
+-            return {"memory_mb": 0.0, "gpu_utilization": 0.0}
++            return {"memory_mb": 0.0, "gpu_utilization": 0.0, "memory_utilization": 0.0}
+             
+         peak_memory = torch.cuda.max_memory_allocated()
+         memory_used_mb = (peak_memory - self.memory_start) / 1024**2
+         
+         return {
+             "memory_mb": memory_used_mb,
+-            "gpu_utilization": 85.0  # Placeholder - would use nvidia-ml-py
++            "gpu_utilization": statistics.mean(self.gpu_util_samples) if self.gpu_util_samples else 0.0,
++            "memory_utilization": statistics.mean(self.mem_util_samples) if self.mem_util_samples else 0.0,
+         }
+@@
+ class BenchmarkRunner:
+@@
+-    def __init__(self, warmup_runs: int = 10, timing_runs: int = 100):
++    def __init__(
++        self,
++        warmup_runs: int = 10,
++        timing_runs: int = 100,
++        cublas_config: Optional[CuBLASBenchmarkConfig] = None,
++    ):
+         self.warmup_runs = warmup_runs
+         self.timing_runs = timing_runs
+         self.profiler = PerformanceProfiler()
+         self.results = []
++        self.cublas_config = cublas_config or CuBLASBenchmarkConfig()
++
++    @contextlib.contextmanager
++    def _scoped_cublas_settings(self, config: CuBLASBenchmarkConfig):
++        """Apply temporary backend settings for a fair cuBLAS benchmark."""
++        prev_tf32_matmul = torch.backends.cuda.matmul.allow_tf32
++        prev_tf32_cudnn = torch.backends.cudnn.allow_tf32
++        prev_precision = None
++        if hasattr(torch, "get_float32_matmul_precision"):
++            prev_precision = torch.get_float32_matmul_precision()
++
++        try:
++            if torch.cuda.is_available():
++                if config.disable_tf32:
++                    torch.backends.cuda.matmul.allow_tf32 = False
++                    torch.backends.cudnn.allow_tf32 = False
++                if prev_precision is not None:
++                    torch.set_float32_matmul_precision("highest")
++                torch.backends.cuda.preferred_blas_library(config.preferred_blas_library)
++            yield
++        finally:
++            torch.backends.cuda.matmul.allow_tf32 = prev_tf32_matmul
++            torch.backends.cudnn.allow_tf32 = prev_tf32_cudnn
++            if prev_precision is not None:
++                torch.set_float32_matmul_precision(prev_precision)
++            if torch.cuda.is_available():
++                torch.backends.cuda.preferred_blas_library("default")
++
++    def _measure_once(self, kernel_func, data: Tuple) -> float:
++        """Use CUDA events for GPU timing instead of wall-clock timers."""
++        device = data[0].device
++        if device.type == "cuda":
++            start_event = torch.cuda.Event(enable_timing=True)
++            end_event = torch.cuda.Event(enable_timing=True)
++            torch.cuda.synchronize()
++            start_event.record()
++            _ = kernel_func(data)
++            end_event.record()
++            torch.cuda.synchronize()
++            self.profiler.sample()
++            return start_event.elapsed_time(end_event)
++
++        start_time = time.perf_counter()
++        _ = kernel_func(data)
++        end_time = time.perf_counter()
++        return (end_time - start_time) * 1000
++
++    def _estimate_ops(self, operation: str, shape: Tuple[int, int, int]) -> float:
++        """Rough FLOP estimate for GEMV or batched GEMM."""
++        m, k, l = shape
++        if operation == "GEMV":
++            return 2.0 * m * k
++        return 2.0 * l * m * k * m
++
++    def _verify_cublas_dispatch(
++        self,
++        kernel_func,
++        data: Tuple,
++        expected_op: str,
++        config: CuBLASBenchmarkConfig,
++    ) -> Dict[str, Any]:
++        """Capture a profiler snapshot and verify ATen BLAS ops ran on CUDA."""
++        details = {
++            "verified": False,
++            "expected_op": expected_op,
++            "preferred_blas_library": config.preferred_blas_library,
++            "tf32_disabled": config.disable_tf32,
++            "cuda_available": torch.cuda.is_available(),
++        }
++        if not torch.cuda.is_available():
++            details["reason"] = "CUDA not available"
++            return details
++
++        try:
++            activities = [
++                torch.profiler.ProfilerActivity.CPU,
++                torch.profiler.ProfilerActivity.CUDA,
++            ]
++            with self._scoped_cublas_settings(config):
++                with torch.profiler.profile(activities=activities, record_shapes=True) as prof:
++                    _ = kernel_func(data)
++                torch.cuda.synchronize()
++
++            event_names = sorted({event.key for event in prof.key_averages()})
++            expected_event = f"aten::{expected_op}"
++            details["observed_ops"] = [name for name in event_names if name.startswith("aten::")]
++            details["verified"] = expected_event in event_names
++            if not details["verified"]:
++                details["reason"] = f"Expected profiler event {expected_event} not observed"
++        except Exception as exc:
++            details["reason"] = f"Profiler verification failed: {exc}"
++
++        return details
+@@
+     def benchmark_kernel(self, kernel_func, data: Tuple, kernel_name: str, 
+                         operation: str, shape: Tuple[int, int, int]) -> BenchmarkResult:
+@@
+         for _ in range(self.timing_runs):
+-            if device.type == 'cuda':
+-                torch.cuda.synchronize()
+-                
+-            start_time = time.perf_counter()
+-            result = kernel_func(data) 
+-            
+-            if device.type == 'cuda':
+-                torch.cuda.synchronize()
+-                
+-            end_time = time.perf_counter()
+-            latencies.append((end_time - start_time) * 1000)  # Convert to ms
++            latencies.append(self._measure_once(kernel_func, data))
+@@
+-        ops_count = m * k * l if operation == "GEMV" else m * k * l * 2  # Rough estimate
++        ops_count = self._estimate_ops(operation, shape)
+         throughput = ops_count / (avg_latency / 1000)  # Ops per second
+@@
+         result = BenchmarkResult(
+             kernel_name=kernel_name,
+             operation=operation,
+             shape=shape,
+             latency_ms=avg_latency,
+@@
+             gpu_utilization=metrics["gpu_utilization"],
+             warmup_runs=self.warmup_runs,
+             timing_runs=self.timing_runs,
+-            confidence_interval=confidence_interval
++            confidence_interval=confidence_interval,
+         )
+@@
+-    def benchmark_cublas_equivalent(self, shape: Tuple[int, int, int], precision: str = "fp16") -> BenchmarkResult:
+-        """Benchmark cuBLAS equivalent operations."""
++    def benchmark_cublas_equivalent(
++        self,
++        shape: Tuple[int, int, int],
++        precision: str = "fp16",
++        config: Optional[CuBLASBenchmarkConfig] = None,
++    ) -> BenchmarkResult:
++        """Benchmark real cuBLAS-backed GEMV/GEMM operations."""
+         m, k, l = shape
+-        a, b = DataGenerator.generate_fp16_equivalent(m, k, l)
+-        
+-        def cublas_gemm(data_tuple):
+-            a, b = data_tuple
+-            if l == 1:
+-                # GEMV equivalent
+-                return torch.mv(b.t(), a).unsqueeze(0).unsqueeze(-1)
+-            else:
+-                # GEMM equivalent - batch multiply
+-                results = []
+-                for i in range(l):
+-                    result = torch.mm(a, b)
+-                    results.append(result)
+-                return torch.stack(results, dim=-1)
+-                
+-        operation = "GEMV" if l == 1 else "GEMM"  
+-        return self.benchmark_kernel(cublas_gemm, (a, b), f"cublas_{precision}", operation, shape)
++        active_config = config or CuBLASBenchmarkConfig(precision=precision)
++        data = DataGenerator.generate_cublas_equivalent(
++            m,
++            k,
++            l,
++            precision=active_config.precision,
++        )
++
++        if l == 1:
++            expected_op = "addmv"
++
++            def cublas_kernel(data_tuple):
++                mat, vec, bias = data_tuple
++                with self._scoped_cublas_settings(active_config):
++                    if active_config.use_aten_ops:
++                        return torch.ops.aten.addmv.default(bias, mat, vec)
++                    return torch.addmv(bias, mat, vec)
++        else:
++            expected_op = "baddbmm" if active_config.batched_gemm_mode == "baddbmm" else "addmm"
++
++            def cublas_kernel(data_tuple):
++                a_batch, b_batch, bias = data_tuple
++                with self._scoped_cublas_settings(active_config):
++                    if active_config.batched_gemm_mode == "loop_addmm":
++                        outputs = []
++                        for batch_idx in range(l):
++                            if active_config.use_aten_ops:
++                                out = torch.ops.aten.addmm.default(
++                                    bias[batch_idx],
++                                    a_batch[batch_idx],
++                                    b_batch[batch_idx],
++                                )
++                            else:
++                                out = torch.addmm(
++                                    bias[batch_idx],
++                                    a_batch[batch_idx],
++                                    b_batch[batch_idx],
++                                )
++                            outputs.append(out)
++                        return torch.stack(outputs, dim=0)
++                    if active_config.use_aten_ops:
++                        return torch.ops.aten.baddbmm.default(bias, a_batch, b_batch)
++                    return torch.baddbmm(bias, a_batch, b_batch)
++
++        operation = "GEMV" if l == 1 else "GEMM"
++        result = self.benchmark_kernel(
++            cublas_kernel,
++            data,
++            f"cublas_{active_config.precision}",
++            operation,
++            shape,
++        )
++        metrics = self.profiler.get_metrics()
++        result.backend_details = {
++            "backend": "cuBLAS",
++            "precision": active_config.precision,
++            "preferred_blas_library": active_config.preferred_blas_library,
++            "disable_tf32": active_config.disable_tf32,
++            "use_aten_ops": active_config.use_aten_ops,
++            "batched_gemm_mode": active_config.batched_gemm_mode,
++            "memory_utilization": metrics.get("memory_utilization", 0.0),
++            "gpu_util_samples": list(self.profiler.gpu_util_samples),
++        }
++        if active_config.verify_dispatch:
++            result.backend_details["dispatch_verification"] = self._verify_cublas_dispatch(
++                cublas_kernel,
++                data,
++                expected_op,
++                active_config,
++            )
++        return result
+diff --git a/run_benchmarks.py b/run_benchmarks.py
+index 0fc6178..1fc6178 100755
+--- a/run_benchmarks.py
++++ b/run_benchmarks.py
+@@
+-        from benchmark_framework import BenchmarkRunner, DataGenerator
++        from benchmark_framework import BenchmarkRunner, CuBLASBenchmarkConfig, DataGenerator
+@@
+-        runner = BenchmarkRunner(warmup_runs=3, timing_runs=5)
++        runner = BenchmarkRunner(
++            warmup_runs=3,
++            timing_runs=5,
++            cublas_config=CuBLASBenchmarkConfig(
++                precision="fp16",
++                disable_tf32=True,
++                preferred_blas_library="cublas",
++                batched_gemm_mode="baddbmm",
++                verify_dispatch=True,
++            ),
++        )
+@@
+-        cublas_result = runner.benchmark_cublas_equivalent(shape)
++        cublas_result = runner.benchmark_cublas_equivalent(shape)
+         print(f"  cuBLAS equivalent: {cublas_result.latency_ms:.3f}ms")
++        print(f"  cuBLAS details: {cublas_result.backend_details}")

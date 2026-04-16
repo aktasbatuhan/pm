@@ -1,0 +1,11 @@
+name = "kai-agent-gateway"
+main = "src/index.ts"
+compatibility_date = "2024-01-01"
+account_id = "7cc0a8543508fd38f600924b13f1ca42"
+
+[vars]
+KAI_BACKEND_URL = "https://staging.kai-backend.dria.co"
+
+# Secrets (set via `wrangler secret put`):
+# - KAI_SERVICE_TOKEN    (service-level JWT for backend API calls)
+# - SLACK_SIGNING_SECRET (from Slack app settings)

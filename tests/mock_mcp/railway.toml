@@ -1,0 +1,5 @@
+[build]
+dockerfilePath = "tests/mock_mcp/Dockerfile"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"

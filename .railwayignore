@@ -1,0 +1,8 @@
+web/
+.venv/
+.git/
+__pycache__/
+*.pyc
+.next/
+node_modules/
+tests/

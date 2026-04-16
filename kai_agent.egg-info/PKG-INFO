@@ -1,0 +1,197 @@
+Metadata-Version: 2.4
+Name: kai-agent
+Version: 0.3.1.1
+Summary: Autonomous AI research engineer — security scanning, code optimization, and deep research for your organization
+Author: FirstBatch
+License: MIT
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: openai
+Requires-Dist: python-dotenv
+Requires-Dist: fire
+Requires-Dist: httpx
+Requires-Dist: rich
+Requires-Dist: tenacity
+Requires-Dist: pyyaml
+Requires-Dist: requests
+Requires-Dist: jinja2
+Requires-Dist: pydantic>=2.0
+Requires-Dist: prompt_toolkit
+Requires-Dist: firecrawl-py
+Requires-Dist: fal-client
+Requires-Dist: edge-tts
+Requires-Dist: litellm>=1.75.5
+Requires-Dist: typer
+Requires-Dist: platformdirs
+Requires-Dist: PyJWT[crypto]
+Requires-Dist: boto3>=1.35.0
+Requires-Dist: pymongo>=4.6.0
+Requires-Dist: e2b>=2.19.0
+Provides-Extra: modal
+Requires-Dist: swe-rex[modal]>=1.4.0; extra == "modal"
+Provides-Extra: daytona
+Requires-Dist: daytona>=0.148.0; extra == "daytona"
+Provides-Extra: dev
+Requires-Dist: pytest; extra == "dev"
+Requires-Dist: pytest-asyncio; extra == "dev"
+Requires-Dist: pytest-xdist; extra == "dev"
+Requires-Dist: mcp>=1.2.0; extra == "dev"
+Provides-Extra: messaging
+Requires-Dist: python-telegram-bot>=20.0; extra == "messaging"
+Requires-Dist: discord.py>=2.0; extra == "messaging"
+Requires-Dist: aiohttp>=3.9.0; extra == "messaging"
+Requires-Dist: slack-bolt>=1.18.0; extra == "messaging"
+Requires-Dist: slack-sdk>=3.27.0; extra == "messaging"
+Provides-Extra: cron
+Requires-Dist: croniter; extra == "cron"
+Provides-Extra: slack
+Requires-Dist: slack-bolt>=1.18.0; extra == "slack"
+Requires-Dist: slack-sdk>=3.27.0; extra == "slack"
+Provides-Extra: cli
+Requires-Dist: simple-term-menu; extra == "cli"
+Provides-Extra: tts-premium
+Requires-Dist: elevenlabs; extra == "tts-premium"
+Provides-Extra: pty
+Requires-Dist: ptyprocess>=0.7.0; sys_platform != "win32" and extra == "pty"
+Requires-Dist: pywinpty>=2.0.0; sys_platform == "win32" and extra == "pty"
+Provides-Extra: honcho
+Requires-Dist: honcho-ai>=2.0.1; extra == "honcho"
+Provides-Extra: mcp
+Requires-Dist: mcp>=1.2.0; extra == "mcp"
+Provides-Extra: remote-storage
+Requires-Dist: pymongo>=4.6.0; extra == "remote-storage"
+Requires-Dist: boto3>=1.35.0; extra == "remote-storage"
+Provides-Extra: homeassistant
+Requires-Dist: aiohttp>=3.9.0; extra == "homeassistant"
+Provides-Extra: yc-bench
+Requires-Dist: yc-bench @ git+https://github.com/collinear-ai/yc-bench.git ; extra == "yc-bench"
+Provides-Extra: all
+Requires-Dist: kai-agent[modal]; extra == "all"
+Requires-Dist: kai-agent[daytona]; extra == "all"
+Requires-Dist: kai-agent[messaging]; extra == "all"
+Requires-Dist: kai-agent[cron]; extra == "all"
+Requires-Dist: kai-agent[cli]; extra == "all"
+Requires-Dist: kai-agent[dev]; extra == "all"
+Requires-Dist: kai-agent[tts-premium]; extra == "all"
+Requires-Dist: kai-agent[slack]; extra == "all"
+Requires-Dist: kai-agent[pty]; extra == "all"
+Requires-Dist: kai-agent[honcho]; extra == "all"
+Requires-Dist: kai-agent[mcp]; extra == "all"
+Requires-Dist: kai-agent[homeassistant]; extra == "all"
+Dynamic: license-file
+
+# Kai Agent
+
+**An always-on AI research engineer for your team, powered by [Kai Security & Evolve](https://dria.co).**
+
+Built on top of [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research.
+
+---
+
+## What is Kai Agent?
+
+Kai Agent is a self-improving AI agent that acts as a dedicated security and optimization research engineer for your team. It connects to the Kai platform via MCP and handles:
+
+- **Security scanning**: Run vulnerability scans, analyze findings, triage by severity, file issues to GitHub/Jira
+- **Evolutionary code optimization**: Identify optimization targets, create evaluators, run AI-powered code evolution, monitor progress
+- **Deep research**: Contextualize Kai outputs with academic papers, benchmarks, and prior art. Explain WHY an evolved solution works.
+- **Continuous monitoring**: Schedule recurring scans, track evolution progress, alert on significant findings
+
+You talk to it like a teammate. It does the work.
+
+## How it works
+
+1. Mention Kai Agent in Slack: "We need to reduce memory usage in our sorting module"
+2. Kai Agent clones the repo, analyzes the code, identifies optimization targets
+3. Creates evaluators, starts an evolution, monitors iterations
+4. Reports back with results, explains the algorithmic changes, cites relevant research
+5. Suggests next steps and offers to file issues or create PRs
+
+No dashboard needed. No platform learning curve. Just results.
+
+## Quick Start
+
+```bash
+# Clone
+git clone https://github.com/aktasbatuhan/hermes-agent.git kai-agent
+cd kai-agent
+git checkout kai-agent
+
+# Setup
+cp .env.example .env
+cp cli-config.yaml.example cli-config.yaml
+
+# Edit .env with your keys:
+#   OPENROUTER_API_KEY=...
+#   KAI_JWT_TOKEN=...         (from Kai platform)
+#   FIRECRAWL_API_KEY=...     (for web research)
+
+# Install
+pip install -r requirements.txt
+
+# Run
+python cli.py
+```
+
+## Configuration
+
+### Kai MCP (Required)
+
+The agent connects to Kai's backend via MCP. Set `KAI_JWT_TOKEN` in your `.env` file. The MCP server is pre-configured in `cli-config.yaml`:
+
+```yaml
+mcp_servers:
+  kai:
+    url: "https://production.kai-backend.dria.co/mcp"
+    headers:
+      Authorization: "Bearer ${KAI_JWT_TOKEN}"
+    timeout: 300
+```
+
+### Platforms
+
+Kai Agent supports multiple platforms through the Hermes gateway:
+
+| Platform | Use case |
+|----------|----------|
+| **CLI** | Local development and testing |
+| **Slack** | Team workspace, always-on assistant |
+| **Discord** | Community research assistant |
+| **Telegram** | Personal research assistant |
+| **Email** | Async research reports |
+
+### Skills
+
+Kai Agent comes with built-in skills for common workflows:
+
+| Skill | What it does |
+|-------|-------------|
+| `scan-workflow` | End-to-end security scanning |
+| `vulnerability-triage` | Prioritize and contextualize findings |
+| `evolution-workflow` | Full evolutionary optimization flow |
+| `evaluator-creation` | Create effective fitness functions |
+| `contextualize-results` | Research and explain Kai outputs |
+| `continuous-monitoring` | Set up automated recurring operations |
+
+The agent also learns new skills from experience and improves existing ones over time.
+
+## Architecture
+
+Kai Agent is a fork of Hermes Agent with:
+
+- **Scoped toolset**: Web research, terminal, file ops, browser, code execution, and Kai MCP (32 tools for security, evolve, repos, evaluators, integrations, billing)
+- **Kai-specific identity**: System prompt tuned for a security/optimization research engineer
+- **Kai skills**: Pre-seeded workflows for common Kai operations
+- **Research tools**: Built for finding and explaining academic context
+
+Generic Hermes tools (Home Assistant, image generation, voice, RL training) have been removed to keep the agent focused.
+
+## Credits
+
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research (MIT License)
+- [Kai Platform](https://dria.co) by Dria
+
+## License
+
+MIT

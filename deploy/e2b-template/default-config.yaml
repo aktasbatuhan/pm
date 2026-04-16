@@ -1,0 +1,14 @@
+# Kai Agent default config (injected into E2B template)
+# JWT and API keys come from environment variables set during provisioning.
+
+model:
+  default: "anthropic/claude-opus-4-6"
+  provider: "openrouter"
+
+mcp_servers:
+  kai:
+    url: "${KAI_BACKEND_URL}/mcp"
+    headers:
+      Authorization: "Bearer ${KAI_JWT_TOKEN}"
+    timeout: 300
+    connect_timeout: 60

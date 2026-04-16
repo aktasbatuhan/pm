@@ -1,0 +1,5 @@
+# Kai Agent E2B Template
+# Build: e2b template build -c "python3 /home/user/kai_chat_server.py"
+
+dockerfile = "e2b.Dockerfile"
+template_name = "kai-agent"

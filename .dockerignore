@@ -1,0 +1,16 @@
+.git
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.env.*
+logs/
+data/
+tmp/
+.pytest_cache
+tests/
+.vscode/
+node_modules/
+web/
+.next/
