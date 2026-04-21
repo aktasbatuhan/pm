@@ -557,22 +557,75 @@ mcp_servers:
     env:
       GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
 
-  # Linear (via HTTP MCP server — issue tracking, sprints, team workload)
-  # Requires: LINEAR_API_KEY in .env
+  # ── Issue Tracking ──────────────────────────────────────────────────
+
+  # Linear (sprints, cycles, issues, team workload)
   # linear:
   #   url: "https://mcp.linear.app/sse"
   #   headers:
   #     Authorization: "Bearer ${LINEAR_API_KEY}"
   #   timeout: 120
 
-  # PostHog (via stdio MCP server — product analytics, funnels, user behavior)
-  # Requires: POSTHOG_API_KEY and POSTHOG_HOST in .env
+  # Jira (enterprise issue tracking via Atlassian Rovo)
+  # jira:
+  #   url: "https://mcp.atlassian.com/v1/sse"
+  #   headers:
+  #     Authorization: "Bearer ${ATLASSIAN_API_TOKEN}"
+  #   timeout: 120
+
+  # ── Analytics ──────────────────────────────────────────────────────
+
+  # PostHog (funnels, retention, feature flags, experiments)
   # posthog:
   #   command: npx
   #   args: ["-y", "@posthog/mcp-server"]
   #   env:
   #     POSTHOG_API_KEY: "${POSTHOG_API_KEY}"
   #     POSTHOG_HOST: "${POSTHOG_HOST}"
+
+  # ── Monitoring ─────────────────────────────────────────────────────
+
+  # Sentry (error tracking, release health, performance)
+  # sentry:
+  #   url: "https://mcp.sentry.dev/mcp"
+  #   headers:
+  #     Authorization: "Bearer ${SENTRY_AUTH_TOKEN}"
+  #   timeout: 120
+
+  # ── Revenue ────────────────────────────────────────────────────────
+
+  # Stripe (subscriptions, MRR, churn, billing)
+  # stripe:
+  #   url: "https://mcp.stripe.com/v1/sse"
+  #   headers:
+  #     Authorization: "Bearer ${STRIPE_API_KEY}"
+  #   timeout: 120
+
+  # ── Documentation ──────────────────────────────────────────────────
+
+  # Notion (PRDs, roadmaps, knowledge base)
+  # notion:
+  #   command: npx
+  #   args: ["-y", "@notionhq/notion-mcp-server"]
+  #   env:
+  #     OPENAPI_MCP_HEADERS: '{"Authorization": "Bearer ${NOTION_API_KEY}", "Notion-Version": "2022-06-28"}'
+
+  # ── Meetings ───────────────────────────────────────────────────────
+
+  # Granola (meeting notes, decisions, action items)
+  # granola:
+  #   url: "https://mcp.granola.ai/mcp"
+  #   timeout: 120
+
+  # ── Design ─────────────────────────────────────────────────────────
+
+  # Figma (design specs, handoff, design system)
+  # figma:
+  #   url: "https://mcp.figma.com/v1/sse"
+  #   headers:
+  #     Authorization: "Bearer ${FIGMA_ACCESS_TOKEN}"
+  #   timeout: 120
+
 #
 # Sampling (server-initiated LLM requests) — enabled by default.
 # Per-server config under the 'sampling' key:

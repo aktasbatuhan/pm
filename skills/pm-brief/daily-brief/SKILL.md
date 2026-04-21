@@ -1,11 +1,11 @@
 ---
 name: pm-brief/daily-brief
-description: Produce a structured daily brief with updates, metrics, charts, and prioritized action items from all connected data sources
-version: 1.1.0
+description: Produce a structured daily brief with updates, metrics, charts, goal progress, KPI risks/opportunities, and prioritized action items from all connected data sources
+version: 1.3.0
 metadata:
   hermes:
     tags: [pm, brief, proactive, daily]
-    requires_toolsets: [pm-brief, memory, cronjob]
+    requires_toolsets: [pm-brief, pm-goals, pm-kpis, memory, cronjob]
 ---
 
 # Daily Brief
@@ -32,6 +32,16 @@ Check every connected data source. Skip sources that aren't available.
 - Load the last brief with `brief_get_latest`
 - Compare: what changed since then? What action items are still pending?
 
+### Goals
+- Call `goal_list` to get all active goals
+- For each goal, note the current `progress`, `trajectory`, and previous `action_items`
+- You will re-evaluate each goal in Step 2.5 after gathering new data.
+
+### KPIs
+- Call `kpi_list` to get all active KPIs and their recent values
+- For each, note the `current_value`, `previous_value`, `target_value`, and the last 3-5 `recent_values`
+- You will use this in Step 2.6 to decide whether any KPI deserves a flag in this brief
+
 ### Workspace Context
 - Read your blueprint and recent learnings
 - Check pending work items
@@ -43,6 +53,57 @@ Cross-reference signals from different sources. The value is in connections:
 - A silent team member + stale PRs = potential blocker
 - High signup rate + low activation = product problem
 - Sprint almost done + many items in review = bottleneck
+
+## Step 2.5: Evaluate Every Active Goal
+
+**This is required for every brief.** For each goal returned by `goal_list`:
+
+1. **Estimate progress (0-100)** based on observable evidence:
+   - Merged PRs / closed issues tagged to the goal
+   - Metric movement (if the goal is metric-tied and you have analytics)
+   - Milestones hit since the last snapshot
+   - Be honest — if there's no evidence of movement, don't bump the %.
+
+2. **Set a trajectory**: `on-track`, `at-risk`, `behind`, `ahead`, or `stalled`.
+   - Compare days-elapsed-since-created vs days-until-target to sense-check.
+
+3. **Produce 1-3 action items** that would move this goal forward meaningfully this week.
+   - Reference real artifacts (PR/issue URLs).
+   - Match the action item shape used by `brief_store` (title, description, priority, references[]).
+
+4. **Call `goal_update_progress`** with `goal_id`, `progress`, `trajectory`, `action_items` (JSON string), `brief_id` left empty for now, and a short `notes` line describing what changed since last evaluation.
+
+Do this for every active goal. If there are no goals, skip this step.
+
+You will reference goals in Step 3 under a dedicated `## Goals` section in the brief.
+
+## Step 2.6: KPI Scan
+
+KPIs are the company's continuous metrics. Dash's job is to *protect* and *grow*
+them — but without overwhelming the user.
+
+For each KPI from Step 1:
+
+1. **Look at the trend.** Compare `current_value` vs `previous_value` and the
+   last few `recent_values`. Is it moving with the goal direction or against it?
+   Is it within normal noise (e.g. <5% week-over-week) or genuinely moving?
+
+2. **Cross-reference with the rest of the brief.** A KPI slide often has a
+   cause visible elsewhere: a merged PR, a shipping feature, a drop in traffic,
+   an outage. If the brief already mentioned the cause, connect them.
+
+3. **Decide whether to flag.** Follow the rule: silence is the correct answer
+   when the KPI is moving normally. Flag only when (a) movement is notable and
+   (b) you can name a concrete action. See pm-kpi/kpi-refresh for the exact
+   criteria.
+
+4. **If flagging,** call `kpi_flag(kpi_id, kind, title, description, references, brief_id)`.
+   Use the `brief_id` returned from `brief_store` — you may need to call this
+   step AFTER `brief_store` so the flags are linked to the brief.
+
+If **no** KPI deserves a flag this run, omit the KPI section from the brief
+entirely. The user will see the steady numbers in the KPIs panel; the brief
+should not repeat them.
 
 ## Step 3: Produce the Brief
 
@@ -105,6 +166,24 @@ const Component = () => (
 - Sprint: {completion %}, {in-progress count} active, {blocked count} blocked
 - Team: {active members} active, {notable patterns}
 - Product: {key metric} {direction} {amount}
+
+## Goals
+For each active goal, write one block:
+- **{goal title}** — {progress}% ({trajectory})
+  - {one-line note on what moved the needle since last brief}
+  - Next: {top action item for this goal}
+
+Omit this section entirely if there are no active goals.
+
+## KPIs
+Include this section ONLY if at least one KPI deserved a flag this run
+(see Step 2.6). For each flagged KPI:
+
+- **{KPI name}** — {current_value}{unit} (was {previous_value})
+  - [risk|opportunity] {flag title}
+  - {short description + what to do}
+
+If no KPI was flagged, omit this section entirely.
 
 ## Action Items
 

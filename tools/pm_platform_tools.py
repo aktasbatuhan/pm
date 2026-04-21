@@ -38,6 +38,10 @@ def platforms_list(**kwargs) -> str:
         ("github", "GITHUB_PERSONAL_ACCESS_TOKEN", "GitHub API access via PAT"),
         ("linear", "LINEAR_API_KEY", "Linear issue tracking"),
         ("posthog", "POSTHOG_API_KEY", "PostHog product analytics"),
+        ("sentry", "SENTRY_AUTH_TOKEN", "Sentry error tracking"),
+        ("stripe", "STRIPE_API_KEY", "Stripe revenue and billing"),
+        ("notion", "NOTION_API_KEY", "Notion docs and databases"),
+        ("figma", "FIGMA_ACCESS_TOKEN", "Figma design specs"),
         ("slack", "SLACK_BOT_TOKEN", "Slack messaging"),
         ("slack", "SLACK_APP_TOKEN", "Slack app connection"),
     ]
@@ -93,6 +97,10 @@ def platforms_check(platform: str, **kwargs) -> str:
         "github": ["GITHUB_TOKEN", "GITHUB_PERSONAL_ACCESS_TOKEN"],
         "linear": ["LINEAR_API_KEY"],
         "posthog": ["POSTHOG_API_KEY"],
+        "sentry": ["SENTRY_AUTH_TOKEN"],
+        "stripe": ["STRIPE_API_KEY"],
+        "notion": ["NOTION_API_KEY"],
+        "figma": ["FIGMA_ACCESS_TOKEN"],
         "slack": ["SLACK_BOT_TOKEN"],
     }
 

@@ -22,34 +22,97 @@ _DB_PATH = _kai_home / "workspace.db"
 import re as _re
 
 
+def _get_github_context() -> tuple:
+    """Get GitHub org + known repos from workspace blueprint.
+
+    Returns (default_org, repo_to_owner_map). Best-effort; empty on failure.
+    """
+    default_org = ""
+    repo_map = {}
+    try:
+        from workspace_context import WorkspaceContext
+        ws = WorkspaceContext()
+        bp = ws.get_blueprint()
+        if not bp:
+            return default_org, repo_map
+        data = bp.get("data") or {}
+        for key in ("github_owner", "github_org", "org", "organization", "owner"):
+            val = data.get(key)
+            if isinstance(val, str) and val:
+                default_org = val
+                break
+        gh = data.get("github") or {}
+        if isinstance(gh, dict) and not default_org:
+            for key in ("owner", "org", "organization"):
+                val = gh.get(key)
+                if isinstance(val, str) and val:
+                    default_org = val
+                    break
+        # Build repo → owner map from repos list
+        for repos_field in (data.get("repos"), data.get("repositories"), gh.get("repos") if isinstance(gh, dict) else None):
+            if not repos_field:
+                continue
+            if isinstance(repos_field, list):
+                for r in repos_field:
+                    if isinstance(r, str) and "/" in r:
+                        owner, name = r.split("/", 1)
+                        repo_map[name.lower()] = owner
+                    elif isinstance(r, dict):
+                        name = r.get("name") or r.get("repo") or ""
+                        owner = r.get("owner") or r.get("org") or default_org
+                        if name and owner:
+                            if "/" in name:
+                                o, n = name.split("/", 1)
+                                repo_map[n.lower()] = o
+                            else:
+                                repo_map[name.lower()] = owner
+    except Exception:
+        pass
+    return default_org, repo_map
+
+
 def _extract_references(text: str) -> list:
     """Auto-extract GitHub PRs, issues, and URLs from action item text."""
     refs = []
     seen = set()
+    default_org, repo_map = _get_github_context()
 
-    # GitHub issue/PR patterns: org/repo#123 or repo #123
-    for m in _re.finditer(r'([\w.-]+/[\w.-]+)[# ]+#?(\d+)', text):
-        repo, num = m.group(1), m.group(2)
-        url = f"https://github.com/{repo}/issues/{num}"
-        if url not in seen:
-            refs.append({"type": "issue", "url": url, "title": f"{repo}#{num}"})
-            seen.add(url)
-
-    # Standalone issue refs: repo-name #123 or repo-name issue #123
-    for m in _re.finditer(r'([\w-]+)\s+(?:issue\s+)?#(\d+)', text):
-        repo, num = m.group(1), m.group(2)
-        key = f"{repo}#{num}"
-        if key not in seen:
-            refs.append({"type": "issue", "url": "", "title": key})
-            seen.add(key)
-
-    # Explicit URLs
+    # Explicit URLs first (so we don't double-capture)
     for m in _re.finditer(r'https?://[^\s<>"\')\]]+', text):
         url = m.group(0).rstrip(".,;:")
         if url not in seen:
             ref_type = "pr" if "/pull/" in url else "issue" if "/issues/" in url else "link"
-            refs.append({"type": ref_type, "url": url, "title": url.split("/")[-1]})
+            title = url.split("/")[-1] or url
+            refs.append({"type": ref_type, "url": url, "title": title})
             seen.add(url)
+
+    # GitHub fully-qualified refs: org/repo#123
+    for m in _re.finditer(r'([\w.-]+)/([\w.-]+)#(\d+)', text):
+        owner, repo, num = m.group(1), m.group(2), m.group(3)
+        url = f"https://github.com/{owner}/{repo}/issues/{num}"
+        if url not in seen:
+            refs.append({"type": "issue", "url": url, "title": f"{repo}#{num}"})
+            seen.add(url)
+
+    # Standalone issue refs: repo-name#123 or repo-name #123 or repo-name issue #123
+    for m in _re.finditer(r'(?<![\w/])([A-Za-z][\w.-]{1,40})\s*(?:issue\s+|PR\s+)?#(\d+)', text):
+        repo, num = m.group(1), m.group(2)
+        # Skip common false positives
+        if repo.lower() in {"issue", "pr", "pull", "ticket"}:
+            continue
+        key = f"{repo}#{num}"
+        if key in seen:
+            continue
+        owner = repo_map.get(repo.lower()) or default_org
+        if owner:
+            url = f"https://github.com/{owner}/{repo}/issues/{num}"
+            if url not in seen:
+                refs.append({"type": "issue", "url": url, "title": key})
+                seen.add(url)
+                seen.add(key)
+        else:
+            refs.append({"type": "issue", "url": "", "title": key})
+            seen.add(key)
 
     return refs
 

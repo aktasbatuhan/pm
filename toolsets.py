@@ -60,6 +60,10 @@ _PM_CORE_TOOLS = [
     "workspace_set_onboarding_status",
     # PM platform discovery
     "platforms_list", "platforms_check",
+    # PM goals — track progress across briefs
+    "goal_list", "goal_get", "goal_update_progress",
+    # PM KPIs — continuous metrics, auto-configured & auto-refreshed
+    "kpi_list", "kpi_get", "kpi_set_measurement_plan", "kpi_record_value", "kpi_flag",
     # Cross-platform messaging (gated on gateway running via check_fn)
     "send_message",
 ]

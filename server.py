@@ -14,6 +14,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 _project_env = Path(__file__).parent / ".env"
@@ -21,7 +22,7 @@ if _project_env.exists():
     load_dotenv(dotenv_path=_project_env)
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse, HTMLResponse
 from starlette.middleware.cors import CORSMiddleware
 
 import sqlite3
@@ -44,6 +45,21 @@ CREATE TABLE IF NOT EXISTS integrations (
 CREATE TABLE IF NOT EXISTS onboarding_profile (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS github_installations (
+    installation_id TEXT PRIMARY KEY,
+    account_login TEXT NOT NULL,
+    account_type TEXT,
+    repo_selection TEXT,
+    cached_token TEXT,
+    cached_token_expires_at REAL,
+    installed_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS oauth_states (
+    state TEXT PRIMARY KEY,
+    purpose TEXT NOT NULL,
+    created_at REAL NOT NULL
 );
 """
 
@@ -166,9 +182,22 @@ def _ensure_pm_tables():
             progress INTEGER DEFAULT 0,
             trajectory TEXT,
             related_items TEXT DEFAULT '[]',
+            action_items TEXT DEFAULT '[]',
+            last_evaluated_at REAL,
             created_at REAL NOT NULL,
             updated_at REAL NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS goal_snapshots (
+            id TEXT PRIMARY KEY,
+            goal_id TEXT NOT NULL,
+            progress INTEGER DEFAULT 0,
+            trajectory TEXT,
+            action_items TEXT DEFAULT '[]',
+            brief_id TEXT,
+            notes TEXT,
+            created_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_goal_snapshots_goal ON goal_snapshots(goal_id, created_at DESC);
         CREATE TABLE IF NOT EXISTS team_pulse (
             id TEXT PRIMARY KEY,
             member_name TEXT NOT NULL,
@@ -224,7 +253,60 @@ def _ensure_pm_tables():
         );
         CREATE INDEX IF NOT EXISTS idx_reports_template ON reports(template_id);
         CREATE INDEX IF NOT EXISTS idx_reports_created ON reports(created_at DESC);
+        CREATE TABLE IF NOT EXISTS kpis (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            description TEXT,
+            unit TEXT,
+            direction TEXT DEFAULT 'higher',   -- higher | lower
+            target_value REAL,
+            current_value REAL,
+            previous_value REAL,
+            measurement_plan TEXT DEFAULT '',  -- agent-authored plan describing how to measure
+            measurement_status TEXT DEFAULT 'pending',  -- pending | configured | failed
+            measurement_error TEXT,            -- reason if configuration failed
+            cron_job_id TEXT,
+            status TEXT DEFAULT 'active',      -- active | paused | archived
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL,
+            last_measured_at REAL
+        );
+        CREATE TABLE IF NOT EXISTS kpi_values (
+            id TEXT PRIMARY KEY,
+            kpi_id TEXT NOT NULL,
+            value REAL NOT NULL,
+            source TEXT,
+            notes TEXT,
+            recorded_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_kpi_values_kpi ON kpi_values(kpi_id, recorded_at DESC);
+        CREATE TABLE IF NOT EXISTS kpi_flags (
+            id TEXT PRIMARY KEY,
+            kpi_id TEXT NOT NULL,
+            kind TEXT NOT NULL,                -- risk | opportunity
+            title TEXT NOT NULL,
+            description TEXT,
+            references_json TEXT DEFAULT '[]',
+            brief_id TEXT,
+            status TEXT DEFAULT 'open',        -- open | resolved | dismissed
+            created_at REAL NOT NULL,
+            updated_at REAL NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_kpi_flags_kpi ON kpi_flags(kpi_id, status, created_at DESC);
     """)
+    # Migrations for goals (action_items, last_evaluated_at)
+    for col, ddl in (
+        ("action_items", "ALTER TABLE goals ADD COLUMN action_items TEXT DEFAULT '[]'"),
+        ("last_evaluated_at", "ALTER TABLE goals ADD COLUMN last_evaluated_at REAL"),
+    ):
+        try:
+            db.execute(f"SELECT {col} FROM goals LIMIT 0")
+        except Exception:
+            try:
+                db.execute(ddl)
+                db.commit()
+            except Exception:
+                pass
     return db
 
 _ensure_pm_tables()
@@ -232,6 +314,41 @@ _ensure_pm_tables()
 
 def _ws_id():
     return os.environ.get("KAI_WORKSPACE_ID") or os.environ.get("HERMES_WORKSPACE_ID") or "default"
+
+
+def _enrich_references(refs, github_ctx=None):
+    """Backfill missing URLs on stored references using blueprint github context."""
+    if not refs:
+        return refs
+    if github_ctx is None:
+        try:
+            from tools.pm_brief_tools import _get_github_context
+            github_ctx = _get_github_context()
+        except Exception:
+            github_ctx = ("", {})
+    default_org, repo_map = github_ctx
+    enriched = []
+    for r in refs:
+        if not isinstance(r, dict):
+            enriched.append(r)
+            continue
+        url = r.get("url") or ""
+        if not url:
+            title = r.get("title") or ""
+            if "#" in title:
+                repo_part, _, num = title.rpartition("#")
+                repo_part = repo_part.strip()
+                num = num.strip()
+                if num.isdigit() and repo_part:
+                    if "/" in repo_part:
+                        owner, repo = repo_part.split("/", 1)
+                    else:
+                        repo = repo_part
+                        owner = repo_map.get(repo.lower()) or default_org
+                    if owner and repo:
+                        r = {**r, "url": f"https://github.com/{owner}/{repo}/issues/{num}"}
+        enriched.append(r)
+    return enriched
 
 
 @app.get("/api/brief/latest")
@@ -252,6 +369,7 @@ def brief_latest():
             item["references"] = json.loads(item.get("references_json") or "[]")
         except (json.JSONDecodeError, TypeError):
             item["references"] = []
+        item["references"] = _enrich_references(item["references"])
         item.pop("references_json", None)
         items.append(item)
     # Get optional columns
@@ -296,6 +414,7 @@ def get_brief(brief_id: str):
             item["references"] = json.loads(item.get("references_json") or "[]")
         except (json.JSONDecodeError, TypeError):
             item["references"] = []
+        item["references"] = _enrich_references(item["references"])
         item.pop("references_json", None)
         items.append(item)
     cover_url = ""
@@ -564,6 +683,54 @@ def _validate_integration(platform: str, auth_type: str, credentials: str) -> tu
             return True, "API key format looks valid"
         return False, "Expected PostHog API key (phx_... or phc_...)"
 
+    if platform == "sentry":
+        try:
+            req = urllib.request.Request(
+                "https://sentry.io/api/0/",
+                headers={"Authorization": f"Bearer {credentials}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return True, "Sentry auth valid"
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return False, "Sentry auth failed: invalid token"
+            return True, "Sentry connected"
+        except Exception as e:
+            return False, f"Sentry connection error: {e}"
+
+    if platform == "stripe":
+        try:
+            req = urllib.request.Request(
+                "https://api.stripe.com/v1/balance",
+                headers={"Authorization": f"Bearer {credentials}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return True, "Stripe connected"
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return False, "Stripe auth failed: invalid key"
+            return True, "Stripe connected"
+        except Exception as e:
+            return False, f"Stripe connection error: {e}"
+
+    if platform == "notion":
+        try:
+            req = urllib.request.Request(
+                "https://api.notion.com/v1/users/me",
+                headers={
+                    "Authorization": f"Bearer {credentials}",
+                    "Notion-Version": "2022-06-28",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                name = data.get("name", "unknown")
+                return True, f"Connected as {name}"
+        except urllib.error.HTTPError as e:
+            return False, f"Notion auth failed: {e.code}"
+        except Exception as e:
+            return False, f"Notion connection error: {e}"
+
     if platform == "slack":
         try:
             req = urllib.request.Request(
@@ -588,11 +755,271 @@ def _inject_credential(platform: str, credentials: str):
         "github": "GITHUB_TOKEN",
         "linear": "LINEAR_API_KEY",
         "posthog": "POSTHOG_API_KEY",
+        "sentry": "SENTRY_AUTH_TOKEN",
+        "stripe": "STRIPE_API_KEY",
+        "notion": "NOTION_API_KEY",
+        "figma": "FIGMA_ACCESS_TOKEN",
         "slack": "SLACK_BOT_TOKEN",
     }
     env_var = env_map.get(platform)
     if env_var:
         os.environ[env_var] = credentials
+
+
+# ── GitHub App integration ─────────────────────────────────────────────
+
+def _github_app_config() -> Optional[dict]:
+    """Return GitHub App credentials if configured, else None."""
+    app_id = os.environ.get("GITHUB_APP_ID", "").strip()
+    slug = os.environ.get("GITHUB_APP_SLUG", "").strip()
+    private_key = os.environ.get("GITHUB_APP_PRIVATE_KEY", "").strip()
+    if not (app_id and slug and private_key):
+        return None
+    # Railway/shell sometimes collapses literal "\n" into the var; normalize.
+    if "\\n" in private_key and "-----BEGIN" in private_key:
+        private_key = private_key.replace("\\n", "\n")
+    return {
+        "app_id": app_id,
+        "slug": slug,
+        "private_key": private_key,
+        "client_id": os.environ.get("GITHUB_APP_CLIENT_ID", "").strip() or None,
+        "client_secret": os.environ.get("GITHUB_APP_CLIENT_SECRET", "").strip() or None,
+    }
+
+
+def _generate_github_app_jwt(cfg: dict) -> str:
+    """Sign a short-lived JWT for GitHub App authentication (RS256, 10 min max)."""
+    import jwt as _jwt
+    now = int(time.time())
+    payload = {
+        "iat": now - 60,   # allow clock skew
+        "exp": now + 9 * 60,
+        "iss": cfg["app_id"],
+    }
+    return _jwt.encode(payload, cfg["private_key"], algorithm="RS256")
+
+
+def _get_github_installation_token(installation_id: str) -> Optional[str]:
+    """Return a valid installation access token, minting a new one if the cache is stale.
+
+    Tokens are cached in github_installations.cached_token until 5 min before expiry.
+    """
+    cfg = _github_app_config()
+    if not cfg:
+        return None
+
+    db = _get_integrations_db()
+    row = db.execute(
+        "SELECT cached_token, cached_token_expires_at FROM github_installations WHERE installation_id = ?",
+        (installation_id,),
+    ).fetchone()
+    now = time.time()
+    if row and row["cached_token"] and row["cached_token_expires_at"] and row["cached_token_expires_at"] > now + 300:
+        return row["cached_token"]
+
+    # Mint a fresh token
+    import urllib.request
+    import urllib.error
+    try:
+        app_jwt = _generate_github_app_jwt(cfg)
+        req = urllib.request.Request(
+            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {app_jwt}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "Dash-PM",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        token = data.get("token")
+        expires_at_str = data.get("expires_at")
+        # GitHub returns ISO 8601 like "2026-04-20T12:34:56Z"; expires in ~1 hour
+        expires_at_ts = now + 3600
+        if expires_at_str:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                expires_at_ts = dt.timestamp()
+            except Exception:
+                pass
+
+        db.execute(
+            "UPDATE github_installations SET cached_token = ?, cached_token_expires_at = ?, updated_at = ? "
+            "WHERE installation_id = ?",
+            (token, expires_at_ts, now, installation_id),
+        )
+        db.commit()
+        return token
+    except Exception as e:
+        logger.error("Failed to mint GitHub installation token for %s: %s", installation_id, e)
+        return None
+
+
+def _refresh_github_token_env() -> bool:
+    """If a GitHub App installation exists, mint a fresh token and inject it as GITHUB_TOKEN."""
+    db = _get_integrations_db()
+    row = db.execute(
+        "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    if not row:
+        return False
+    token = _get_github_installation_token(row["installation_id"])
+    if not token:
+        return False
+    os.environ["GITHUB_TOKEN"] = token
+    os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] = token
+    return True
+
+
+@app.get("/api/integrations/github/app-status")
+def github_app_status():
+    """Expose whether the GitHub App is configured (so the UI can pick install-flow vs PAT-fallback)."""
+    cfg = _github_app_config()
+    if not cfg:
+        return {"configured": False}
+    db = _get_integrations_db()
+    row = db.execute(
+        "SELECT installation_id, account_login, account_type, repo_selection, installed_at, updated_at "
+        "FROM github_installations ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    return {
+        "configured": True,
+        "slug": cfg["slug"],
+        "installation": dict(row) if row else None,
+    }
+
+
+@app.get("/api/integrations/github/install")
+def github_app_install_redirect():
+    """Start the GitHub App install flow. Redirects the user to GitHub."""
+    cfg = _github_app_config()
+    if not cfg:
+        return JSONResponse({"error": "GitHub App not configured"}, status_code=503)
+
+    # CSRF state — stored briefly so the callback can verify origin.
+    state = secrets.token_urlsafe(24)
+    db = _get_integrations_db()
+    db.execute(
+        "INSERT OR REPLACE INTO oauth_states (state, purpose, created_at) VALUES (?, 'github_app_install', ?)",
+        (state, time.time()),
+    )
+    db.commit()
+
+    # Clean up states older than 10 minutes
+    db.execute("DELETE FROM oauth_states WHERE created_at < ?", (time.time() - 600,))
+    db.commit()
+
+    import urllib.parse as _p
+    url = f"https://github.com/apps/{cfg['slug']}/installations/new?state={_p.quote(state)}"
+    return RedirectResponse(url)
+
+
+@app.get("/api/integrations/github/callback")
+def github_app_install_callback(
+    installation_id: Optional[str] = None,
+    setup_action: Optional[str] = None,
+    state: Optional[str] = None,
+    code: Optional[str] = None,
+):
+    """GitHub redirects here after the user installs the App."""
+    cfg = _github_app_config()
+    if not cfg:
+        return HTMLResponse("<p>GitHub App not configured on the server.</p>", status_code=503)
+
+    if not installation_id:
+        return HTMLResponse("<p>Missing installation_id. Did you cancel the install?</p>", status_code=400)
+
+    db = _get_integrations_db()
+
+    # Validate state (best-effort — GitHub doesn't always preserve it on "Install" button)
+    if state:
+        srow = db.execute("SELECT state FROM oauth_states WHERE state = ?", (state,)).fetchone()
+        if srow:
+            db.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+            db.commit()
+
+    # Call GitHub as the App to fetch installation details
+    import urllib.request
+    try:
+        app_jwt = _generate_github_app_jwt(cfg)
+        req = urllib.request.Request(
+            f"https://api.github.com/app/installations/{installation_id}",
+            headers={
+                "Authorization": f"Bearer {app_jwt}",
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "Dash-PM",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            install = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        logger.error("Failed to fetch GitHub installation %s: %s", installation_id, e)
+        return HTMLResponse(f"<p>Installed, but could not fetch installation details: {e}</p>", status_code=500)
+
+    account = install.get("account") or {}
+    account_login = account.get("login") or ""
+    account_type = account.get("type") or ""
+    repo_selection = install.get("repository_selection") or "selected"
+    now = time.time()
+
+    db.execute(
+        "INSERT INTO github_installations (installation_id, account_login, account_type, repo_selection, installed_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(installation_id) DO UPDATE SET account_login = excluded.account_login, "
+        "account_type = excluded.account_type, repo_selection = excluded.repo_selection, updated_at = excluded.updated_at",
+        (str(installation_id), account_login, account_type, repo_selection, now, now),
+    )
+    db.execute(
+        "INSERT INTO integrations (platform, auth_type, credentials, status, display_name, connected_at, last_verified) "
+        "VALUES ('github', 'github_app', ?, 'connected', ?, ?, ?) "
+        "ON CONFLICT(platform) DO UPDATE SET auth_type = 'github_app', credentials = excluded.credentials, "
+        "status = 'connected', display_name = excluded.display_name, connected_at = excluded.connected_at, "
+        "last_verified = excluded.last_verified",
+        (str(installation_id), account_login or "github", now, now),
+    )
+    db.commit()
+
+    # Mint an initial token so the agent can use GitHub immediately.
+    _refresh_github_token_env()
+
+    # Return a page that closes itself and pings the opener to refresh.
+    html = """
+    <!doctype html>
+    <html><head><title>GitHub Connected</title>
+    <style>body{font-family:system-ui;padding:40px;text-align:center;color:#333}</style>
+    </head><body>
+    <h2>✓ GitHub connected</h2>
+    <p style="color:#666">You can close this window.</p>
+    <script>
+      try { if (window.opener) { window.opener.postMessage({type:'github-app-installed'}, '*'); } } catch(e) {}
+      setTimeout(function(){ window.close(); }, 1200);
+    </script>
+    </body></html>
+    """
+    return HTMLResponse(html)
+
+
+@app.delete("/api/integrations/github/app")
+def github_app_disconnect():
+    """Remove the stored installation. The user should also uninstall on GitHub.com."""
+    db = _get_integrations_db()
+    row = db.execute(
+        "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    if row:
+        db.execute("DELETE FROM github_installations WHERE installation_id = ?", (row["installation_id"],))
+    db.execute("DELETE FROM integrations WHERE platform = 'github' AND auth_type = 'github_app'")
+    db.commit()
+    # Clear env so the agent no longer sees the stale token
+    os.environ.pop("GITHUB_TOKEN", None)
+    os.environ.pop("GITHUB_PERSONAL_ACCESS_TOKEN", None)
+    cfg = _github_app_config()
+    uninstall_url = (
+        f"https://github.com/settings/installations" if cfg else None
+    )
+    return {"ok": True, "uninstall_hint": uninstall_url}
 
 
 # ── Changelog endpoints ────────────────────────────────────────────────
@@ -650,12 +1077,31 @@ def list_goals(status: str = "active"):
     goals = []
     for r in rows:
         g = dict(r)
-        try:
-            g["related_items"] = json.loads(g.get("related_items") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            g["related_items"] = []
+        for field in ("related_items", "action_items"):
+            try:
+                g[field] = json.loads(g.get(field) or "[]")
+            except (json.JSONDecodeError, TypeError):
+                g[field] = []
         goals.append(g)
     return {"goals": goals}
+
+
+@app.get("/api/goals/{goal_id}/history")
+def goal_history(goal_id: str, limit: int = 20):
+    db = _ensure_pm_tables()
+    rows = db.execute(
+        "SELECT * FROM goal_snapshots WHERE goal_id = ? ORDER BY created_at DESC LIMIT ?",
+        (goal_id, limit),
+    ).fetchall()
+    snapshots = []
+    for r in rows:
+        s = dict(r)
+        try:
+            s["action_items"] = json.loads(s.get("action_items") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            s["action_items"] = []
+        snapshots.append(s)
+    return {"snapshots": snapshots}
 
 
 @app.post("/api/goals")
@@ -707,6 +1153,168 @@ def delete_goal(goal_id: str):
     return {"ok": True}
 
 
+# ── KPI endpoints ──────────────────────────────────────────────────────
+
+def _kpi_row_to_dict(r, include_history: bool = False, include_flags: bool = False, db=None):
+    k = dict(r)
+    if include_history and db is not None:
+        rows = db.execute(
+            "SELECT id, value, source, notes, recorded_at FROM kpi_values WHERE kpi_id = ? "
+            "ORDER BY recorded_at DESC LIMIT 60",
+            (k["id"],),
+        ).fetchall()
+        k["history"] = [dict(h) for h in rows]
+    if include_flags and db is not None:
+        rows = db.execute(
+            "SELECT * FROM kpi_flags WHERE kpi_id = ? AND status = 'open' ORDER BY created_at DESC",
+            (k["id"],),
+        ).fetchall()
+        flags = []
+        for f in rows:
+            fd = dict(f)
+            try:
+                fd["references"] = json.loads(fd.get("references_json") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                fd["references"] = []
+            fd.pop("references_json", None)
+            flags.append(fd)
+        k["flags"] = flags
+    return k
+
+
+@app.get("/api/kpis")
+def list_kpis(status: str = "active"):
+    db = _ensure_pm_tables()
+    if status == "all":
+        rows = db.execute("SELECT * FROM kpis ORDER BY created_at DESC").fetchall()
+    else:
+        rows = db.execute(
+            "SELECT * FROM kpis WHERE status = ? ORDER BY created_at DESC", (status,)
+        ).fetchall()
+    kpis = [_kpi_row_to_dict(r, include_history=True, include_flags=True, db=db) for r in rows]
+    return {"kpis": kpis}
+
+
+@app.get("/api/kpis/{kpi_id}")
+def get_kpi(kpi_id: str):
+    db = _ensure_pm_tables()
+    row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return {"kpi": _kpi_row_to_dict(row, include_history=True, include_flags=True, db=db)}
+
+
+@app.post("/api/kpis")
+async def create_kpi(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        return JSONResponse({"error": "name required"}, status_code=400)
+    db = _ensure_pm_tables()
+    kpi_id = str(uuid.uuid4())[:8]
+    now = time.time()
+    direction = body.get("direction") or "higher"
+    if direction not in ("higher", "lower"):
+        direction = "higher"
+    target = body.get("target_value")
+    try:
+        target = float(target) if target not in (None, "") else None
+    except (TypeError, ValueError):
+        target = None
+    db.execute(
+        "INSERT INTO kpis (id, name, description, unit, direction, target_value, "
+        "measurement_plan, measurement_status, status, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'active', ?, ?)",
+        (kpi_id, name, body.get("description", ""), body.get("unit", ""), direction, target, now, now),
+    )
+    db.commit()
+
+    # Trigger the agent to self-configure this KPI asynchronously.
+    _trigger_kpi_configure(kpi_id, name, body.get("description", ""))
+
+    return {"ok": True, "id": kpi_id}
+
+
+@app.patch("/api/kpis/{kpi_id}")
+async def update_kpi(kpi_id: str, request: Request):
+    body = await request.json()
+    db = _ensure_pm_tables()
+    row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    updates, params = [], []
+    allowed = ("name", "description", "unit", "direction", "target_value",
+               "status", "measurement_plan", "measurement_status", "measurement_error")
+    for field in allowed:
+        if field in body:
+            updates.append(f"{field} = ?")
+            params.append(body[field])
+    if updates:
+        updates.append("updated_at = ?")
+        params.append(time.time())
+        params.append(kpi_id)
+        db.execute(f"UPDATE kpis SET {', '.join(updates)} WHERE id = ?", params)
+        db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/kpis/{kpi_id}")
+def delete_kpi(kpi_id: str):
+    db = _ensure_pm_tables()
+    db.execute("DELETE FROM kpi_values WHERE kpi_id = ?", (kpi_id,))
+    db.execute("DELETE FROM kpi_flags WHERE kpi_id = ?", (kpi_id,))
+    db.execute("DELETE FROM kpis WHERE id = ?", (kpi_id,))
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/kpis/{kpi_id}/refresh")
+def refresh_kpi(kpi_id: str):
+    """Manually trigger a KPI measurement refresh."""
+    db = _ensure_pm_tables()
+    row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    _trigger_kpi_refresh(kpi_id, row["name"], row["measurement_plan"])
+    return {"ok": True, "message": "Refresh triggered"}
+
+
+@app.post("/api/kpis/flags/{flag_id}")
+async def update_kpi_flag(flag_id: str, request: Request):
+    body = await request.json()
+    db = _ensure_pm_tables()
+    new_status = body.get("status", "resolved")
+    db.execute(
+        "UPDATE kpi_flags SET status = ?, updated_at = ? WHERE id = ?",
+        (new_status, time.time(), flag_id),
+    )
+    db.commit()
+    return {"ok": True, "status": new_status}
+
+
+def _trigger_kpi_configure(kpi_id: str, name: str, description: str):
+    prompt = (
+        f"Configure KPI '{name}' (id: {kpi_id}).\n"
+        f"Description: {description or '(none)'}\n\n"
+        "Load the pm-kpi/kpi-configure skill with skill_view and follow it exactly. "
+        "Inspect connected platforms with platforms_list, decide the best measurement approach, "
+        "store the plan with kpi_set_measurement_plan, then record the first value with kpi_record_value. "
+        "Finally, schedule a recurring refresh via schedule_cronjob."
+    )
+    triggerBackgroundTask(prompt, f"kpi-configure-{kpi_id}-{int(time.time())}")
+
+
+def _trigger_kpi_refresh(kpi_id: str, name: str, plan: str):
+    prompt = (
+        f"Refresh measurement for KPI '{name}' (id: {kpi_id}).\n"
+        f"Measurement plan:\n{plan or '(no plan yet — read the KPI and re-configure if needed)'}\n\n"
+        "Load the pm-kpi/kpi-refresh skill with skill_view and follow it exactly. "
+        "Execute the plan, call kpi_record_value with the new value, and if movement is notable, "
+        "call kpi_flag to raise a risk or opportunity."
+    )
+    triggerBackgroundTask(prompt, f"kpi-refresh-{kpi_id}-{int(time.time())}")
+
+
 # ── Team pulse endpoints ───────────────────────────────────────────────
 
 @app.get("/api/team/pulse")
@@ -737,15 +1345,45 @@ def generate_team_pulse():
     return {"ok": True, "message": "Team pulse analysis started"}
 
 
+def _resolve_model() -> str:
+    """Resolve current model: config.yaml `model.default` > env > fallback.
+
+    config.yaml is authoritative so the UI-level model selector persists and
+    is visible to both the chat path and the cron scheduler.
+    """
+    try:
+        import yaml
+        cfg_path = kai_home() / "config.yaml"
+        if cfg_path.exists():
+            with open(cfg_path, "r", encoding="utf-8") as f:
+                cfg = yaml.safe_load(f) or {}
+            m = cfg.get("model")
+            if isinstance(m, str) and m.strip():
+                return m.strip()
+            if isinstance(m, dict):
+                v = m.get("default")
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+    except Exception:
+        pass
+    return (
+        os.environ.get("DASH_MODEL")
+        or os.environ.get("KAI_MODEL")
+        or os.environ.get("HERMES_MODEL")
+        or "anthropic/claude-opus-4.7"
+    )
+
+
 def triggerBackgroundTask(message: str, thread_id: str):
     """Internal helper — fires an agent task as a system session."""
     import threading as _threading
     def _run():
         try:
+            _refresh_github_token_env()
             from run_agent import AIAgent
             from model_tools import ensure_mcp_discovered
             ensure_mcp_discovered()
-            model = os.environ.get("DASH_MODEL") or os.environ.get("KAI_MODEL") or "openai/gpt-5.4"
+            model = _resolve_model()
             api_key = os.environ.get("OPENROUTER_API_KEY", "")
             base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
             from workspace_context_bridge import fetch_workspace_status, build_workspace_status_prompt
@@ -1011,6 +1649,181 @@ def _unschedule_template_cron(template_id: str):
         logger.exception("Failed to unschedule template cron: %s", e)
 
 
+# ── Settings: model selection ──────────────────────────────────────────
+
+MODEL_OPTIONS = [
+    {"id": "anthropic/claude-opus-4.7", "label": "Claude Opus 4.7", "family": "anthropic"},
+    {"id": "anthropic/claude-sonnet-4.6", "label": "Claude Sonnet 4.6", "family": "anthropic"},
+    {"id": "minimax/minimax-m2.7", "label": "MiniMax M2.7", "family": "minimax"},
+    {"id": "openai/gpt-5", "label": "GPT-5", "family": "openai"},
+    {"id": "openai/gpt-5-mini", "label": "GPT-5 mini", "family": "openai"},
+    {"id": "openai/gpt-5.4", "label": "GPT-5.4", "family": "openai"},
+    {"id": "moonshotai/kimi-k2.6", "label": "Kimi K2.6", "family": "moonshotai"},
+]
+
+
+def _write_model_to_config(model: str):
+    """Persist model selection to config.yaml (authoritative for both chat + cron)."""
+    import yaml
+    cfg_path = kai_home() / "config.yaml"
+    cfg = {}
+    if cfg_path.exists():
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+    m = cfg.get("model")
+    if isinstance(m, dict):
+        m["default"] = model
+        cfg["model"] = m
+    else:
+        cfg["model"] = {"default": model}
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False)
+
+
+@app.get("/api/settings/model")
+def get_model_setting():
+    return {"current": _resolve_model(), "options": MODEL_OPTIONS}
+
+
+@app.post("/api/settings/model")
+async def set_model_setting(request: Request):
+    body = await request.json()
+    model = (body.get("model") or "").strip()
+    if not model:
+        return JSONResponse({"error": "model required"}, status_code=400)
+    try:
+        _write_model_to_config(model)
+    except Exception as e:
+        logger.error("Failed to write model setting: %s", e, exc_info=True)
+        return JSONResponse({"error": f"Failed to save: {e}"}, status_code=500)
+    return {"ok": True, "current": model}
+
+
+# ── MCP server management ──────────────────────────────────────────────
+
+def _load_config_yaml() -> dict:
+    import yaml
+    cfg_path = kai_home() / "config.yaml"
+    if not cfg_path.exists():
+        return {}
+    with open(cfg_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def _write_config_yaml(cfg: dict):
+    import yaml
+    cfg_path = kai_home() / "config.yaml"
+    cfg_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(cfg_path, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, sort_keys=False, default_flow_style=False)
+
+
+def _mcp_transport(spec: dict) -> str:
+    if "command" in spec:
+        return "stdio"
+    if "url" in spec:
+        return "http"
+    return "unknown"
+
+
+@app.get("/api/mcp/servers")
+def list_mcp_servers():
+    cfg = _load_config_yaml()
+    servers = cfg.get("mcp_servers") or {}
+    out = []
+    for name, spec in servers.items():
+        if not isinstance(spec, dict):
+            continue
+        out.append({
+            "name": name,
+            "transport": _mcp_transport(spec),
+            "command": spec.get("command"),
+            "args": spec.get("args") or [],
+            "env": spec.get("env") or {},
+            "url": spec.get("url"),
+            "headers": spec.get("headers") or {},
+            "timeout": spec.get("timeout"),
+        })
+    return {"servers": out}
+
+
+@app.post("/api/mcp/servers")
+async def create_mcp_server(request: Request):
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name or not name.replace("-", "").replace("_", "").isalnum():
+        return JSONResponse(
+            {"error": "name required (alphanumeric, hyphens, underscores only)"},
+            status_code=400,
+        )
+    transport = body.get("transport") or ("stdio" if body.get("command") else "http")
+
+    spec: dict = {}
+    if transport == "stdio":
+        command = (body.get("command") or "").strip()
+        if not command:
+            return JSONResponse({"error": "command required for stdio transport"}, status_code=400)
+        spec["command"] = command
+        args = body.get("args")
+        if isinstance(args, list):
+            spec["args"] = args
+        elif isinstance(args, str) and args.strip():
+            spec["args"] = [a for a in args.strip().split() if a]
+        env = body.get("env")
+        if isinstance(env, dict) and env:
+            spec["env"] = {str(k): str(v) for k, v in env.items()}
+    else:  # http
+        url = (body.get("url") or "").strip()
+        if not url:
+            return JSONResponse({"error": "url required for http transport"}, status_code=400)
+        spec["url"] = url
+        headers = body.get("headers")
+        if isinstance(headers, dict) and headers:
+            spec["headers"] = {str(k): str(v) for k, v in headers.items()}
+
+    timeout = body.get("timeout")
+    if timeout is not None:
+        try:
+            spec["timeout"] = int(timeout)
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        cfg = _load_config_yaml()
+        servers = cfg.get("mcp_servers") or {}
+        if not isinstance(servers, dict):
+            servers = {}
+        servers[name] = spec
+        cfg["mcp_servers"] = servers
+        _write_config_yaml(cfg)
+    except Exception as e:
+        logger.error("Failed to write MCP server config: %s", e, exc_info=True)
+        return JSONResponse({"error": f"Failed to save: {e}"}, status_code=500)
+
+    return {
+        "ok": True,
+        "name": name,
+        "note": "Server added. Rediscovery happens on the next agent run.",
+    }
+
+
+@app.delete("/api/mcp/servers/{name}")
+def delete_mcp_server(name: str):
+    try:
+        cfg = _load_config_yaml()
+        servers = cfg.get("mcp_servers") or {}
+        if not isinstance(servers, dict) or name not in servers:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        del servers[name]
+        cfg["mcp_servers"] = servers
+        _write_config_yaml(cfg)
+    except Exception as e:
+        logger.error("Failed to delete MCP server: %s", e, exc_info=True)
+        return JSONResponse({"error": f"Failed: {e}"}, status_code=500)
+    return {"ok": True}
+
+
 # ── Cron Schedules endpoints ───────────────────────────────────────────
 
 @app.get("/api/schedules")
@@ -1029,7 +1842,13 @@ async def create_schedule(request: Request):
     if not prompt or not schedule:
         return JSONResponse({"error": "prompt and schedule required"}, status_code=400)
     from cron.jobs import create_job
-    job = create_job(prompt=prompt, schedule=schedule, name=name or None, deliver="local")
+    try:
+        job = create_job(prompt=prompt, schedule=schedule, name=name or None, deliver="local")
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    except Exception as e:
+        logger.error("Failed to create schedule: %s", e, exc_info=True)
+        return JSONResponse({"error": f"Failed to create routine: {e}"}, status_code=500)
     return {"ok": True, "job": job}
 
 
@@ -1346,7 +2165,8 @@ async def chat(request: Request):
                 except Exception:
                     pass
 
-            model = os.environ.get("DASH_MODEL") or os.environ.get("KAI_MODEL") or os.environ.get("HERMES_MODEL") or "openai/gpt-5.4"
+            _refresh_github_token_env()
+            model = _resolve_model()
             api_key = os.environ.get("OPENROUTER_API_KEY", "")
             base_url = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
@@ -1434,16 +2254,31 @@ async def chat(request: Request):
 
 # ── Cron ticker (background thread) ────────────────────────────────────
 
+_cron_health = {
+    "started_at": None,
+    "last_tick_at": None,
+    "last_error": None,
+    "ticks": 0,
+    "jobs_run": 0,
+}
+
+
 def _start_cron_ticker():
     """Run the cron scheduler tick loop in a background thread."""
     import traceback
 
     def ticker():
+        _cron_health["started_at"] = time.time()
         while True:
             try:
                 from cron.scheduler import tick
-                tick()
+                executed = tick(verbose=False) or 0
+                _cron_health["last_tick_at"] = time.time()
+                _cron_health["ticks"] += 1
+                _cron_health["jobs_run"] += executed
+                _cron_health["last_error"] = None
             except Exception as e:
+                _cron_health["last_error"] = str(e)
                 logger.error("Cron tick error: %s\n%s", e, traceback.format_exc())
             time.sleep(60)  # Check every 60 seconds
 
@@ -1454,7 +2289,61 @@ def _start_cron_ticker():
 
 @app.on_event("startup")
 def on_startup():
+    try:
+        if _refresh_github_token_env():
+            logger.info("GitHub App token refreshed on startup")
+    except Exception as e:
+        logger.warning("GitHub App token refresh on startup failed: %s", e)
     _start_cron_ticker()
+
+
+@app.get("/api/cron/status")
+def cron_status():
+    """Diagnostic: cron ticker health + scheduled jobs summary."""
+    from cron.jobs import list_jobs
+    jobs = list_jobs(include_disabled=True)
+    return {
+        "ticker": _cron_health,
+        "now": time.time(),
+        "job_count": len(jobs),
+        "jobs": [
+            {
+                "id": j.get("id"),
+                "name": j.get("name"),
+                "enabled": j.get("enabled"),
+                "schedule_display": j.get("schedule_display"),
+                "next_run_at": j.get("next_run_at"),
+                "last_run_at": j.get("last_run_at"),
+                "last_status": j.get("last_status"),
+                "last_error": j.get("last_error"),
+            }
+            for j in jobs
+        ],
+    }
+
+
+@app.post("/api/cron/run/{job_id}")
+def cron_run_now(job_id: str):
+    """Manually trigger a cron job immediately (bypasses schedule)."""
+    from cron.jobs import get_job, update_job
+    from kai_time import now as _kai_now
+    job = get_job(job_id)
+    if not job:
+        return JSONResponse({"error": "Job not found"}, status_code=404)
+
+    def _run():
+        from cron.scheduler import run_job
+        from cron.jobs import mark_job_run, save_job_output
+        try:
+            success, output, final_response, error = run_job(job)
+            save_job_output(job["id"], output)
+            mark_job_run(job["id"], success, error)
+        except Exception as e:
+            logger.exception("Manual cron run failed")
+            mark_job_run(job["id"], False, str(e))
+
+    threading.Thread(target=_run, daemon=True).start()
+    return {"ok": True, "message": f"Job '{job.get('name')}' triggered"}
 
 
 if __name__ == "__main__":
