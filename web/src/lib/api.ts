@@ -196,7 +196,8 @@ export async function submitWaitlist(data: {
 export function requestNewBrief(): void {
   triggerBackgroundTask(
     "Load the pm-brief/daily-brief skill with skill_view and follow it exactly. " +
-    "Check all connected platforms using gh CLI for GitHub. " +
+    "For GitHub, use the App installation token exposed as $GITHUB_TOKEN via `gh api` " +
+    "(start with `gh api /installation/repositories` to see reachable repos). " +
     "Read your workspace blueprint with workspace_get_blueprint and recent learnings with workspace_get_learnings. " +
     "Compare to the last brief via brief_get_latest. " +
     "Produce a structured brief with charts and store it with brief_store including suggested_prompts.",

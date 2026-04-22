@@ -91,7 +91,9 @@ DEFAULT_AGENT_IDENTITY = (
     "- Any action that modifies external systems or is visible to the team\n\n"
 
     "Your signal sources (use whatever is connected via MCP or CLI):\n"
-    "- GitHub — code, PRs, issues, project boards, team activity (gh CLI or MCP)\n"
+    "- GitHub — code, PRs, issues, project boards, team activity "
+    "(GitHub App installation token in $GITHUB_TOKEN; use `gh api` not `gh pr list` — "
+    "installation tokens don't carry a user identity)\n"
     "- Linear — sprints, cycles, issues, team workload (MCP)\n"
     "- Jira — enterprise issue tracking, workflows, cross-team dependencies (MCP)\n"
     "- PostHog/Amplitude/Mixpanel — user behavior, funnels, feature adoption, experiments (MCP)\n"

@@ -51,7 +51,7 @@ const ROUTINE_PRESETS = [
   {
     icon: FileText,
     name: "Daily Brief",
-    prompt: "Load the pm-brief/daily-brief skill with skill_view and follow it exactly. Check all connected platforms using gh CLI for GitHub. Read your workspace blueprint with workspace_get_blueprint and recent learnings with workspace_get_learnings. Compare to the last brief via brief_get_latest. Produce a structured brief with charts and store it with brief_store including suggested_prompts.",
+    prompt: "Load the pm-brief/daily-brief skill with skill_view and follow it exactly. For GitHub, authenticate via the App installation token ($GITHUB_TOKEN) using `gh api` — start with `gh api /installation/repositories` to see reachable repos. Do not use `gh pr list`/`gh repo list`/`gh issue list`, they don't work with installation tokens. Read workspace_get_blueprint and workspace_get_learnings. Compare to the last brief via brief_get_latest. Produce a structured brief with charts and store it with brief_store including suggested_prompts.",
     schedule: "every 6h",
     category: "briefs",
   },
@@ -65,14 +65,14 @@ const ROUTINE_PRESETS = [
   {
     icon: Users,
     name: "Team Pulse",
-    prompt: "Analyze team activity for the last 7 days. Check each team member in the workspace blueprint using gh CLI. For each person: count PRs merged, reviews done, days since last activity. Identify patterns and flag concentration risk. Store with workspace_add_learning using category='team'.",
+    prompt: "Analyze team activity for the last 7 days using GitHub. Authenticate via $GITHUB_TOKEN (GitHub App installation token). Start with `gh api /installation/repositories` to see reachable repos. For each team member in workspace_get_blueprint, query `gh api \"/search/issues?q=repo:{owner}/{repo}+author:{handle}+is:pr+merged:>{date-7d}\"` and `gh api \"/repos/{owner}/{repo}/pulls/{num}/reviews\"`. For each person: count PRs merged, reviews done, days since last activity. Flag concentration risk. Store with workspace_add_learning category='team'.",
     schedule: "0 9 * * 1",
     category: "analysis",
   },
   {
     icon: BarChart3,
     name: "Changelog",
-    prompt: "Generate a changelog of what shipped in the last 7 days. Use gh CLI to list merged PRs across all repos. Group by feature area. Write clean markdown. Store with workspace_add_learning using category='changelog'.",
+    prompt: "Generate a changelog of what shipped in the last 7 days. Authenticate via $GITHUB_TOKEN (GitHub App installation token). Start with `gh api /installation/repositories` for the repo list, then for each: `gh api \"/search/issues?q=repo:{owner}/{repo}+is:pr+merged:>{date-7d}&per_page=50\"`. Group merged PRs by feature area. Write clean markdown. Store with workspace_add_learning category='changelog'.",
     schedule: "0 9 * * 5",
     category: "reports",
   },

@@ -984,17 +984,37 @@ def github_app_install_callback(
     # Mint an initial token so the agent can use GitHub immediately.
     _refresh_github_token_env()
 
-    # Return a page that closes itself and pings the opener to refresh.
-    html = """
+    # If the popup was blocked and the user landed in the main tab, we still
+    # want to take them back to the dashboard. DASH_FRONTEND_URL is set per
+    # instance (prod vs demo) so each backend knows its counterpart frontend.
+    frontend_url = (os.environ.get("DASH_FRONTEND_URL") or "").rstrip("/")
+    fallback_target = (frontend_url + "/dashboard") if frontend_url else "/dashboard"
+    # Return a page that closes itself + pings the opener if it was a popup,
+    # otherwise redirects to the frontend dashboard.
+    html = f"""
     <!doctype html>
     <html><head><title>GitHub Connected</title>
-    <style>body{font-family:system-ui;padding:40px;text-align:center;color:#333}</style>
+    <style>body{{font-family:system-ui;padding:40px;text-align:center;color:#333}}</style>
     </head><body>
     <h2>✓ GitHub connected</h2>
-    <p style="color:#666">You can close this window.</p>
+    <p style="color:#666">Taking you back to Dash…</p>
     <script>
-      try { if (window.opener) { window.opener.postMessage({type:'github-app-installed'}, '*'); } } catch(e) {}
-      setTimeout(function(){ window.close(); }, 1200);
+      var opened_as_popup = false;
+      try {{
+        if (window.opener && !window.opener.closed) {{
+          window.opener.postMessage({{type:'github-app-installed'}}, '*');
+          opened_as_popup = true;
+          setTimeout(function(){{ window.close(); }}, 800);
+        }}
+      }} catch(e) {{}}
+      // Same-tab fallback: redirect to the frontend so the user isn't stranded
+      // on the Railway domain. Fires even if we tried window.close() — closing
+      // a non-popup tab is silently blocked, so the redirect still runs.
+      setTimeout(function(){{
+        if (!opened_as_popup || !window.closed) {{
+          window.location.replace({json.dumps(fallback_target)});
+        }}
+      }}, 1400);
     </script>
     </body></html>
     """
@@ -1856,7 +1876,13 @@ async def create_schedule(request: Request):
 async def update_schedule(job_id: str, request: Request):
     body = await request.json()
     from cron.jobs import update_job
-    updated = update_job(job_id, body)
+    # Whitelist fields — prompt, name, enabled are user-editable; everything else
+    # (schedule, repeat, run times) is computed and should not be overwritten here.
+    allowed = {"name", "prompt", "enabled"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        return JSONResponse({"error": "No updatable fields provided"}, status_code=400)
+    updated = update_job(job_id, updates)
     if not updated:
         return JSONResponse({"error": "Not found"}, status_code=404)
     return {"ok": True}

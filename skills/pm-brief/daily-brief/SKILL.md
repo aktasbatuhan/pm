@@ -16,7 +16,29 @@ You are producing a daily brief for the team. This is the core PM deliverable: a
 
 Check every connected data source. Skip sources that aren't available.
 
-### GitHub / Linear (project boards)
+### GitHub (via GitHub App installation token)
+Dash authenticates with GitHub through the installed GitHub App. The short-lived
+installation token is exposed as `$GITHUB_TOKEN` and is scoped to **only the repos
+the user selected during install**. Use `gh api` for REST calls — installation
+tokens don't work with user-oriented commands like `gh pr list` or `gh repo list`.
+
+Useful calls (all via `terminal`):
+- **List reachable repos** — always do this first:
+  `gh api /installation/repositories --paginate --jq '.repositories[] | {full_name,default_branch,pushed_at}'`
+- **PRs merged since a date** (search is fastest):
+  `gh api "/search/issues?q=repo:{owner}/{repo}+is:pr+merged:>{YYYY-MM-DD}&per_page=30"`
+- **Open PRs, sorted by staleness**:
+  `gh api "/repos/{owner}/{repo}/pulls?state=open&sort=updated&direction=asc&per_page=50"`
+- **New issues since a date**:
+  `gh api "/search/issues?q=repo:{owner}/{repo}+is:issue+created:>{YYYY-MM-DD}&per_page=30"`
+- **Commits on default branch**:
+  `gh api "/repos/{owner}/{repo}/commits?since={YYYY-MM-DDTHH:MM:SSZ}&per_page=100"`
+- **Project board items** (if they use Projects v2):
+  `gh api graphql -f query='query { organization(login:"{org}"){ projectV2(number:{n}){ items(first:50){ nodes { content { ... on Issue {title,state,url} ... on PullRequest {title,state,url} } } } } } }'`
+
+If a call returns 404, the repo is outside the installation scope — note it and move on.
+
+### Linear (project boards)
 - Current sprint status: items by status (done, in progress, review, blocked, todo)
 - PRs merged since last brief
 - PRs awaiting review (especially stale ones >2 days)

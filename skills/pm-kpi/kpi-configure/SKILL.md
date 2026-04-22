@@ -51,13 +51,14 @@ Extraction: sum over 7d buckets → single number
 Unit: Weekly Active Users
 ```
 
-Example plan (GitHub):
+Example plan (GitHub — via App installation token in `$GITHUB_TOKEN`):
 ```
-Source: GitHub (via gh CLI)
-Command: gh pr list --repo acme/api --state merged --search "merged:>=$(date -v-7d +%Y-%m-%d)" --json number | jq length
+Source: GitHub (via `gh api`, installation-scoped)
+Command: gh api "/search/issues?q=repo:acme/api+is:pr+merged:>$(date -v-7d +%Y-%m-%d)&per_page=1" --jq '.total_count'
 Window: trailing 7 days
-Extraction: count of merged PRs
+Extraction: total_count from the search response
 Unit: PRs/week
+Note: uses `gh api`, not `gh pr list` — installation tokens can't use user-oriented commands.
 ```
 
 Call `kpi_set_measurement_plan` with the plan text and `status="configured"`.
