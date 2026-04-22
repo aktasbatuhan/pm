@@ -776,6 +776,67 @@ from github_app_auth import (
 )
 
 
+@app.get("/api/integrations/github/debug")
+def github_app_debug():
+    """Diagnostic: shows whether the server process has a live GitHub token."""
+    cfg = _github_app_config()
+    db = _get_integrations_db()
+    row = db.execute(
+        "SELECT installation_id, cached_token_expires_at FROM github_installations "
+        "ORDER BY updated_at DESC LIMIT 1"
+    ).fetchone()
+    token_present = bool(os.environ.get("GITHUB_TOKEN"))
+    token_prefix = (os.environ.get("GITHUB_TOKEN") or "")[:8]
+    # Try a fresh refresh and report the outcome
+    refresh_ok = False
+    try:
+        refresh_ok = _refresh_github_token_env()
+    except Exception as e:
+        refresh_ok = False
+    # Bonus: run `env | grep GITHUB` in a subprocess just like the agent would,
+    # to confirm env propagates through the shell that terminal_tool uses.
+    import subprocess as _sp
+    try:
+        out = _sp.run(
+            ["bash", "-lic", "env | grep -E '^(GITHUB|GH_)' | sed -E 's/=(.{8}).*/=\\1…/'"],
+            capture_output=True, text=True, timeout=10,
+        )
+        subproc_env = out.stdout.strip() or "(none)"
+    except Exception as e:
+        subproc_env = f"error: {e}"
+    # Check $KAI_HOME/skills on disk so we can confirm sync_skills actually ran.
+    skills_dir = kai_home() / "skills"
+    skills_info = {
+        "kai_home": str(kai_home()),
+        "skills_dir_exists": skills_dir.exists(),
+        "skill_count": 0,
+        "pm_skills_present": [],
+    }
+    if skills_dir.exists():
+        try:
+            all_skills = list(skills_dir.rglob("SKILL.md"))
+            skills_info["skill_count"] = len(all_skills)
+            pm_wanted = ["pm-brief/daily-brief", "pm-kpi/kpi-configure",
+                         "pm-kpi/kpi-refresh", "pm-onboarding/self-onboard"]
+            for name in pm_wanted:
+                p = skills_dir / name / "SKILL.md"
+                if p.exists():
+                    skills_info["pm_skills_present"].append(name)
+        except Exception as e:
+            skills_info["error"] = str(e)
+    return {
+        "config_present": bool(cfg),
+        "installation_row": dict(row) if row else None,
+        "env_token_present_before": token_present,
+        "env_token_prefix_before": token_prefix,
+        "refresh_ok": refresh_ok,
+        "env_token_present_after": bool(os.environ.get("GITHUB_TOKEN")),
+        "env_token_prefix_after": (os.environ.get("GITHUB_TOKEN") or "")[:8],
+        "subprocess_github_env": subproc_env,
+        "skills": skills_info,
+    }
+
+
 @app.get("/api/integrations/github/app-status")
 def github_app_status():
     """Expose whether the GitHub App is configured (so the UI can pick install-flow vs PAT-fallback)."""
