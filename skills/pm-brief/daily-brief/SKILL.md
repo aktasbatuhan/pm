@@ -252,9 +252,33 @@ Generate 3-5 specific follow-up questions the user might ask after reading this 
 
 Pass them as `suggested_prompts` in the `brief_store` call.
 
+### Headline
+Every brief must have an explicit one-line **headline** passed to `brief_store`
+via the `headline` field. This is what appears as the big title on the brief
+page — it's separate from the body and NOT auto-extracted from the summary.
+
+Rules:
+- 8–14 words, written as a newspaper headline.
+- Start with a concrete subject. Use an active verb. Name a number when relevant.
+- Summarize the single most important thing in this brief — not a commit,
+  not the last infra fix, not meta-work.
+- Bad: "Terminal tool unblocked — commit f6f674ba fixed the critical shell access blocker."
+- Bad: "Here's today's brief from the Dash repository."
+- Good: "Signup conversion drops 14% week-over-week after paywall rollout."
+- Good: "Sprint 59 will miss Friday deadline — 3 of 8 items still open, 2 blocked on review."
+- Good: "MRR up 6% to $42k; churn spike on the starter plan needs attention."
+
+If nothing notable happened, the headline should say so directly:
+"Quiet day: no PRs merged, no KPI movement, sprint on track."
+
 ## Step 4: Store and Deliver
 
-1. Store the brief using `brief_store` with the full markdown (including chart blocks), structured action items with references, and suggested_prompts
+1. Store the brief using `brief_store` with:
+   - `headline` (required — see Headline section above; do NOT skip)
+   - `summary` — the full markdown content (chart blocks, sections, etc.)
+   - `action_items` — structured JSON array with references
+   - `suggested_prompts` — JSON array of follow-up questions
+   - `data_sources` — comma-separated list of what you queried
 2. After storing, generate a cover image with `brief_generate_cover`:
    - Write a visual prompt that captures the brief's mood
    - Calm and productive if sprint is on track

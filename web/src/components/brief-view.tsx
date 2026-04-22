@@ -350,7 +350,9 @@ export function BriefView({ onNavigateToChat }: Props) {
     );
   }
 
-  const headline = extractHeadline(brief.summary);
+  // Prefer the agent-authored headline from brief_store. Fall back to body
+  // extraction only for older briefs stored before the field existed.
+  const headline = (brief.headline && brief.headline.trim()) || extractHeadline(brief.summary);
   const execSummary = extractExecutiveSummary(brief.summary);
   const metrics = extractMetrics(brief.summary, allActions);
 

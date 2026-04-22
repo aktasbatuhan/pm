@@ -375,6 +375,7 @@ def brief_latest():
     # Get optional columns
     cover_url = ""
     suggested_prompts = []
+    headline = ""
     try:
         cover_url = row["cover_url"] or ""
     except (IndexError, KeyError):
@@ -383,10 +384,15 @@ def brief_latest():
         suggested_prompts = json.loads(row["suggested_prompts"] or "[]")
     except (IndexError, KeyError, json.JSONDecodeError):
         pass
+    try:
+        headline = row["headline"] or ""
+    except (IndexError, KeyError):
+        pass
 
     return {
         "brief": {
             "id": row["id"],
+            "headline": headline,
             "summary": row["summary"],
             "data_sources": row["data_sources"],
             "created_at": row["created_at"],
@@ -419,6 +425,7 @@ def get_brief(brief_id: str):
         items.append(item)
     cover_url = ""
     suggested_prompts = []
+    headline = ""
     try:
         cover_url = row["cover_url"] or ""
     except (IndexError, KeyError):
@@ -427,9 +434,14 @@ def get_brief(brief_id: str):
         suggested_prompts = json.loads(row["suggested_prompts"] or "[]")
     except (IndexError, KeyError, json.JSONDecodeError):
         pass
+    try:
+        headline = row["headline"] or ""
+    except (IndexError, KeyError):
+        pass
     return {
         "brief": {
             "id": row["id"],
+            "headline": headline,
             "summary": row["summary"],
             "data_sources": row["data_sources"],
             "created_at": row["created_at"],
@@ -443,27 +455,23 @@ def get_brief(brief_id: str):
 @app.get("/api/briefs")
 def list_briefs(limit: int = 20):
     db = _get_db()
-    rows = db.execute("SELECT id, summary, data_sources, created_at FROM briefs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+    rows = db.execute("SELECT * FROM briefs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     briefs = []
     for row in rows:
         r = dict(row)
         # Count actions
         action_count = db.execute("SELECT COUNT(*) as c FROM brief_actions WHERE brief_id = ?", (r["id"],)).fetchone()
         pending_count = db.execute("SELECT COUNT(*) as c FROM brief_actions WHERE brief_id = ? AND status = 'pending'", (r["id"],)).fetchone()
-        # Extract headline (first meaningful line)
-        headline = ""
-        for line in r["summary"].split("\n"):
-            stripped = line.strip().lstrip("#").lstrip("-").strip()
-            if len(stripped) > 20 and not stripped.startswith("```"):
-                headline = stripped[:120]
-                break
-        # Get cover + prompts
-        cover_url = ""
-        try:
-            full = db.execute("SELECT cover_url FROM briefs WHERE id = ?", (r["id"],)).fetchone()
-            cover_url = full["cover_url"] or ""
-        except Exception:
-            pass
+        # Prefer the agent-authored headline. Fall back to legacy extraction
+        # only when the column is empty (older briefs stored before the field existed).
+        headline = (r.get("headline") or "").strip()
+        if not headline:
+            for line in (r.get("summary") or "").split("\n"):
+                stripped = line.strip().lstrip("#").lstrip("-").strip()
+                if len(stripped) > 20 and not stripped.startswith("```"):
+                    headline = stripped[:120]
+                    break
+        cover_url = r.get("cover_url") or ""
         briefs.append({
             "id": r["id"],
             "headline": headline,

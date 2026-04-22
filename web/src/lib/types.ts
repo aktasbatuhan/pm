@@ -20,6 +20,7 @@ export interface ActionItem {
 
 export interface Brief {
   id: string;
+  headline?: string;
   summary: string;
   data_sources: string;
   created_at: number;

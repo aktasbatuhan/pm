@@ -167,6 +167,15 @@ def _get_db():
             db.commit()
         except Exception:
             pass
+    # Migration: add headline column if missing
+    try:
+        db.execute("SELECT headline FROM briefs LIMIT 0")
+    except Exception:
+        try:
+            db.execute("ALTER TABLE briefs ADD COLUMN headline TEXT DEFAULT ''")
+            db.commit()
+        except Exception:
+            pass
     return db
 
 
@@ -174,7 +183,7 @@ def _get_db():
 # Tool: brief_store
 # =============================================================================
 
-def brief_store(summary: str, action_items: str, data_sources: str = "", suggested_prompts: str = "", **kwargs) -> str:
+def brief_store(summary: str, action_items: str, headline: str = "", data_sources: str = "", suggested_prompts: str = "", **kwargs) -> str:
     """Store a completed brief with its action items."""
     db = _get_db()
     brief_id = str(uuid.uuid4())[:8]
@@ -194,8 +203,9 @@ def brief_store(summary: str, action_items: str, data_sources: str = "", suggest
 
     # Store brief
     db.execute(
-        "INSERT INTO briefs (id, summary, action_items, data_sources, suggested_prompts, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (brief_id, summary, json.dumps(items), data_sources, json.dumps(prompts), now)
+        "INSERT INTO briefs (id, summary, action_items, data_sources, suggested_prompts, headline, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (brief_id, summary, json.dumps(items), data_sources, json.dumps(prompts), headline or "", now)
     )
 
     # Store individual action items
@@ -227,9 +237,13 @@ BRIEF_STORE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
+            "headline": {
+                "type": "string",
+                "description": "A single-sentence headline (8-14 words) summarizing the most important thing in this brief. Written as a newspaper headline — concrete, active verb, no filler. Good: 'Signup conversion drops 14% after paywall rollout, blocking Q2 growth target.' Bad: 'Terminal tool unblocked — commit f6f674ba fixed the critical shell access blocker.' This appears as the big headline on the brief view; the summary body stays in action items and sections below.",
+            },
             "summary": {
                 "type": "string",
-                "description": "The full brief markdown content"
+                "description": "The full brief markdown content (without duplicating the headline — the headline renders separately above)."
             },
             "action_items": {
                 "type": "string",
@@ -244,7 +258,7 @@ BRIEF_STORE_SCHEMA = {
                 "description": "JSON array of 3-5 follow-up questions the user might ask based on this brief. Each should be specific and actionable, referencing real data from the brief. E.g. [\"Why is Sprint 59 behind schedule?\", \"Investigate the JWT secret exposure in kai-backend #278\", \"Draft a stakeholder update on the pricing launch\"]"
             }
         },
-        "required": ["summary", "action_items"]
+        "required": ["headline", "summary", "action_items"]
     }
 }
 
@@ -265,13 +279,18 @@ def brief_get_latest(**kwargs) -> str:
         (row["id"],)
     ).fetchall()
 
-    return json.dumps({
+    out = {
         "brief_id": row["id"],
         "summary": row["summary"],
         "action_items": [dict(a) for a in actions],
         "data_sources": row["data_sources"],
-        "created_at": row["created_at"]
-    })
+        "created_at": row["created_at"],
+    }
+    try:
+        out["headline"] = row["headline"] or ""
+    except (IndexError, KeyError):
+        out["headline"] = ""
+    return json.dumps(out)
 
 
 BRIEF_GET_LATEST_SCHEMA = {
@@ -374,6 +393,7 @@ registry.register(
     handler=lambda args, **kw: brief_store(
         summary=args.get("summary", ""),
         action_items=args.get("action_items", "[]"),
+        headline=args.get("headline", ""),
         data_sources=args.get("data_sources", ""),
         suggested_prompts=args.get("suggested_prompts", "[]")),
 )
