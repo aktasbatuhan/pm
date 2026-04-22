@@ -755,6 +755,38 @@ export interface GithubAppStatus {
   configured: boolean;
   slug?: string;
   installation?: GithubAppInstallation | null;
+  permissions?: Record<string, string>;
+  can_write_issues?: boolean;
+}
+
+export interface GithubRepo {
+  full_name: string;
+  description: string;
+  default_branch: string;
+  pushed_at: string;
+  open_issues_count: number;
+  private: boolean;
+}
+
+export async function fetchGithubRepos(): Promise<GithubRepo[]> {
+  const res = await fetch(`${API}/api/integrations/github/repos`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.repos ?? [];
+}
+
+export async function createIssueFromAction(
+  actionId: string,
+  payload: { repo: string; title?: string; body?: string },
+): Promise<{ ok: boolean; issue_url?: string; number?: number; error?: string; hint?: string }> {
+  const res = await fetch(`${API}/api/brief/actions/${actionId}/create-issue`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}`, hint: data?.hint };
+  return { ok: true, issue_url: data.issue_url, number: data.number };
 }
 
 export async function fetchGithubAppStatus(): Promise<GithubAppStatus> {

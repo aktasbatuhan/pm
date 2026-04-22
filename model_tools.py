@@ -87,6 +87,7 @@ def _discover_tools():
         "tools.pm_platform_tools",
         "tools.pm_goal_tools",
         "tools.pm_kpi_tools",
+        "tools.pm_github_tools",
         "tools.pm_image_tools",
         "tools.pm_report_tools",
         "tools.todo_tool",

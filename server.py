@@ -510,6 +510,66 @@ async def brief_action_update(action_id: str, request: Request):
     return {"ok": True, "action_id": action_id, "status": new_status}
 
 
+@app.post("/api/brief/actions/{action_id}/create-issue")
+async def brief_action_create_issue(action_id: str, request: Request):
+    """Convert an action item into a GitHub issue. Body: {repo, title?, body?}."""
+    data = await request.json()
+    repo = (data.get("repo") or "").strip()
+    if "/" not in repo:
+        return JSONResponse({"error": "repo must be 'owner/name'"}, status_code=400)
+
+    db = _get_db()
+    row = db.execute("SELECT * FROM brief_actions WHERE id = ?", (action_id,)).fetchone()
+    if not row:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+
+    title = (data.get("title") or row["title"]).strip()
+    if not title:
+        return JSONResponse({"error": "title required"}, status_code=400)
+
+    # Compose an issue body that preserves the action's description + references.
+    desc = (data.get("body") or row["description"] or "").strip()
+    refs_body = ""
+    try:
+        existing_refs = json.loads(row["references_json"] or "[]")
+    except Exception:
+        existing_refs = []
+    if existing_refs:
+        lines = []
+        for r in existing_refs:
+            t = r.get("title") or r.get("url") or ""
+            u = r.get("url") or ""
+            lines.append(f"- {t}" + (f" — {u}" if u else ""))
+        refs_body = "\n\n**Related:**\n" + "\n".join(lines)
+    issue_body = f"{desc}{refs_body}\n\n_Filed from Dash brief action `{action_id}`._"
+
+    # Mint/refresh a fresh installation token just in case.
+    _refresh_github_token_env()
+    from tools.pm_github_tools import github_create_issue
+    raw = github_create_issue(repo=repo, title=title, body=issue_body)
+    try:
+        result = json.loads(raw)
+    except Exception:
+        return JSONResponse({"error": "invalid tool response", "raw": raw}, status_code=500)
+
+    if not result.get("ok"):
+        return JSONResponse(result, status_code=403 if result.get("error") == "permission_denied" else 502)
+
+    # Append the new issue to the action's references and mark it in-progress.
+    new_ref = {
+        "type": "issue",
+        "url": result.get("url", ""),
+        "title": f"{repo}#{result.get('number')}",
+    }
+    existing_refs.append(new_ref)
+    db.execute(
+        "UPDATE brief_actions SET references_json = ?, status = 'in-progress', updated_at = ? WHERE id = ?",
+        (json.dumps(existing_refs), time.time(), action_id),
+    )
+    db.commit()
+    return {"ok": True, "issue_url": result.get("url"), "number": result.get("number"), "action_id": action_id}
+
+
 # ── Waitlist ────────────────────────────────────────────────────────────
 
 @app.post("/api/waitlist")
@@ -889,10 +949,38 @@ def github_app_status():
         "SELECT installation_id, account_login, account_type, repo_selection, installed_at, updated_at "
         "FROM github_installations ORDER BY updated_at DESC LIMIT 1"
     ).fetchone()
+    inst = dict(row) if row else None
+    permissions = {}
+    if inst:
+        # Query live installation permissions so the UI knows whether write
+        # operations (create issue, comment) are available.
+        try:
+            import urllib.request
+            app_jwt = _generate_github_app_jwt(cfg)
+            req = urllib.request.Request(
+                f"https://api.github.com/app/installations/{inst['installation_id']}",
+                headers={
+                    "Authorization": f"Bearer {app_jwt}",
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": "Dash-PM",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            permissions = data.get("permissions") or {}
+        except Exception as e:
+            logger.warning("Failed to fetch installation permissions: %s", e)
+    # If the App isn't installed here, fall back to checking for any token
+    # (PAT or app installation token minted at startup). Prod runs this path.
+    has_token = bool(os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN"))
+    can_write = permissions.get("issues") == "write" if inst else has_token
     return {
         "configured": True,
         "slug": cfg["slug"],
-        "installation": dict(row) if row else None,
+        "installation": inst,
+        "permissions": permissions,
+        "has_token": has_token,
+        "can_write_issues": can_write,
     }
 
 
@@ -1024,6 +1112,21 @@ def github_app_install_callback(
     </body></html>
     """
     return HTMLResponse(html)
+
+
+@app.get("/api/integrations/github/repos")
+def github_list_repos_endpoint():
+    """Proxy /installation/repositories for the frontend repo picker."""
+    _refresh_github_token_env()
+    from tools.pm_github_tools import github_list_repos
+    import json as _json
+    try:
+        parsed = _json.loads(github_list_repos())
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+    if parsed.get("error"):
+        return JSONResponse(parsed, status_code=502)
+    return parsed
 
 
 @app.delete("/api/integrations/github/app")

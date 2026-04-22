@@ -22,7 +22,15 @@ installation token is exposed as `$GITHUB_TOKEN` and is scoped to **only the rep
 the user selected during install**. Use `gh api` for REST calls — installation
 tokens don't work with user-oriented commands like `gh pr list` or `gh repo list`.
 
-Useful calls (all via `terminal`):
+For read-only queries use `gh api` via terminal. For **writes** (creating
+issues, adding comments) prefer the structured tools — they return clean
+typed responses and surface permission errors clearly:
+- `github_list_repos` — the typed equivalent of `gh api /installation/repositories`
+- `github_create_issue(repo, title, body, labels?, assignees?)` — requires
+  Issues: Write on the installation. Confirm with the user before calling.
+- `github_add_comment(repo, issue_number, body)` — user-visible, confirm first.
+
+Useful read-only calls (all via `terminal`):
 - **List reachable repos** — always do this first:
   `gh api /installation/repositories --paginate --jq '.repositories[] | {full_name,default_branch,pushed_at}'`
 - **PRs merged since a date** (search is fastest):

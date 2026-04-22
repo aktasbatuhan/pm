@@ -7,7 +7,20 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RichResponse } from "@/components/rich-response";
 import { cn } from "@/lib/utils";
-import { fetchBrief, fetchBriefById, fetchBriefs, fetchWorkspace, resolveAction, requestNewBrief, type BriefSummary } from "@/lib/api";
+import {
+  fetchBrief,
+  fetchBriefById,
+  fetchBriefs,
+  fetchWorkspace,
+  resolveAction,
+  requestNewBrief,
+  fetchGithubAppStatus,
+  fetchGithubRepos,
+  createIssueFromAction,
+  type BriefSummary,
+  type GithubAppStatus,
+  type GithubRepo,
+} from "@/lib/api";
 import type { Brief, ActionItem, WorkspaceStatus } from "@/lib/types";
 import {
   CheckCircle2,
@@ -250,6 +263,8 @@ export function BriefView({ onNavigateToChat }: Props) {
   const [briefHistory, setBriefHistory] = useState<BriefSummary[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [githubApp, setGithubApp] = useState<GithubAppStatus | null>(null);
+  const [githubRepos, setGithubRepos] = useState<GithubRepo[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -265,6 +280,16 @@ export function BriefView({ onNavigateToChat }: Props) {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Load GitHub App status + repos (for the "file as issue" button on action cards)
+  useEffect(() => {
+    fetchGithubAppStatus().then((s) => {
+      setGithubApp(s);
+      if (s?.installation && s?.can_write_issues) {
+        fetchGithubRepos().then(setGithubRepos).catch(() => {});
+      }
+    });
+  }, []);
 
   async function handleSelectBrief(briefId: string) {
     const b = await fetchBriefById(briefId);
@@ -483,10 +508,17 @@ export function BriefView({ onNavigateToChat }: Props) {
                   <ActionCard
                     key={item.id}
                     item={item}
+                    canCreateIssue={Boolean(githubApp?.can_write_issues)}
+                    repos={githubRepos}
                     onResolve={() => handleResolve(item.id)}
                     onChat={() =>
                       onNavigateToChat(`Let's look at this action item: "${item.title}" — ${item.description}`)
                     }
+                    onIssueCreated={async () => {
+                      // Reload the brief so the new reference shows up on the card
+                      const fresh = await fetchBrief();
+                      if (fresh) setBrief(fresh);
+                    }}
                   />
                 ))}
               </div>
@@ -591,16 +623,48 @@ const REF_ICONS: Record<string, string> = {
 
 function ActionCard({
   item,
+  canCreateIssue,
+  repos,
   onResolve,
   onChat,
+  onIssueCreated,
 }: {
   item: ActionItem;
+  canCreateIssue: boolean;
+  repos: GithubRepo[];
   onResolve: () => void;
   onChat: () => void;
+  onIssueCreated: () => void;
 }) {
   const isDone = item.status === "resolved" || item.status === "dismissed";
   const refs = item.references ?? [];
   const cat = CATEGORY_LABELS[item.category] ?? { label: item.category, color: "text-zinc-600 bg-zinc-50" };
+  const alreadyHasIssue = refs.some((r) => (r.url || "").includes("/issues/"));
+
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState(repos[0]?.full_name || "");
+  const [filing, setFiling] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!selectedRepo && repos.length > 0) setSelectedRepo(repos[0].full_name);
+  }, [repos, selectedRepo]);
+
+  async function handleFile() {
+    if (!selectedRepo) return;
+    setFiling(true);
+    setFileError(null);
+    const result = await createIssueFromAction(item.id, { repo: selectedRepo });
+    setFiling(false);
+    if (!result.ok) {
+      setFileError(result.error === "permission_denied"
+        ? "GitHub App needs Issues: Write permission. Update on github.com/settings/apps."
+        : (result.hint || result.error || "Failed to file issue."));
+      return;
+    }
+    setPickerOpen(false);
+    onIssueCreated();
+  }
 
   return (
     <div className={cn(
@@ -629,17 +693,60 @@ function ActionCard({
               {item.title}
             </p>
             {!isDone && (
-              <button
-                onClick={onChat}
-                className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-primary hover:underline"
-              >
-                Discuss →
-              </button>
+              <div className="flex shrink-0 items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+                {canCreateIssue && !alreadyHasIssue && repos.length > 0 && (
+                  <button
+                    onClick={() => setPickerOpen((v) => !v)}
+                    className="text-xs text-primary hover:underline"
+                    title="Create a GitHub issue from this action"
+                  >
+                    File issue
+                  </button>
+                )}
+                <button
+                  onClick={onChat}
+                  className="text-xs text-primary hover:underline"
+                >
+                  Discuss →
+                </button>
+              </div>
             )}
           </div>
           <p className="mt-1 text-[13px] text-muted-foreground leading-relaxed">
             {item.description}
           </p>
+
+          {/* Inline repo picker */}
+          {pickerOpen && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2">
+              <span className="text-[11px] text-muted-foreground">File in:</span>
+              <select
+                value={selectedRepo}
+                onChange={(e) => setSelectedRepo(e.target.value)}
+                className="rounded-md border border-border bg-background px-2 py-1 text-[12px] outline-none"
+              >
+                {repos.map((r) => (
+                  <option key={r.full_name} value={r.full_name}>{r.full_name}</option>
+                ))}
+              </select>
+              <button
+                onClick={handleFile}
+                disabled={filing || !selectedRepo}
+                className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground disabled:opacity-40"
+              >
+                {filing ? "Filing…" : "Create issue"}
+              </button>
+              <button
+                onClick={() => { setPickerOpen(false); setFileError(null); }}
+                className="text-[11px] text-muted-foreground hover:text-foreground"
+              >
+                Cancel
+              </button>
+              {fileError && (
+                <p className="basis-full text-[11px] text-red-600">{fileError}</p>
+              )}
+            </div>
+          )}
 
           {/* References + badges */}
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
