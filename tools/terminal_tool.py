@@ -1132,7 +1132,10 @@ def check_terminal_requirements() -> bool:
     
     try:
         if env_type == "local":
-            from minisweagent.environments.local import LocalEnvironment
+            # Execution goes through our own tools.environments.local.LocalEnvironment,
+            # so that's what we must probe — not the mini-swe-agent import, which
+            # isn't part of this deployment.
+            from tools.environments.local import LocalEnvironment as _LE  # noqa: F401
             return True
         elif env_type == "docker":
             from minisweagent.environments.docker import DockerEnvironment

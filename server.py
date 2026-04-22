@@ -804,6 +804,19 @@ def github_app_debug():
         subproc_env = out.stdout.strip() or "(none)"
     except Exception as e:
         subproc_env = f"error: {e}"
+    # Actually exercise `gh api` like the skill tells the agent to do.
+    gh_api_test = {}
+    for label, cmd in [
+        ("gh_version", "gh --version | head -1"),
+        ("gh_auth_status", "gh auth status 2>&1"),
+        ("gh_api_user", "gh api /user 2>&1 | head -c 200"),
+        ("gh_api_installation_repos", "gh api /installation/repositories 2>&1 | head -c 400"),
+    ]:
+        try:
+            r = _sp.run(["bash", "-lic", cmd], capture_output=True, text=True, timeout=20)
+            gh_api_test[label] = {"rc": r.returncode, "out": (r.stdout or r.stderr or "").strip()[:500]}
+        except Exception as e:
+            gh_api_test[label] = {"rc": -1, "out": f"error: {e}"}
     # Check $KAI_HOME/skills on disk so we can confirm sync_skills actually ran.
     skills_dir = kai_home() / "skills"
     skills_info = {
@@ -833,8 +846,28 @@ def github_app_debug():
         "env_token_present_after": bool(os.environ.get("GITHUB_TOKEN")),
         "env_token_prefix_after": (os.environ.get("GITHUB_TOKEN") or "")[:8],
         "subprocess_github_env": subproc_env,
+        "gh_api_test": gh_api_test,
         "skills": skills_info,
+        "tool_availability": _tool_availability_snapshot(),
     }
+
+
+def _tool_availability_snapshot():
+    """Report which of the PM-critical tools are currently registered."""
+    try:
+        from model_tools import get_tool_definitions
+        tools = get_tool_definitions(quiet_mode=True)
+        names = sorted({t["function"]["name"] for t in tools})
+        critical = ["terminal", "process", "execute_code", "skills_list", "skill_view",
+                    "brief_store", "workspace_get_blueprint", "platforms_list",
+                    "platforms_check", "kpi_list", "goal_list"]
+        return {
+            "total_registered": len(names),
+            "critical_present": {n: (n in names) for n in critical},
+            "github_mcp_tools": [n for n in names if n.startswith("mcp-github-") or "github" in n.lower()][:10],
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/integrations/github/app-status")
