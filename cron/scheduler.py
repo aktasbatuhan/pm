@@ -184,6 +184,15 @@ def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
         except UnicodeDecodeError:
             load_dotenv(str(_kai_home / ".env"), override=False, encoding="latin-1")
 
+        # Mint a fresh GitHub App installation token for this run (1h lifetime,
+        # cached in DB so repeated runs within the hour skip the API call).
+        try:
+            from github_app_auth import refresh_github_token_env
+            if refresh_github_token_env():
+                logger.info("Job '%s': GitHub App token refreshed", job_id)
+        except Exception as e:
+            logger.warning("Job '%s': GitHub App token refresh failed: %s", job_id, e)
+
         model = get_env("KAI_MODEL") or "anthropic/claude-opus-4.6"
 
         # Load config.yaml for model, reasoning, prefill, toolsets, provider routing

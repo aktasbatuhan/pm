@@ -768,109 +768,12 @@ def _inject_credential(platform: str, credentials: str):
 
 # ── GitHub App integration ─────────────────────────────────────────────
 
-def _github_app_config() -> Optional[dict]:
-    """Return GitHub App credentials if configured, else None."""
-    app_id = os.environ.get("GITHUB_APP_ID", "").strip()
-    slug = os.environ.get("GITHUB_APP_SLUG", "").strip()
-    private_key = os.environ.get("GITHUB_APP_PRIVATE_KEY", "").strip()
-    if not (app_id and slug and private_key):
-        return None
-    # Railway/shell sometimes collapses literal "\n" into the var; normalize.
-    if "\\n" in private_key and "-----BEGIN" in private_key:
-        private_key = private_key.replace("\\n", "\n")
-    return {
-        "app_id": app_id,
-        "slug": slug,
-        "private_key": private_key,
-        "client_id": os.environ.get("GITHUB_APP_CLIENT_ID", "").strip() or None,
-        "client_secret": os.environ.get("GITHUB_APP_CLIENT_SECRET", "").strip() or None,
-    }
-
-
-def _generate_github_app_jwt(cfg: dict) -> str:
-    """Sign a short-lived JWT for GitHub App authentication (RS256, 10 min max)."""
-    import jwt as _jwt
-    now = int(time.time())
-    payload = {
-        "iat": now - 60,   # allow clock skew
-        "exp": now + 9 * 60,
-        "iss": cfg["app_id"],
-    }
-    return _jwt.encode(payload, cfg["private_key"], algorithm="RS256")
-
-
-def _get_github_installation_token(installation_id: str) -> Optional[str]:
-    """Return a valid installation access token, minting a new one if the cache is stale.
-
-    Tokens are cached in github_installations.cached_token until 5 min before expiry.
-    """
-    cfg = _github_app_config()
-    if not cfg:
-        return None
-
-    db = _get_integrations_db()
-    row = db.execute(
-        "SELECT cached_token, cached_token_expires_at FROM github_installations WHERE installation_id = ?",
-        (installation_id,),
-    ).fetchone()
-    now = time.time()
-    if row and row["cached_token"] and row["cached_token_expires_at"] and row["cached_token_expires_at"] > now + 300:
-        return row["cached_token"]
-
-    # Mint a fresh token
-    import urllib.request
-    import urllib.error
-    try:
-        app_jwt = _generate_github_app_jwt(cfg)
-        req = urllib.request.Request(
-            f"https://api.github.com/app/installations/{installation_id}/access_tokens",
-            method="POST",
-            headers={
-                "Authorization": f"Bearer {app_jwt}",
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "Dash-PM",
-            },
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        token = data.get("token")
-        expires_at_str = data.get("expires_at")
-        # GitHub returns ISO 8601 like "2026-04-20T12:34:56Z"; expires in ~1 hour
-        expires_at_ts = now + 3600
-        if expires_at_str:
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-                expires_at_ts = dt.timestamp()
-            except Exception:
-                pass
-
-        db.execute(
-            "UPDATE github_installations SET cached_token = ?, cached_token_expires_at = ?, updated_at = ? "
-            "WHERE installation_id = ?",
-            (token, expires_at_ts, now, installation_id),
-        )
-        db.commit()
-        return token
-    except Exception as e:
-        logger.error("Failed to mint GitHub installation token for %s: %s", installation_id, e)
-        return None
-
-
-def _refresh_github_token_env() -> bool:
-    """If a GitHub App installation exists, mint a fresh token and inject it as GITHUB_TOKEN."""
-    db = _get_integrations_db()
-    row = db.execute(
-        "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
-    ).fetchone()
-    if not row:
-        return False
-    token = _get_github_installation_token(row["installation_id"])
-    if not token:
-        return False
-    os.environ["GITHUB_TOKEN"] = token
-    os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] = token
-    return True
+from github_app_auth import (
+    github_app_config as _github_app_config,
+    generate_app_jwt as _generate_github_app_jwt,
+    get_installation_token as _get_github_installation_token,
+    refresh_github_token_env as _refresh_github_token_env,
+)
 
 
 @app.get("/api/integrations/github/app-status")
@@ -2315,6 +2218,14 @@ def _start_cron_ticker():
 
 @app.on_event("startup")
 def on_startup():
+    # Seed bundled skills/ from /app/skills into $KAI_HOME/skills so the agent
+    # can find pm-brief, pm-kpi, pm-onboarding, etc. on a fresh volume.
+    try:
+        from tools.skills_sync import sync_skills
+        result = sync_skills(quiet=True)
+        logger.info("Skills sync: %s", result.get("summary") if isinstance(result, dict) else "done")
+    except Exception as e:
+        logger.warning("Skills sync on startup failed: %s", e)
     try:
         if _refresh_github_token_env():
             logger.info("GitHub App token refreshed on startup")
