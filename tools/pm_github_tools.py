@@ -765,3 +765,76 @@ registry.register(
         state=args.get("state", "open"),
     ),
 )
+
+
+# =============================================================================
+# Tool: github_watch_delegations
+# =============================================================================
+
+def github_watch_delegations(repos: list = None, **kwargs) -> str:
+    """Check delegation status for all open Dash issues across repos and post reviews."""
+    import os
+    from agent_fleet.watcher import watch_repo_delegations
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if not token:
+        return json.dumps({"error": "No GitHub token."})
+
+    if not repos:
+        status, data = _github_request("GET", "/installation/repositories?per_page=100")
+        if status != 200:
+            return json.dumps({"error": f"Could not list repos: HTTP {status}"})
+        repos = [r["full_name"] for r in (data or {}).get("repositories", [])]
+
+    all_results = []
+    for repo in repos:
+        results = watch_repo_delegations(repo, token)
+        for r in results:
+            all_results.append({
+                "repo": repo,
+                "issue_number": r.issue_number,
+                "task_id": r.task_id,
+                "agent_id": r.agent_id,
+                "status": r.status,
+                "pr_number": r.pr_number,
+                "verdict": r.review.verdict if r.review else None,
+                "summary": r.review.summary if r.review else None,
+                "error": r.error,
+            })
+
+    return json.dumps({
+        "repos_checked": repos,
+        "tasks_found": len(all_results),
+        "results": all_results,
+    }, indent=2)
+
+
+GITHUB_WATCH_DELEGATIONS_SCHEMA = {
+    "name": "github_watch_delegations",
+    "description": (
+        "Check status of all active Dash delegation tasks across repos. "
+        "For each delegation issue, finds the linked PR, evaluates acceptance criteria "
+        "against the diff, posts a structured review comment, and updates checkboxes. "
+        "Run this after filing delegation issues, or during the daily brief to surface "
+        "approved/stalled/needs-human tasks."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "repos": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Repos to watch as 'owner/name'. Defaults to all installation repos.",
+            },
+        },
+    },
+}
+
+registry.register(
+    name="github_watch_delegations",
+    toolset="pm-github",
+    schema=GITHUB_WATCH_DELEGATIONS_SCHEMA,
+    handler=lambda args, **kw: github_watch_delegations(
+        repos=args.get("repos") or None,
+    ),
+)
