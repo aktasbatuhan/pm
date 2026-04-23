@@ -600,3 +600,168 @@ registry.register(
         agent_ids=args.get("agent_ids") or None,
     ),
 )
+
+
+# =============================================================================
+# Tool: github_delegate_task
+# =============================================================================
+
+def github_delegate_task(
+    repo: str,
+    title: str,
+    problem: str,
+    acceptance_criteria: list,
+    agent_id: str,
+    context: str = "",
+    constraints: str = "",
+    **kwargs,
+) -> str:
+    """File a structured Dash delegation issue and invoke the coding agent."""
+    import os
+    from agent_fleet.delegation import DelegationTask, build_delegation_issue, dispatch_post_create_actions
+    from agent_fleet.blueprint import get_agent_profile
+    from workspace_context import load_workspace_context
+
+    if "/" not in (repo or ""):
+        return json.dumps({"error": "repo must be 'owner/name'"})
+    if not title.strip() or not problem.strip() or not acceptance_criteria:
+        return json.dumps({"error": "title, problem, and acceptance_criteria are required"})
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if not token:
+        return json.dumps({"error": "No GitHub token."})
+
+    ws_id = (
+        os.environ.get("KAI_WORKSPACE_ID")
+        or os.environ.get("HERMES_WORKSPACE_ID")
+        or "default"
+    )
+    ctx = load_workspace_context(workspace_id=ws_id)
+    profile = get_agent_profile(ctx, agent_id)
+    if not profile:
+        return json.dumps({"error": f"No profile for agent '{agent_id}'. Run github_discover_agents or add it with github_manage_agent."})
+    if not profile.enabled:
+        return json.dumps({"error": f"Agent '{agent_id}' is disabled. Enable it first with github_manage_agent(action='enable', agent_id='{agent_id}')."})
+
+    task = DelegationTask(
+        title=title,
+        problem=problem,
+        acceptance_criteria=list(acceptance_criteria),
+        context=context,
+        constraints=constraints,
+        repo=repo,
+    )
+    issue_title, issue_body, post_create_actions = build_delegation_issue(task, profile)
+
+    # Create the issue
+    status, data = _github_request("POST", f"/repos/{repo}/issues", body={
+        "title": issue_title,
+        "body": issue_body,
+    })
+    if status != 201 or not isinstance(data, dict):
+        return json.dumps({"ok": False, "error": f"HTTP {status}", "details": data})
+
+    issue_number = data.get("number")
+    issue_url = data.get("html_url")
+
+    # Dispatch post-create actions (labels, assignments)
+    actions_log = []
+    if post_create_actions:
+        actions_log = dispatch_post_create_actions(repo, issue_number, post_create_actions, token)
+
+    inv_type, syntax, _ = profile.effective_invocation()
+    return json.dumps({
+        "ok": True,
+        "issue_number": issue_number,
+        "url": issue_url,
+        "title": issue_title,
+        "agent": profile.display_name(),
+        "invocation_type": inv_type,
+        "task_id": task.task_id,
+        "post_create_actions": actions_log,
+    }, indent=2)
+
+
+GITHUB_DELEGATE_TASK_SCHEMA = {
+    "name": "github_delegate_task",
+    "description": (
+        "Delegate a coding task to an external agent (Claude Code, Codex, Devin, etc.) "
+        "by filing a structured GitHub issue with acceptance criteria. "
+        "Automatically invokes the agent using the tenant's learned invocation pattern "
+        "(mention, label, assignment, or workflow trigger). "
+        "Requires the agent to be discovered (github_discover_agents) and enabled "
+        "(github_manage_agent). Always confirm with the user before calling — "
+        "this creates a visible GitHub issue."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "'owner/name' of the repo to file the issue in."},
+            "agent_id": {"type": "string", "description": "Agent id to delegate to (e.g. 'claude-code'). Must be enabled."},
+            "title": {"type": "string", "description": "Short goal statement — becomes the issue title (prefixed with '[Dash]')."},
+            "problem": {"type": "string", "description": "One-paragraph problem statement."},
+            "acceptance_criteria": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "List of verifiable acceptance criteria (each becomes a checkbox).",
+            },
+            "context": {"type": "string", "description": "Optional: relevant files, related issue URLs, links to docs."},
+            "constraints": {"type": "string", "description": "Optional: style, performance, API-compat constraints."},
+        },
+        "required": ["repo", "agent_id", "title", "problem", "acceptance_criteria"],
+    },
+}
+
+registry.register(
+    name="github_delegate_task",
+    toolset="pm-github",
+    schema=GITHUB_DELEGATE_TASK_SCHEMA,
+    handler=lambda args, **kw: github_delegate_task(
+        repo=args.get("repo", ""),
+        title=args.get("title", ""),
+        problem=args.get("problem", ""),
+        acceptance_criteria=args.get("acceptance_criteria") or [],
+        agent_id=args.get("agent_id", ""),
+        context=args.get("context", ""),
+        constraints=args.get("constraints", ""),
+    ),
+)
+
+
+# =============================================================================
+# Tool: github_find_dash_issues
+# =============================================================================
+
+def github_find_dash_issues(repo: str, state: str = "open", **kwargs) -> str:
+    """List all open Dash-authored delegation issues in a repo."""
+    import os
+    from agent_fleet.delegation import find_dash_issues
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if not token:
+        return json.dumps({"error": "No GitHub token."})
+    issues = find_dash_issues(repo, token, state=state)
+    return json.dumps({"repo": repo, "count": len(issues), "issues": issues}, indent=2)
+
+
+GITHUB_FIND_DASH_ISSUES_SCHEMA = {
+    "name": "github_find_dash_issues",
+    "description": "Find all Dash-authored delegation issues in a repo. Use this to check delegation status, find stalled tasks, or before running the PR watcher.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "'owner/name'"},
+            "state": {"type": "string", "enum": ["open", "closed", "all"], "description": "Issue state filter (default: open)."},
+        },
+        "required": ["repo"],
+    },
+}
+
+registry.register(
+    name="github_find_dash_issues",
+    toolset="pm-github",
+    schema=GITHUB_FIND_DASH_ISSUES_SCHEMA,
+    handler=lambda args, **kw: github_find_dash_issues(
+        repo=args.get("repo", ""),
+        state=args.get("state", "open"),
+    ),
+)
