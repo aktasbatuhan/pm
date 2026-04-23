@@ -516,3 +516,87 @@ registry.register(
         notes=args.get("notes"),
     ),
 )
+
+
+# =============================================================================
+# Tool: github_learn_invocations
+# =============================================================================
+
+def github_learn_invocations(agent_ids: list = None, **kwargs) -> str:
+    """Run invocation learning for enabled agents and update their profiles."""
+    import os
+    from agent_fleet.invocation import learn_invocation_pattern
+    from agent_fleet.blueprint import get_external_agents, get_enabled_agents, upsert_agent_profile
+    from workspace_context import load_workspace_context
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if not token:
+        return json.dumps({"error": "No GitHub token."})
+
+    ws_id = (
+        os.environ.get("KAI_WORKSPACE_ID")
+        or os.environ.get("HERMES_WORKSPACE_ID")
+        or "default"
+    )
+    ctx = load_workspace_context(workspace_id=ws_id)
+
+    # Resolve repos
+    status, data = _github_request("GET", "/installation/repositories?per_page=100")
+    if status != 200:
+        return json.dumps({"error": f"Could not list repos: HTTP {status}"})
+    repos = [r["full_name"] for r in (data or {}).get("repositories", [])]
+
+    # Determine which agents to learn for
+    all_profiles = get_external_agents(ctx)
+    if agent_ids:
+        targets = [p for p in all_profiles if p.id in agent_ids]
+    else:
+        targets = [p for p in all_profiles if p.enabled]
+
+    if not targets:
+        return json.dumps({"message": "No enabled agents to learn for. Run github_discover_agents first, then enable agents with github_manage_agent."})
+
+    results = []
+    for profile in targets:
+        updated = learn_invocation_pattern(profile, repos, token)
+        upsert_agent_profile(ctx, updated)
+        inv = updated.observed_invocation
+        results.append({
+            "id": updated.id,
+            "confidence": updated.confidence,
+            "primary": inv.primary.to_dict() if inv.primary else None,
+            "secondary": inv.secondary.to_dict() if inv.secondary else None,
+        })
+
+    return json.dumps({"agents_updated": len(results), "results": results}, indent=2)
+
+
+GITHUB_LEARN_INVOCATIONS_SCHEMA = {
+    "name": "github_learn_invocations",
+    "description": (
+        "Learn how this tenant actually invokes each enabled coding agent by scanning "
+        "recent PR/issue timelines. Updates the observed_invocation and confidence fields "
+        "on each agent's profile in the workspace blueprint. Run this after discovery "
+        "(github_discover_agents) to sharpen delegation accuracy. "
+        "Can be scoped to specific agent ids or defaults to all enabled agents."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "agent_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Optional list of agent ids to learn for. Defaults to all enabled agents.",
+            },
+        },
+    },
+}
+
+registry.register(
+    name="github_learn_invocations",
+    toolset="pm-github",
+    schema=GITHUB_LEARN_INVOCATIONS_SCHEMA,
+    handler=lambda args, **kw: github_learn_invocations(
+        agent_ids=args.get("agent_ids") or None,
+    ),
+)
