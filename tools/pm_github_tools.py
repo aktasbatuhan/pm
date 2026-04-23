@@ -838,3 +838,103 @@ registry.register(
         repos=args.get("repos") or None,
     ),
 )
+
+
+# =============================================================================
+# Tool: github_check_delegation_health
+# =============================================================================
+
+def github_check_delegation_health(repos: list = None, **kwargs) -> str:
+    """Evaluate health of all open delegation tasks and surface stalled/escalation items."""
+    import os, time
+    from agent_fleet.escalation import evaluate_task_health, load_delegation_policy, HealthStatus
+    from agent_fleet.watcher import watch_repo_delegations
+    from workspace_context import load_workspace_context
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if not token:
+        return json.dumps({"error": "No GitHub token."})
+
+    if not repos:
+        status, data = _github_request("GET", "/installation/repositories?per_page=100")
+        if status != 200:
+            return json.dumps({"error": f"Could not list repos: HTTP {status}"})
+        repos = [r["full_name"] for r in (data or {}).get("repositories", [])]
+
+    ws_id = (
+        os.environ.get("KAI_WORKSPACE_ID")
+        or os.environ.get("HERMES_WORKSPACE_ID")
+        or "default"
+    )
+    ctx = load_workspace_context(workspace_id=ws_id)
+    bp = ctx.get_blueprint()
+    policy = load_delegation_policy((bp or {}).get("data"))
+
+    verdicts = []
+    action_items = []
+
+    for repo in repos:
+        watch_results = watch_repo_delegations(repo, token)
+        for wr in watch_results:
+            verdict = evaluate_task_health(
+                task_status=wr.status,
+                agent_id=wr.agent_id,
+                issue_number=wr.issue_number,
+                issue_url=f"https://github.com/{repo}/issues/{wr.issue_number}",
+                task_title=f"Delegation #{wr.issue_number}",
+                created_at="",
+                last_activity_at=None,
+                pr_number=wr.pr_number,
+                pr_url=f"https://github.com/{repo}/pull/{wr.pr_number}" if wr.pr_number else None,
+                review_verdict=(wr.review.verdict if wr.review else None),
+                ping_count=0,
+                policy=policy,
+            )
+            verdicts.append({
+                "repo": repo,
+                "issue_number": wr.issue_number,
+                "status": verdict.status,
+                "reason": verdict.reason,
+                "action": verdict.recommended_action,
+                "should_re_ping": verdict.should_re_ping,
+                "should_escalate": verdict.should_escalate,
+                "fallback_agent": verdict.fallback_agent_id,
+            })
+            if verdict.action_item:
+                action_items.append(verdict.action_item)
+
+    return json.dumps({
+        "tasks_evaluated": len(verdicts),
+        "verdicts": verdicts,
+        "action_items_for_brief": action_items,
+    }, indent=2)
+
+
+GITHUB_CHECK_DELEGATION_HEALTH_SCHEMA = {
+    "name": "github_check_delegation_health",
+    "description": (
+        "Evaluate the health of all active delegation tasks. Detects stalled tasks, "
+        "agents that need re-pinging, and tasks requiring human intervention. "
+        "Returns action items ready for inclusion in the daily brief. "
+        "Run this during the brief pipeline or when checking delegation status."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "repos": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Repos to check. Defaults to all installation repos.",
+            },
+        },
+    },
+}
+
+registry.register(
+    name="github_check_delegation_health",
+    toolset="pm-github",
+    schema=GITHUB_CHECK_DELEGATION_HEALTH_SCHEMA,
+    handler=lambda args, **kw: github_check_delegation_health(
+        repos=args.get("repos") or None,
+    ),
+)
