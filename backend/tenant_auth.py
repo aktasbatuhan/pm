@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import jwt
@@ -23,6 +24,8 @@ TENANT_SCOPED_PATH_PREFIXES = (
 
 
 def is_tenant_scoped_path(path: str) -> bool:
+    if not os.getenv("SUPABASE_URL", "").strip():
+        return False
     return any(path.startswith(prefix) for prefix in TENANT_SCOPED_PATH_PREFIXES)
 
 
