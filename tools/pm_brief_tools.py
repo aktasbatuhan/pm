@@ -179,6 +179,38 @@ def _get_db():
     return db
 
 
+def _normalize_action_items(action_items):
+    """Parse and normalize brief action items into a consistent list of dicts."""
+    try:
+        parsed_items = json.loads(action_items) if isinstance(action_items, str) else action_items
+    except json.JSONDecodeError:
+        return None, "action_items must be valid JSON array"
+
+    if not isinstance(parsed_items, list):
+        return None, "action_items must be valid JSON array"
+
+    normalized_items = []
+    for item in parsed_items:
+        item_data = item if isinstance(item, dict) else {}
+        title = item_data.get("title", "")
+        description = item_data.get("description", "")
+        refs = item_data.get("references", [])
+        if not isinstance(refs, list):
+            refs = []
+        if not refs:
+            refs = _extract_references(f"{title} {description}")
+
+        normalized_items.append({
+            "category": item_data.get("category", "risk"),
+            "title": title,
+            "description": description,
+            "priority": item_data.get("priority", "medium"),
+            "references": refs,
+        })
+
+    return normalized_items, None
+
+
 # =============================================================================
 # Tool: brief_store
 # =============================================================================
@@ -189,11 +221,9 @@ def brief_store(summary: str, action_items: str, headline: str = "", data_source
     brief_id = str(uuid.uuid4())[:8]
     now = time.time()
 
-    # Parse action items JSON
-    try:
-        items = json.loads(action_items) if isinstance(action_items, str) else action_items
-    except json.JSONDecodeError:
-        return json.dumps({"error": "action_items must be valid JSON array"})
+    items, error = _normalize_action_items(action_items)
+    if error:
+        return json.dumps({"error": error})
 
     # Parse suggested prompts
     try:
@@ -211,15 +241,11 @@ def brief_store(summary: str, action_items: str, headline: str = "", data_source
     # Store individual action items
     for item in items:
         action_id = str(uuid.uuid4())[:8]
-        # Extract references: explicit from agent, or auto-detect from text
-        refs = item.get("references", [])
-        if not refs:
-            refs = _extract_references(item.get("title", "") + " " + item.get("description", ""))
         db.execute(
             "INSERT INTO brief_actions (id, brief_id, category, title, description, priority, status, references_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
             (action_id, brief_id, item.get("category", "risk"), item.get("title", ""),
              item.get("description", ""), item.get("priority", "medium"),
-             json.dumps(refs), now, now)
+             json.dumps(item.get("references", [])), now, now)
         )
 
     db.commit()
