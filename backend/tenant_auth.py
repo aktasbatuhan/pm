@@ -95,6 +95,8 @@ def build_tenant_context(request: Request) -> TenantContext:
 def get_current_tenant(request: Request) -> TenantContext:
     context = getattr(request.state, "tenant_context", None)
     if context is None:
+        if not os.getenv("SUPABASE_URL", "").strip():
+            return TenantContext(user_id="default", tenant_id="default", role="owner")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=(
