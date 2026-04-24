@@ -28,6 +28,7 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("z-ai/glm-5",                      ""),
     ("moonshotai/kimi-k2.5",            ""),
     ("minimax/minimax-m2.5",            ""),
+    ("deepseek/deepseek-v4-flash",      ""),
 ]
 
 _PROVIDER_MODELS: dict[str, list[str]] = {
