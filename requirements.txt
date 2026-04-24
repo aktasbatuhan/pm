@@ -4,12 +4,13 @@ starlette==0.45.3
 uvicorn==0.42.0
 python-multipart==0.0.9
 sse-starlette==2.3.6
-websockets==16.0
+websockets==14.2
 
 # HTTP clients
 httpx==0.28.1
 requests==2.32.3
 aiohttp==3.12.13
+supabase==2.15.3
 
 # Config / env
 python-dotenv==1.2.2

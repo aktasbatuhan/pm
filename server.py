@@ -75,6 +75,7 @@ def _get_integrations_db():
 
 import hashlib
 import secrets
+import httpx
 
 logger = logging.getLogger(__name__)
 
@@ -2462,6 +2463,33 @@ def cron_status():
             for j in jobs
         ],
     }
+
+
+@app.get("/api/health/supabase")
+def supabase_health():
+    """Diagnostic: check Supabase REST reachability and basic query latency."""
+    started_at = time.perf_counter()
+    try:
+        from backend.db.supabase_client import get_service_role_client, get_supabase_settings
+
+        settings = get_supabase_settings()
+        get_service_role_client()  # validates env + client init
+
+        with httpx.Client(timeout=8.0) as client:
+            response = client.get(
+                f"{settings.url.rstrip('/')}/rest/v1/connection_test",
+                params={"select": "id", "limit": "1"},
+                headers={
+                    "apikey": settings.service_role_key,
+                    "Authorization": f"Bearer {settings.service_role_key}",
+                },
+            )
+            response.raise_for_status()
+
+        latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        return {"ok": True, "latency_ms": latency_ms}
+    except Exception as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
 
 
 @app.post("/api/cron/run/{job_id}")
