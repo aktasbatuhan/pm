@@ -123,7 +123,8 @@ def _get_db():
     db = sqlite3.connect(str(_DB_PATH), check_same_thread=False, timeout=10.0)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
-    # Ensure tables exist
+    # Create tables (without the tenant_id index — that comes after the ALTER
+    # migration so legacy DBs that predate the column don't crash here).
     db.executescript("""
         CREATE TABLE IF NOT EXISTS briefs (
             id TEXT PRIMARY KEY,
@@ -151,7 +152,6 @@ def _get_db():
         CREATE INDEX IF NOT EXISTS idx_briefs_created ON briefs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_actions_brief ON brief_actions(brief_id);
         CREATE INDEX IF NOT EXISTS idx_actions_status ON brief_actions(status);
-        CREATE INDEX IF NOT EXISTS idx_briefs_tenant ON briefs(tenant_id, created_at DESC);
     """)
     for table in ("briefs", "brief_actions"):
         try:
@@ -162,6 +162,12 @@ def _get_db():
                 db.commit()
             except Exception:
                 pass
+    # Tenant index must be created AFTER the ALTER migration.
+    try:
+        db.execute("CREATE INDEX IF NOT EXISTS idx_briefs_tenant ON briefs(tenant_id, created_at DESC)")
+        db.commit()
+    except Exception:
+        pass
     # Migration: add suggested_prompts column if missing
     try:
         db.execute("SELECT suggested_prompts FROM briefs LIMIT 0")
