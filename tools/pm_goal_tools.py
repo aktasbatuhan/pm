@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from kai_env import kai_home
+from backend.tenant_context import require_tenant_context
 from tools.registry import registry
 
 
@@ -31,6 +32,7 @@ def _db() -> sqlite3.Connection:
     db.executescript("""
         CREATE TABLE IF NOT EXISTS goals (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             title TEXT NOT NULL,
             description TEXT,
             target_date TEXT,
@@ -45,6 +47,7 @@ def _db() -> sqlite3.Connection:
         );
         CREATE TABLE IF NOT EXISTS goal_snapshots (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             goal_id TEXT NOT NULL,
             progress INTEGER DEFAULT 0,
             trajectory TEXT,
@@ -54,8 +57,10 @@ def _db() -> sqlite3.Connection:
             created_at REAL NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_goal_snapshots_goal ON goal_snapshots(goal_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_goals_tenant ON goals(tenant_id, created_at DESC);
     """)
     for col, ddl in (
+        ("tenant_id", "ALTER TABLE goals ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'"),
         ("action_items", "ALTER TABLE goals ADD COLUMN action_items TEXT DEFAULT '[]'"),
         ("last_evaluated_at", "ALTER TABLE goals ADD COLUMN last_evaluated_at REAL"),
     ):
@@ -67,6 +72,14 @@ def _db() -> sqlite3.Connection:
                 db.commit()
             except Exception:
                 pass
+    try:
+        db.execute("SELECT tenant_id FROM goal_snapshots LIMIT 0")
+    except Exception:
+        try:
+            db.execute("ALTER TABLE goal_snapshots ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+            db.commit()
+        except Exception:
+            pass
     return db
 
 
@@ -75,12 +88,13 @@ def _db() -> sqlite3.Connection:
 # =============================================================================
 
 def goal_list(status: str = "active", **kwargs) -> str:
+    tenant = require_tenant_context(kwargs=kwargs, consumer="goal_list")
     db = _db()
     if status == "all":
-        rows = db.execute("SELECT * FROM goals ORDER BY created_at DESC").fetchall()
+        rows = db.execute("SELECT * FROM goals WHERE tenant_id = ? ORDER BY created_at DESC", (tenant.tenant_id,)).fetchall()
     else:
         rows = db.execute(
-            "SELECT * FROM goals WHERE status = ? ORDER BY created_at DESC", (status,)
+            "SELECT * FROM goals WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC", (tenant.tenant_id, status)
         ).fetchall()
     goals = []
     for r in rows:
@@ -115,8 +129,9 @@ GOAL_LIST_SCHEMA = {
 # =============================================================================
 
 def goal_get(goal_id: str, include_history: bool = False, **kwargs) -> str:
+    tenant = require_tenant_context(kwargs=kwargs, consumer="goal_get")
     db = _db()
-    row = db.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    row = db.execute("SELECT * FROM goals WHERE id = ? AND tenant_id = ?", (goal_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"Goal {goal_id} not found."})
     g = dict(row)
@@ -127,8 +142,8 @@ def goal_get(goal_id: str, include_history: bool = False, **kwargs) -> str:
             g[field] = []
     if include_history:
         hist_rows = db.execute(
-            "SELECT * FROM goal_snapshots WHERE goal_id = ? ORDER BY created_at DESC LIMIT 10",
-            (goal_id,),
+            "SELECT * FROM goal_snapshots WHERE goal_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 10",
+            (goal_id, tenant.tenant_id),
         ).fetchall()
         history = []
         for h in hist_rows:
@@ -173,8 +188,9 @@ def goal_update_progress(
     **kwargs,
 ) -> str:
     """Update a goal's progress and write a snapshot for trajectory tracking."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="goal_update_progress")
     db = _db()
-    row = db.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+    row = db.execute("SELECT * FROM goals WHERE id = ? AND tenant_id = ?", (goal_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"Goal {goal_id} not found."})
 
@@ -189,14 +205,14 @@ def goal_update_progress(
     now = time.time()
 
     db.execute(
-        "UPDATE goals SET progress = ?, trajectory = ?, action_items = ?, last_evaluated_at = ?, updated_at = ? WHERE id = ?",
-        (progress, trajectory, json.dumps(items), now, now, goal_id),
+        "UPDATE goals SET progress = ?, trajectory = ?, action_items = ?, last_evaluated_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        (progress, trajectory, json.dumps(items), now, now, goal_id, tenant.tenant_id),
     )
     snapshot_id = uuid.uuid4().hex[:12]
     db.execute(
-        "INSERT INTO goal_snapshots (id, goal_id, progress, trajectory, action_items, brief_id, notes, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (snapshot_id, goal_id, progress, trajectory, json.dumps(items), brief_id or None, notes or None, now),
+        "INSERT INTO goal_snapshots (id, tenant_id, goal_id, progress, trajectory, action_items, brief_id, notes, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (snapshot_id, tenant.tenant_id, goal_id, progress, trajectory, json.dumps(items), brief_id or None, notes or None, now),
     )
     db.commit()
     return json.dumps({
@@ -258,7 +274,7 @@ registry.register(
     name="goal_list",
     toolset="pm-goals",
     schema=GOAL_LIST_SCHEMA,
-    handler=lambda args, **kw: goal_list(status=args.get("status", "active")),
+    handler=lambda args, **kw: goal_list(status=args.get("status", "active"), **kw),
 )
 
 registry.register(
@@ -268,6 +284,7 @@ registry.register(
     handler=lambda args, **kw: goal_get(
         goal_id=args.get("goal_id", ""),
         include_history=bool(args.get("include_history", False)),
+        **kw,
     ),
 )
 
@@ -282,5 +299,6 @@ registry.register(
         action_items=args.get("action_items", "[]"),
         brief_id=args.get("brief_id", ""),
         notes=args.get("notes", ""),
+        **kw,
     ),
 )

@@ -114,3 +114,28 @@ Optional test-only vars:
 
 - `GET /api/health/supabase` should return `{ "ok": true, "latency_ms": <number> }`.
 - Run `pytest tests/integration/test_supabase_rls_integration.py -m integration`.
+
+## 7) Tenant auth + middleware behavior (#27)
+
+Tenant-scoped API paths (`/api/brief*`, `/api/goals*`, `/api/kpis*`, `/api/workspace*`, `/api/chat`) now require a Supabase JWT:
+
+- Missing/empty `Authorization: Bearer <jwt>` → `401` (`"Missing Supabase JWT"`).
+- Valid JWT with no matching row in `tenant_memberships` → `403`.
+- When tenant context is unexpectedly absent at a tenant-scoped endpoint dependency, API returns `500` with an explicit middleware-misconfiguration message (fail-closed).
+
+`x-tenant-id` is optional. If present, membership must match that tenant; otherwise default membership (or first membership) is used.
+
+## 8) Gateway tenant mapping hook (Slack/Telegram/etc.)
+
+Gateway dispatch can now map source identifiers to tenant IDs through `TENANT_SOURCE_MAP`.
+
+Example:
+
+```bash
+export TENANT_SOURCE_MAP='{
+  "slack:C01234567": "tenant-uuid-a",
+  "telegram:-100987654321": "tenant-uuid-b"
+}'
+```
+
+This sets `KAI_TENANT_ID`/`HERMES_TENANT_ID` in the gateway session env before tool dispatch. Full persistence/discovery wiring remains future work (this PR adds the interface + env-backed resolver stub).

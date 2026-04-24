@@ -21,13 +21,16 @@ _project_env = Path(__file__).parent / ".env"
 if _project_env.exists():
     load_dotenv(dotenv_path=_project_env)
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse, HTMLResponse
 from starlette.middleware.cors import CORSMiddleware
 
 import sqlite3
 from kai_env import kai_home
 from workspace_context import load_workspace_context
+from backend.db.supabase_client import get_service_role_client, get_supabase_settings
+from backend.tenant_auth import build_tenant_context, get_current_tenant, is_tenant_scoped_path
+from backend.tenant_context import reset_current_tenant, set_current_tenant
 from tools.pm_brief_tools import _get_db
 
 # ── Integrations DB ────────────────────────────────────────────────────
@@ -81,6 +84,35 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Dash PM API")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def tenant_context_middleware(request: Request, call_next):
+    """Resolve per-request tenant context for tenant-scoped API paths."""
+    if not is_tenant_scoped_path(request.url.path):
+        return await call_next(request)
+
+    try:
+        tenant_context = build_tenant_context(request)
+    except Exception as exc:
+        from fastapi import HTTPException
+
+        if isinstance(exc, HTTPException):
+            return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+        raise
+    request.state.tenant_context = tenant_context
+
+    # Expose request tenant context to tool paths that execute within this request.
+    os.environ["KAI_TENANT_ID"] = tenant_context.tenant_id
+    os.environ["HERMES_TENANT_ID"] = tenant_context.tenant_id
+    os.environ["KAI_USER_ID"] = tenant_context.user_id
+    os.environ["KAI_TENANT_ROLE"] = tenant_context.role
+
+    token = set_current_tenant(tenant_context)
+    try:
+        return await call_next(request)
+    finally:
+        reset_current_tenant(token)
 
 
 # ── Auth ───────────────────────────────────────────────────────────────
@@ -2217,9 +2249,9 @@ def delete_session(session_id: str):
 # ── Workspace endpoint ─────────────────────────────────────────────────
 
 @app.get("/api/workspace/status")
-def workspace_status():
+def workspace_status(tenant=Depends(get_current_tenant)):
     try:
-        ctx = load_workspace_context(workspace_id=_ws_id())
+        ctx = load_workspace_context(workspace_id=tenant.tenant_id)
         bp = ctx.get_blueprint()
         learnings = ctx.get_learnings(limit=10)
         onboarding = ctx.get_onboarding_status()
@@ -2235,6 +2267,11 @@ def workspace_status():
         }
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.get("/api/tenant/context")
+def tenant_context_debug(tenant=Depends(get_current_tenant)):
+    return {"user_id": tenant.user_id, "tenant_id": tenant.tenant_id, "role": tenant.role}
 
 
 @app.post("/api/chat")
@@ -2470,8 +2507,6 @@ def supabase_health():
     """Diagnostic: check Supabase REST reachability and basic query latency."""
     started_at = time.perf_counter()
     try:
-        from backend.db.supabase_client import get_service_role_client, get_supabase_settings
-
         settings = get_supabase_settings()
         get_service_role_client()  # validates env + client init
 

@@ -11,17 +11,14 @@ import os
 import time
 from typing import Optional
 
+from backend.tenant_context import require_tenant_context
 from workspace_context import WorkspaceContext, load_workspace_context
 from tools.registry import registry
 
 
-def _get_ctx() -> WorkspaceContext:
-    ws_id = (
-        os.environ.get("KAI_WORKSPACE_ID")
-        or os.environ.get("HERMES_WORKSPACE_ID")
-        or "default"
-    )
-    return load_workspace_context(workspace_id=ws_id)
+def _get_ctx(**kwargs) -> WorkspaceContext:
+    tenant = require_tenant_context(kwargs=kwargs, consumer="pm_workspace_tools")
+    return load_workspace_context(workspace_id=tenant.tenant_id)
 
 
 # =============================================================================
@@ -30,7 +27,7 @@ def _get_ctx() -> WorkspaceContext:
 
 def workspace_get_blueprint(**kwargs) -> str:
     """Get the current workspace blueprint."""
-    ctx = _get_ctx()
+    ctx = _get_ctx(**kwargs)
     bp = ctx.get_blueprint()
     if not bp:
         return json.dumps({"message": "No blueprint yet. Run onboarding to create one."})
@@ -54,7 +51,7 @@ WORKSPACE_GET_BLUEPRINT_SCHEMA = {
 
 def workspace_update_blueprint(summary: str, data: str, **kwargs) -> str:
     """Update the workspace blueprint."""
-    ctx = _get_ctx()
+    ctx = _get_ctx(**kwargs)
     try:
         parsed_data = json.loads(data) if isinstance(data, str) else data
     except json.JSONDecodeError:
@@ -90,7 +87,7 @@ WORKSPACE_UPDATE_BLUEPRINT_SCHEMA = {
 
 def workspace_get_learnings(category: str = "", limit: int = 20, **kwargs) -> str:
     """Get workspace learnings, optionally filtered by category."""
-    ctx = _get_ctx()
+    ctx = _get_ctx(**kwargs)
     learnings = ctx.get_learnings(limit=limit)
     if category:
         learnings = [l for l in learnings if l["category"] == category]
@@ -124,7 +121,7 @@ WORKSPACE_GET_LEARNINGS_SCHEMA = {
 
 def workspace_add_learning(category: str, content: str, **kwargs) -> str:
     """Add a learning to the workspace."""
-    ctx = _get_ctx()
+    ctx = _get_ctx(**kwargs)
     ctx.add_learning(category, content)
     return json.dumps({"success": True, "message": f"Learning added [{category}]."})
 
@@ -155,7 +152,7 @@ WORKSPACE_ADD_LEARNING_SCHEMA = {
 
 def workspace_set_onboarding_status(status: str, phase: str = "", **kwargs) -> str:
     """Update workspace onboarding status."""
-    ctx = _get_ctx()
+    ctx = _get_ctx(**kwargs)
     ctx.set_onboarding_status(status, phase or None)
     return json.dumps({"success": True, "status": status, "phase": phase})
 
@@ -189,7 +186,7 @@ registry.register(
     name="workspace_get_blueprint",
     toolset="pm-workspace",
     schema=WORKSPACE_GET_BLUEPRINT_SCHEMA,
-    handler=lambda args, **kw: workspace_get_blueprint(),
+    handler=lambda args, **kw: workspace_get_blueprint(**kw),
 )
 
 registry.register(
@@ -198,7 +195,8 @@ registry.register(
     schema=WORKSPACE_UPDATE_BLUEPRINT_SCHEMA,
     handler=lambda args, **kw: workspace_update_blueprint(
         summary=args.get("summary", ""),
-        data=args.get("data", "{}")),
+        data=args.get("data", "{}"),
+        **kw),
 )
 
 registry.register(
@@ -207,7 +205,8 @@ registry.register(
     schema=WORKSPACE_GET_LEARNINGS_SCHEMA,
     handler=lambda args, **kw: workspace_get_learnings(
         category=args.get("category", ""),
-        limit=int(args.get("limit", 20))),
+        limit=int(args.get("limit", 20)),
+        **kw),
 )
 
 registry.register(
@@ -216,7 +215,8 @@ registry.register(
     schema=WORKSPACE_ADD_LEARNING_SCHEMA,
     handler=lambda args, **kw: workspace_add_learning(
         category=args.get("category", ""),
-        content=args.get("content", "")),
+        content=args.get("content", ""),
+        **kw),
 )
 
 registry.register(
@@ -225,5 +225,6 @@ registry.register(
     schema=WORKSPACE_SET_ONBOARDING_STATUS_SCHEMA,
     handler=lambda args, **kw: workspace_set_onboarding_status(
         status=args.get("status", ""),
-        phase=args.get("phase", "")),
+        phase=args.get("phase", ""),
+        **kw),
 )

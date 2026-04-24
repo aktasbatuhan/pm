@@ -169,6 +169,7 @@ from gateway.session import (
 )
 from gateway.delivery import DeliveryRouter, DeliveryTarget
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType
+from gateway.tenant_resolver import EnvTenantResolver
 
 logger = logging.getLogger(__name__)
 
@@ -274,6 +275,7 @@ class GatewayRunner:
         # Event hook system
         from gateway.hooks import HookRegistry
         self.hooks = HookRegistry()
+        self._tenant_resolver = EnvTenantResolver()
     
     def _flush_memories_for_session(self, old_session_id: str):
         """Prompt the agent to save memories/skills before context is lost.
@@ -2760,11 +2762,16 @@ class GatewayRunner:
         if context.source.chat_name:
             os.environ["KAI_SESSION_CHAT_NAME"] = context.source.chat_name
             os.environ["HERMES_SESSION_CHAT_NAME"] = context.source.chat_name
+        tenant_id = self._tenant_resolver.resolve(context.source)
+        if tenant_id:
+            os.environ["KAI_TENANT_ID"] = tenant_id
+            os.environ["HERMES_TENANT_ID"] = tenant_id
     
     def _clear_session_env(self) -> None:
         """Clear session environment variables."""
         for var in ["KAI_SESSION_PLATFORM", "KAI_SESSION_CHAT_ID", "KAI_SESSION_CHAT_NAME",
-                    "HERMES_SESSION_PLATFORM", "HERMES_SESSION_CHAT_ID", "HERMES_SESSION_CHAT_NAME"]:
+                    "HERMES_SESSION_PLATFORM", "HERMES_SESSION_CHAT_ID", "HERMES_SESSION_CHAT_NAME",
+                    "KAI_TENANT_ID", "HERMES_TENANT_ID"]:
             if var in os.environ:
                 del os.environ[var]
     

@@ -14,6 +14,7 @@ import time
 import uuid
 
 from kai_env import kai_home
+from backend.tenant_context import require_tenant_context
 from tools.registry import registry
 
 
@@ -27,6 +28,7 @@ def _db() -> sqlite3.Connection:
     db.executescript("""
         CREATE TABLE IF NOT EXISTS kpis (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             name TEXT NOT NULL,
             description TEXT,
             unit TEXT,
@@ -45,6 +47,7 @@ def _db() -> sqlite3.Connection:
         );
         CREATE TABLE IF NOT EXISTS kpi_values (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             kpi_id TEXT NOT NULL,
             value REAL NOT NULL,
             source TEXT,
@@ -54,6 +57,7 @@ def _db() -> sqlite3.Connection:
         CREATE INDEX IF NOT EXISTS idx_kpi_values_kpi ON kpi_values(kpi_id, recorded_at DESC);
         CREATE TABLE IF NOT EXISTS kpi_flags (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             kpi_id TEXT NOT NULL,
             kind TEXT NOT NULL,
             title TEXT NOT NULL,
@@ -65,15 +69,25 @@ def _db() -> sqlite3.Connection:
             updated_at REAL NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_kpi_flags_kpi ON kpi_flags(kpi_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_kpis_tenant ON kpis(tenant_id, created_at DESC);
     """)
+    for table in ("kpis", "kpi_values", "kpi_flags"):
+        try:
+            db.execute(f"SELECT tenant_id FROM {table} LIMIT 0")
+        except Exception:
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+                db.commit()
+            except Exception:
+                pass
     return db
 
 
-def _fetch_history(db, kpi_id: str, limit: int = 30):
+def _fetch_history(db, kpi_id: str, tenant_id: str, limit: int = 30):
     rows = db.execute(
-        "SELECT id, value, source, notes, recorded_at FROM kpi_values WHERE kpi_id = ? "
+        "SELECT id, value, source, notes, recorded_at FROM kpi_values WHERE kpi_id = ? AND tenant_id = ? "
         "ORDER BY recorded_at DESC LIMIT ?",
-        (kpi_id, limit),
+        (kpi_id, tenant_id, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -83,17 +97,18 @@ def _fetch_history(db, kpi_id: str, limit: int = 30):
 # =============================================================================
 
 def kpi_list(status: str = "active", **kwargs) -> str:
+    tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_list")
     db = _db()
     if status == "all":
-        rows = db.execute("SELECT * FROM kpis ORDER BY created_at DESC").fetchall()
+        rows = db.execute("SELECT * FROM kpis WHERE tenant_id = ? ORDER BY created_at DESC", (tenant.tenant_id,)).fetchall()
     else:
         rows = db.execute(
-            "SELECT * FROM kpis WHERE status = ? ORDER BY created_at DESC", (status,)
+            "SELECT * FROM kpis WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC", (tenant.tenant_id, status)
         ).fetchall()
     kpis = []
     for r in rows:
         k = dict(r)
-        k["recent_values"] = _fetch_history(db, k["id"], limit=8)
+        k["recent_values"] = _fetch_history(db, k["id"], tenant.tenant_id, limit=8)
         kpis.append(k)
     return json.dumps({"count": len(kpis), "kpis": kpis})
 
@@ -118,15 +133,16 @@ KPI_LIST_SCHEMA = {
 # =============================================================================
 
 def kpi_get(kpi_id: str, history_limit: int = 30, **kwargs) -> str:
+    tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_get")
     db = _db()
-    row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"KPI {kpi_id} not found."})
     k = dict(row)
-    k["history"] = _fetch_history(db, kpi_id, limit=history_limit)
+    k["history"] = _fetch_history(db, kpi_id, tenant.tenant_id, limit=history_limit)
     open_flags = db.execute(
-        "SELECT * FROM kpi_flags WHERE kpi_id = ? AND status = 'open' ORDER BY created_at DESC",
-        (kpi_id,),
+        "SELECT * FROM kpi_flags WHERE tenant_id = ? AND kpi_id = ? AND status = 'open' ORDER BY created_at DESC",
+        (tenant.tenant_id, kpi_id),
     ).fetchall()
     k["open_flags"] = [dict(f) for f in open_flags]
     return json.dumps(k)
@@ -158,16 +174,17 @@ def kpi_set_measurement_plan(
     **kwargs,
 ) -> str:
     """Set or update the agent-authored measurement plan for a KPI."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_set_measurement_plan")
     db = _db()
-    row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"KPI {kpi_id} not found."})
     if status not in ("configured", "failed", "pending"):
         status = "configured"
     now = time.time()
     db.execute(
-        "UPDATE kpis SET measurement_plan = ?, measurement_status = ?, measurement_error = ?, updated_at = ? WHERE id = ?",
-        (plan, status, error or None, now, kpi_id),
+        "UPDATE kpis SET measurement_plan = ?, measurement_status = ?, measurement_error = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        (plan, status, error or None, now, kpi_id, tenant.tenant_id),
     )
     db.commit()
     return json.dumps({"ok": True, "kpi_id": kpi_id, "measurement_status": status})
@@ -215,8 +232,9 @@ def kpi_record_value(
     **kwargs,
 ) -> str:
     """Record a new measurement for a KPI. Updates current/previous values."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_record_value")
     db = _db()
-    row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"KPI {kpi_id} not found."})
 
@@ -228,13 +246,13 @@ def kpi_record_value(
     now = time.time()
     vid = uuid.uuid4().hex[:12]
     db.execute(
-        "INSERT INTO kpi_values (id, kpi_id, value, source, notes, recorded_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (vid, kpi_id, value, source or None, notes or None, now),
+        "INSERT INTO kpi_values (id, tenant_id, kpi_id, value, source, notes, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (vid, tenant.tenant_id, kpi_id, value, source or None, notes or None, now),
     )
     db.execute(
         "UPDATE kpis SET previous_value = current_value, current_value = ?, last_measured_at = ?, "
-        "measurement_status = 'configured', measurement_error = NULL, updated_at = ? WHERE id = ?",
-        (value, now, now, kpi_id),
+        "measurement_status = 'configured', measurement_error = NULL, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        (value, now, now, kpi_id, tenant.tenant_id),
     )
     db.commit()
 
@@ -292,8 +310,9 @@ def kpi_flag(
     if kind not in ("risk", "opportunity"):
         return json.dumps({"error": "kind must be 'risk' or 'opportunity'"})
 
+    tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_flag")
     db = _db()
-    row = db.execute("SELECT id FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
+    row = db.execute("SELECT id FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"KPI {kpi_id} not found."})
 
@@ -307,10 +326,10 @@ def kpi_flag(
     flag_id = uuid.uuid4().hex[:12]
     now = time.time()
     db.execute(
-        "INSERT INTO kpi_flags (id, kpi_id, kind, title, description, references_json, "
+        "INSERT INTO kpi_flags (id, tenant_id, kpi_id, kind, title, description, references_json, "
         "brief_id, status, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
-        (flag_id, kpi_id, kind, title, description or None,
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)",
+        (flag_id, tenant.tenant_id, kpi_id, kind, title, description or None,
          json.dumps(refs), brief_id or None, now, now),
     )
     db.commit()
@@ -358,7 +377,7 @@ registry.register(
     name="kpi_list",
     toolset="pm-kpis",
     schema=KPI_LIST_SCHEMA,
-    handler=lambda args, **kw: kpi_list(status=args.get("status", "active")),
+    handler=lambda args, **kw: kpi_list(status=args.get("status", "active"), **kw),
 )
 
 registry.register(
@@ -368,6 +387,7 @@ registry.register(
     handler=lambda args, **kw: kpi_get(
         kpi_id=args.get("kpi_id", ""),
         history_limit=int(args.get("history_limit", 30)),
+        **kw,
     ),
 )
 
@@ -380,6 +400,7 @@ registry.register(
         plan=args.get("plan", ""),
         status=args.get("status", "configured"),
         error=args.get("error", ""),
+        **kw,
     ),
 )
 
@@ -392,6 +413,7 @@ registry.register(
         value=args.get("value"),
         source=args.get("source", ""),
         notes=args.get("notes", ""),
+        **kw,
     ),
 )
 
@@ -406,5 +428,6 @@ registry.register(
         description=args.get("description", ""),
         references=args.get("references", "[]"),
         brief_id=args.get("brief_id", ""),
+        **kw,
     ),
 )

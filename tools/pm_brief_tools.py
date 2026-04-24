@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from kai_env import kai_home
+from backend.tenant_context import require_tenant_context
 
 _kai_home = kai_home()
 _DB_PATH = _kai_home / "workspace.db"
@@ -126,6 +127,7 @@ def _get_db():
     db.executescript("""
         CREATE TABLE IF NOT EXISTS briefs (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             workspace_id TEXT NOT NULL DEFAULT 'default',
             summary TEXT NOT NULL,
             action_items TEXT NOT NULL,
@@ -134,6 +136,7 @@ def _get_db():
         );
         CREATE TABLE IF NOT EXISTS brief_actions (
             id TEXT PRIMARY KEY,
+            tenant_id TEXT NOT NULL DEFAULT 'default',
             brief_id TEXT NOT NULL,
             category TEXT NOT NULL,
             title TEXT NOT NULL,
@@ -148,7 +151,17 @@ def _get_db():
         CREATE INDEX IF NOT EXISTS idx_briefs_created ON briefs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_actions_brief ON brief_actions(brief_id);
         CREATE INDEX IF NOT EXISTS idx_actions_status ON brief_actions(status);
+        CREATE INDEX IF NOT EXISTS idx_briefs_tenant ON briefs(tenant_id, created_at DESC);
     """)
+    for table in ("briefs", "brief_actions"):
+        try:
+            db.execute(f"SELECT tenant_id FROM {table} LIMIT 0")
+        except Exception:
+            try:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'default'")
+                db.commit()
+            except Exception:
+                pass
     # Migration: add suggested_prompts column if missing
     try:
         db.execute("SELECT suggested_prompts FROM briefs LIMIT 0")
@@ -217,6 +230,7 @@ def _normalize_action_items(action_items):
 
 def brief_store(summary: str, action_items: str, headline: str = "", data_sources: str = "", suggested_prompts: str = "", **kwargs) -> str:
     """Store a completed brief with its action items."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="brief_store")
     db = _get_db()
     brief_id = str(uuid.uuid4())[:8]
     now = time.time()
@@ -233,17 +247,17 @@ def brief_store(summary: str, action_items: str, headline: str = "", data_source
 
     # Store brief
     db.execute(
-        "INSERT INTO briefs (id, summary, action_items, data_sources, suggested_prompts, headline, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (brief_id, summary, json.dumps(items), data_sources, json.dumps(prompts), headline or "", now)
+        "INSERT INTO briefs (id, tenant_id, workspace_id, summary, action_items, data_sources, suggested_prompts, headline, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (brief_id, tenant.tenant_id, tenant.tenant_id, summary, json.dumps(items), data_sources, json.dumps(prompts), headline or "", now)
     )
 
     # Store individual action items
     for item in items:
         action_id = str(uuid.uuid4())[:8]
         db.execute(
-            "INSERT INTO brief_actions (id, brief_id, category, title, description, priority, status, references_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
-            (action_id, brief_id, item.get("category", "risk"), item.get("title", ""),
+            "INSERT INTO brief_actions (id, tenant_id, brief_id, category, title, description, priority, status, references_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (action_id, tenant.tenant_id, brief_id, item.get("category", "risk"), item.get("title", ""),
              item.get("description", ""), item.get("priority", "medium"),
              json.dumps(item.get("references", [])), now, now)
         )
@@ -295,14 +309,15 @@ BRIEF_STORE_SCHEMA = {
 
 def brief_get_latest(**kwargs) -> str:
     """Get the most recent brief."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="brief_get_latest")
     db = _get_db()
-    row = db.execute("SELECT * FROM briefs ORDER BY created_at DESC LIMIT 1").fetchone()
+    row = db.execute("SELECT * FROM briefs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1", (tenant.tenant_id,)).fetchone()
     if not row:
         return json.dumps({"message": "No briefs stored yet."})
 
     actions = db.execute(
-        "SELECT * FROM brief_actions WHERE brief_id = ? ORDER BY created_at",
-        (row["id"],)
+        "SELECT * FROM brief_actions WHERE tenant_id = ? AND brief_id = ? ORDER BY created_at",
+        (tenant.tenant_id, row["id"])
     ).fetchall()
 
     out = {
@@ -332,13 +347,14 @@ BRIEF_GET_LATEST_SCHEMA = {
 
 def brief_get_action_items(status: str = "pending", **kwargs) -> str:
     """Get action items filtered by status."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="brief_get_action_items")
     db = _get_db()
     if status == "all":
-        rows = db.execute("SELECT * FROM brief_actions ORDER BY created_at DESC LIMIT 20").fetchall()
+        rows = db.execute("SELECT * FROM brief_actions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 20", (tenant.tenant_id,)).fetchall()
     else:
         rows = db.execute(
-            "SELECT * FROM brief_actions WHERE status = ? ORDER BY created_at DESC LIMIT 20",
-            (status,)
+            "SELECT * FROM brief_actions WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC LIMIT 20",
+            (tenant.tenant_id, status)
         ).fetchall()
 
     if not rows:
@@ -372,14 +388,15 @@ BRIEF_GET_ACTION_ITEMS_SCHEMA = {
 
 def brief_resolve_action(action_id: str, status: str = "resolved", **kwargs) -> str:
     """Update an action item's status."""
+    tenant = require_tenant_context(kwargs=kwargs, consumer="brief_resolve_action")
     db = _get_db()
-    row = db.execute("SELECT * FROM brief_actions WHERE id = ?", (action_id,)).fetchone()
+    row = db.execute("SELECT * FROM brief_actions WHERE id = ? AND tenant_id = ?", (action_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"Action item {action_id} not found."})
 
     db.execute(
-        "UPDATE brief_actions SET status = ?, updated_at = ? WHERE id = ?",
-        (status, time.time(), action_id)
+        "UPDATE brief_actions SET status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
+        (status, time.time(), action_id, tenant.tenant_id)
     )
     db.commit()
     return json.dumps({"success": True, "action_id": action_id, "new_status": status})
@@ -421,14 +438,15 @@ registry.register(
         action_items=args.get("action_items", "[]"),
         headline=args.get("headline", ""),
         data_sources=args.get("data_sources", ""),
-        suggested_prompts=args.get("suggested_prompts", "[]")),
+        suggested_prompts=args.get("suggested_prompts", "[]"),
+        **kw),
 )
 
 registry.register(
     name="brief_get_latest",
     toolset="pm-brief",
     schema=BRIEF_GET_LATEST_SCHEMA,
-    handler=lambda args, **kw: brief_get_latest(),
+    handler=lambda args, **kw: brief_get_latest(**kw),
 )
 
 registry.register(
@@ -436,7 +454,8 @@ registry.register(
     toolset="pm-brief",
     schema=BRIEF_GET_ACTION_ITEMS_SCHEMA,
     handler=lambda args, **kw: brief_get_action_items(
-        status=args.get("status", "pending")),
+        status=args.get("status", "pending"),
+        **kw),
 )
 
 registry.register(
@@ -445,5 +464,6 @@ registry.register(
     schema=BRIEF_RESOLVE_ACTION_SCHEMA,
     handler=lambda args, **kw: brief_resolve_action(
         action_id=args.get("action_id", ""),
-        status=args.get("status", "resolved")),
+        status=args.get("status", "resolved"),
+        **kw),
 )
