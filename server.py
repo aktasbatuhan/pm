@@ -1820,6 +1820,7 @@ MODEL_OPTIONS = [
     {"id": "openai/gpt-5-mini", "label": "GPT-5 mini", "family": "openai"},
     {"id": "openai/gpt-5.4", "label": "GPT-5.4", "family": "openai"},
     {"id": "moonshotai/kimi-k2.6", "label": "Kimi K2.6", "family": "moonshotai"},
+    {"id": "deepseek/deepseek-v4-flash", "label": "DeepSeek V4 Flash", "family": "deepseek"},
 ]
 
 
