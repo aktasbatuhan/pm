@@ -517,8 +517,56 @@ def _enrich_references(refs, github_ctx=None):
     return enriched
 
 
+def _shape_brief_response(row: dict, items: list[dict]) -> dict:
+    cover_url = row.get("cover_url") or ""
+    headline = (row.get("headline") or "").strip()
+    if not headline:
+        for line in (row.get("summary") or "").split("\n"):
+            stripped = line.strip().lstrip("#").lstrip("-").strip()
+            if len(stripped) > 20 and not stripped.startswith("```"):
+                headline = stripped[:120]
+                break
+    try:
+        suggested_prompts = json.loads(row.get("suggested_prompts") or "[]")
+    except (json.JSONDecodeError, TypeError):
+        suggested_prompts = []
+    return {
+        "id": row["id"],
+        "headline": headline,
+        "summary": row["summary"],
+        "data_sources": row.get("data_sources"),
+        "created_at": row["created_at"],
+        "cover_url": cover_url,
+        "suggested_prompts": suggested_prompts,
+        "action_items": items,
+    }
+
+
+def _shape_action_for_response(item: dict) -> dict:
+    """Convert a Postgres or SQLite action row into the response shape."""
+    out = dict(item)
+    refs = out.get("references")
+    if refs is None:
+        try:
+            refs = json.loads(out.get("references_json") or "[]")
+        except (json.JSONDecodeError, TypeError):
+            refs = []
+    out["references"] = _enrich_references(refs)
+    out.pop("references_json", None)
+    return out
+
+
 @app.get("/api/brief/latest")
-def brief_latest():
+def brief_latest(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        brief = repos.get_latest_brief(tenant.tenant_id)
+        if not brief:
+            return {"brief": None}
+        actions = repos.list_brief_actions(tenant.tenant_id, brief_id=brief["id"])
+        items = [_shape_action_for_response(a) for a in actions]
+        return {"brief": _shape_brief_response(brief, items)}
+
     db = _get_db()
     row = db.execute("SELECT * FROM briefs ORDER BY created_at DESC LIMIT 1").fetchone()
     if not row:
@@ -527,50 +575,21 @@ def brief_latest():
         "SELECT * FROM brief_actions WHERE brief_id = ? ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'in-progress' THEN 1 ELSE 2 END, created_at",
         (row["id"],)
     ).fetchall()
-    items = []
-    for a in actions:
-        item = dict(a)
-        # Parse references JSON
-        try:
-            item["references"] = json.loads(item.get("references_json") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            item["references"] = []
-        item["references"] = _enrich_references(item["references"])
-        item.pop("references_json", None)
-        items.append(item)
-    # Get optional columns
-    cover_url = ""
-    suggested_prompts = []
-    headline = ""
-    try:
-        cover_url = row["cover_url"] or ""
-    except (IndexError, KeyError):
-        pass
-    try:
-        suggested_prompts = json.loads(row["suggested_prompts"] or "[]")
-    except (IndexError, KeyError, json.JSONDecodeError):
-        pass
-    try:
-        headline = row["headline"] or ""
-    except (IndexError, KeyError):
-        pass
-
-    return {
-        "brief": {
-            "id": row["id"],
-            "headline": headline,
-            "summary": row["summary"],
-            "data_sources": row["data_sources"],
-            "created_at": row["created_at"],
-            "cover_url": cover_url,
-            "suggested_prompts": suggested_prompts,
-            "action_items": items,
-        }
-    }
+    items = [_shape_action_for_response(dict(a)) for a in actions]
+    return {"brief": _shape_brief_response(dict(row), items)}
 
 
 @app.get("/api/brief/{brief_id}")
-def get_brief(brief_id: str):
+def get_brief(brief_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        brief = repos.get_brief(tenant.tenant_id, brief_id)
+        if not brief:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        actions = repos.list_brief_actions(tenant.tenant_id, brief_id=brief_id)
+        items = [_shape_action_for_response(a) for a in actions]
+        return {"brief": _shape_brief_response(brief, items)}
+
     db = _get_db()
     row = db.execute("SELECT * FROM briefs WHERE id = ?", (brief_id,)).fetchone()
     if not row:
@@ -579,57 +598,29 @@ def get_brief(brief_id: str):
         "SELECT * FROM brief_actions WHERE brief_id = ? ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'in-progress' THEN 1 ELSE 2 END, created_at",
         (brief_id,)
     ).fetchall()
-    items = []
-    for a in actions:
-        item = dict(a)
-        try:
-            item["references"] = json.loads(item.get("references_json") or "[]")
-        except (json.JSONDecodeError, TypeError):
-            item["references"] = []
-        item["references"] = _enrich_references(item["references"])
-        item.pop("references_json", None)
-        items.append(item)
-    cover_url = ""
-    suggested_prompts = []
-    headline = ""
-    try:
-        cover_url = row["cover_url"] or ""
-    except (IndexError, KeyError):
-        pass
-    try:
-        suggested_prompts = json.loads(row["suggested_prompts"] or "[]")
-    except (IndexError, KeyError, json.JSONDecodeError):
-        pass
-    try:
-        headline = row["headline"] or ""
-    except (IndexError, KeyError):
-        pass
-    return {
-        "brief": {
-            "id": row["id"],
-            "headline": headline,
-            "summary": row["summary"],
-            "data_sources": row["data_sources"],
-            "created_at": row["created_at"],
-            "cover_url": cover_url,
-            "suggested_prompts": suggested_prompts,
-            "action_items": items,
-        }
-    }
+    items = [_shape_action_for_response(dict(a)) for a in actions]
+    return {"brief": _shape_brief_response(dict(row), items)}
 
 
 @app.get("/api/briefs")
-def list_briefs(limit: int = 20):
-    db = _get_db()
-    rows = db.execute("SELECT * FROM briefs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+def list_briefs(limit: int = 20, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        rows = repos.list_briefs(tenant.tenant_id, limit=limit)
+    else:
+        db = _get_db()
+        sqlite_rows = db.execute("SELECT * FROM briefs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        rows = []
+        for r in sqlite_rows:
+            d = dict(r)
+            ac = db.execute("SELECT COUNT(*) as c FROM brief_actions WHERE brief_id = ?", (d["id"],)).fetchone()
+            pc = db.execute("SELECT COUNT(*) as c FROM brief_actions WHERE brief_id = ? AND status = 'pending'", (d["id"],)).fetchone()
+            d["action_count"] = ac["c"] if ac else 0
+            d["pending_count"] = pc["c"] if pc else 0
+            rows.append(d)
+
     briefs = []
-    for row in rows:
-        r = dict(row)
-        # Count actions
-        action_count = db.execute("SELECT COUNT(*) as c FROM brief_actions WHERE brief_id = ?", (r["id"],)).fetchone()
-        pending_count = db.execute("SELECT COUNT(*) as c FROM brief_actions WHERE brief_id = ? AND status = 'pending'", (r["id"],)).fetchone()
-        # Prefer the agent-authored headline. Fall back to legacy extraction
-        # only when the column is empty (older briefs stored before the field existed).
+    for r in rows:
         headline = (r.get("headline") or "").strip()
         if not headline:
             for line in (r.get("summary") or "").split("\n"):
@@ -637,21 +628,28 @@ def list_briefs(limit: int = 20):
                 if len(stripped) > 20 and not stripped.startswith("```"):
                     headline = stripped[:120]
                     break
-        cover_url = r.get("cover_url") or ""
         briefs.append({
             "id": r["id"],
             "headline": headline,
-            "data_sources": r["data_sources"],
+            "data_sources": r.get("data_sources"),
             "created_at": r["created_at"],
-            "cover_url": cover_url,
-            "action_count": action_count["c"] if action_count else 0,
-            "pending_count": pending_count["c"] if pending_count else 0,
+            "cover_url": r.get("cover_url") or "",
+            "action_count": r.get("action_count", 0),
+            "pending_count": r.get("pending_count", 0),
         })
     return {"briefs": briefs}
 
 
 @app.get("/api/brief/actions")
-def brief_actions(status: str = "pending"):
+def brief_actions(status: str = "pending", tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        actions = repos.list_brief_actions(
+            tenant.tenant_id,
+            status=None if status == "all" else status,
+        )
+        return {"actions": actions[:50]}
+
     db = _get_db()
     if status == "all":
         rows = db.execute("SELECT * FROM brief_actions ORDER BY created_at DESC LIMIT 50").fetchall()
@@ -663,13 +661,21 @@ def brief_actions(status: str = "pending"):
 
 
 @app.post("/api/brief/actions/{action_id}")
-async def brief_action_update(action_id: str, request: Request):
+async def brief_action_update(action_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
+    new_status = body.get("status", "resolved")
+
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.update_brief_action(tenant.tenant_id, action_id, status=new_status)
+        if not ok:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        return {"ok": True, "action_id": action_id, "status": new_status}
+
     db = _get_db()
     row = db.execute("SELECT * FROM brief_actions WHERE id = ?", (action_id,)).fetchone()
     if not row:
         return JSONResponse({"error": "Not found"}, status_code=404)
-    new_status = body.get("status", "resolved")
     db.execute("UPDATE brief_actions SET status = ?, updated_at = ? WHERE id = ?",
                (new_status, time.time(), action_id))
     db.commit()
@@ -2384,6 +2390,22 @@ def delete_session(session_id: str):
 
 @app.get("/api/workspace/status")
 def workspace_status(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        try:
+            meta = repos.get_workspace_meta(tenant.tenant_id)
+            bp = repos.get_workspace_blueprint(tenant.tenant_id)
+            learnings = repos.list_workspace_learnings(tenant.tenant_id, limit=50)
+            onboarding = (meta or {}).get("onboarding_status") or "not_started"
+            return {
+                "onboarding": onboarding,
+                "blueprint": bp,
+                "learnings_count": len(learnings),
+                "learnings": learnings,
+            }
+        except Exception as e:
+            return {"error": str(e)}
+
     try:
         ctx = load_workspace_context(workspace_id=tenant.tenant_id)
         bp = ctx.get_blueprint()
@@ -2397,7 +2419,7 @@ def workspace_status(tenant=Depends(get_current_tenant)):
                 "updated_at": bp["updated_at"] if bp else None,
             } if bp else None,
             "learnings_count": len(learnings),
-            "learnings": learnings,  # return all — frontend filters by category
+            "learnings": learnings,
         }
     except Exception as e:
         return {"error": str(e)}
