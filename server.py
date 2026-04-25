@@ -28,7 +28,7 @@ from starlette.middleware.cors import CORSMiddleware
 import sqlite3
 from kai_env import kai_home
 from workspace_context import load_workspace_context
-from backend.db.supabase_client import get_service_role_client, get_supabase_settings
+from backend.db.postgres_client import get_pool, is_postgres_enabled
 from backend.tenant_auth import build_tenant_context, get_current_tenant, is_tenant_scoped_path
 from backend.tenant_context import reset_current_tenant, set_current_tenant
 from tools.pm_brief_tools import _get_db
@@ -192,6 +192,139 @@ def auth_check(request: Request):
     return {"authenticated": valid, "needs_setup": False}
 
 _sessions: dict = {}
+
+
+# ── Auth v2 (Postgres + JWT, multi-tenant) ─────────────────────────────
+
+def _verify_password(stored_hash: str, plaintext: str) -> bool:
+    """Verify password against stored hash. Supports legacy SHA256 (raw hex)
+    and modern argon2id ($argon2id$...). Returns True on match."""
+    if not stored_hash or not plaintext:
+        return False
+    if stored_hash.startswith("$argon2"):
+        try:
+            from argon2 import PasswordHasher
+            PasswordHasher().verify(stored_hash, plaintext)
+            return True
+        except Exception:
+            return False
+    return _hash_password(plaintext) == stored_hash
+
+
+@app.post("/api/auth/v2/signin")
+async def auth_v2_signin(request: Request):
+    """Email + password signin. Returns JWT and tenant list."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Postgres auth not enabled"}, status_code=503)
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    password = body.get("password") or ""
+    if not email or not password:
+        return JSONResponse({"error": "email and password required"}, status_code=400)
+
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, password_hash, display_name FROM users WHERE email = %s",
+                (email,),
+            )
+            user = cur.fetchone()
+            if not user or not _verify_password(user["password_hash"] or "", password):
+                return JSONResponse({"error": "Invalid email or password"}, status_code=401)
+            user_id = str(user["id"])
+
+            cur.execute(
+                """
+                SELECT t.id, t.slug, t.name, m.role, m.is_default
+                  FROM tenant_memberships m
+                  JOIN tenants t ON t.id = m.tenant_id
+                 WHERE m.user_id = %s
+                 ORDER BY m.is_default DESC, t.created_at ASC
+                """,
+                (user_id,),
+            )
+            memberships = cur.fetchall()
+
+    if not memberships:
+        return JSONResponse({"error": "No tenant memberships"}, status_code=403)
+
+    from backend.tenant_auth import issue_jwt
+    token = issue_jwt(user_id)
+    return {
+        "token": token,
+        "user": {
+            "id": user_id,
+            "email": email,
+            "display_name": user["display_name"],
+        },
+        "tenants": [
+            {
+                "id": str(m["id"]),
+                "slug": m["slug"],
+                "name": m["name"],
+                "role": m["role"],
+                "is_default": m["is_default"],
+            }
+            for m in memberships
+        ],
+    }
+
+
+@app.get("/api/auth/v2/me")
+def auth_v2_me(request: Request):
+    """Return current user + memberships, given a valid JWT."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Postgres auth not enabled"}, status_code=503)
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse({"error": "Missing bearer token"}, status_code=401)
+    token = auth_header.split(" ", 1)[1].strip()
+    from backend.tenant_auth import decode_jwt
+    try:
+        payload = decode_jwt(token)
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=401)
+    user_id = payload["sub"]
+
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, email, display_name FROM users WHERE id = %s",
+                (user_id,),
+            )
+            user = cur.fetchone()
+            if not user:
+                return JSONResponse({"error": "User not found"}, status_code=404)
+            cur.execute(
+                """
+                SELECT t.id, t.slug, t.name, m.role, m.is_default
+                  FROM tenant_memberships m
+                  JOIN tenants t ON t.id = m.tenant_id
+                 WHERE m.user_id = %s
+                 ORDER BY m.is_default DESC, t.created_at ASC
+                """,
+                (user_id,),
+            )
+            memberships = cur.fetchall()
+
+    return {
+        "user": {
+            "id": str(user["id"]),
+            "email": user["email"],
+            "display_name": user["display_name"],
+        },
+        "tenants": [
+            {
+                "id": str(m["id"]),
+                "slug": m["slug"],
+                "name": m["name"],
+                "role": m["role"],
+                "is_default": m["is_default"],
+            }
+            for m in memberships
+        ],
+    }
+
 
 # ── Changelog + Goals DB ───────────────────────────────────────────────
 
@@ -2503,29 +2636,21 @@ def cron_status():
     }
 
 
-@app.get("/api/health/supabase")
-def supabase_health():
-    """Diagnostic: check Supabase REST reachability and basic query latency."""
+@app.get("/api/health/postgres")
+def postgres_health():
+    """Diagnostic: ping Neon and report latency."""
+    if not is_postgres_enabled():
+        return {"ok": False, "enabled": False}
     started_at = time.perf_counter()
     try:
-        settings = get_supabase_settings()
-        get_service_role_client()  # validates env + client init
-
-        with httpx.Client(timeout=8.0) as client:
-            response = client.get(
-                f"{settings.url.rstrip('/')}/rest/v1/connection_test",
-                params={"select": "id", "limit": "1"},
-                headers={
-                    "apikey": settings.service_role_key,
-                    "Authorization": f"Bearer {settings.service_role_key}",
-                },
-            )
-            response.raise_for_status()
-
+        with get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1")
+                cur.fetchone()
         latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
-        return {"ok": True, "latency_ms": latency_ms}
+        return {"ok": True, "enabled": True, "latency_ms": latency_ms}
     except Exception as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=503)
+        return JSONResponse({"ok": False, "enabled": True, "error": str(exc)}, status_code=503)
 
 
 @app.post("/api/cron/run/{job_id}")

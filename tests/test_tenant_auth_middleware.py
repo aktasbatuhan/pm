@@ -1,106 +1,112 @@
+"""Tests for the JWT + Postgres tenant auth middleware."""
+
+from __future__ import annotations
+
 import os
-import sys
-import types
+import time
 
 import jwt
+import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-
-if "supabase" not in sys.modules:
-    fake_supabase = types.ModuleType("supabase")
-    fake_supabase.Client = object
-    fake_supabase.create_client = lambda *args, **kwargs: object()
-    sys.modules["supabase"] = fake_supabase
-
-if "supabase.lib.client_options" not in sys.modules:
-    sys.modules.setdefault("supabase.lib", types.ModuleType("supabase.lib"))
-    fake_client_options = types.ModuleType("supabase.lib.client_options")
-
-    class _ClientOptions:
-        def __init__(self, headers=None):
-            self.headers = headers or {}
-
-    fake_client_options.ClientOptions = _ClientOptions
-    sys.modules["supabase.lib.client_options"] = fake_client_options
 
 import server
 
 
-def _token(user_id: str) -> str:
-    secret = os.environ["SUPABASE_JWT_SECRET"]
-    return jwt.encode({"sub": user_id}, secret, algorithm="HS256")
+def _token(user_id: str, secret: str = "test-secret") -> str:
+    return jwt.encode(
+        {"sub": user_id, "exp": int(time.time()) + 600},
+        secret,
+        algorithm="HS256",
+    )
 
 
-def test_tenant_middleware_missing_jwt_returns_401(monkeypatch):
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+def _enable_postgres(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "test-secret")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://fake/fake")
+    monkeypatch.setenv("DATABASE_URL_DIRECT", "postgresql://fake/fake")
 
+
+def test_disabled_when_no_database_url(monkeypatch):
+    """Demo path: with DATABASE_URL unset, tenant-scoped endpoints fall back to default."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
     client = TestClient(server.app)
     response = client.get("/api/tenant/context")
+    # In legacy mode, get_current_tenant returns synthetic 'default' context
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "default", "tenant_id": "default", "role": "owner"}
 
+
+def test_missing_jwt_returns_401(monkeypatch):
+    _enable_postgres(monkeypatch)
+    client = TestClient(server.app)
+    response = client.get("/api/tenant/context")
     assert response.status_code == 401
-    assert response.json()["detail"] == "Missing Supabase JWT"
+    assert response.json()["detail"] == "Missing bearer token"
 
 
-def test_tenant_middleware_valid_jwt_without_membership_returns_403(monkeypatch):
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
-
-    def _no_membership(user_id: str, requested_tenant_id=None):
-        raise HTTPException(status_code=403, detail="Authenticated user has no tenant membership")
-
-    monkeypatch.setattr("backend.tenant_auth.resolve_tenant_membership", _no_membership)
-
+def test_invalid_jwt_returns_401(monkeypatch):
+    _enable_postgres(monkeypatch)
+    bad = jwt.encode({"sub": "u"}, "wrong-secret", algorithm="HS256")
     client = TestClient(server.app)
     response = client.get(
         "/api/tenant/context",
-        headers={"Authorization": f"Bearer {_token('user-no-membership')}"},
+        headers={"Authorization": f"Bearer {bad}"},
     )
+    assert response.status_code == 401
 
+
+def test_valid_jwt_no_membership_returns_403(monkeypatch):
+    _enable_postgres(monkeypatch)
+
+    def _no_membership(user_id, requested_tenant_id=None):
+        raise HTTPException(status_code=403, detail="Authenticated user has no tenant membership")
+
+    monkeypatch.setattr("backend.tenant_auth.resolve_tenant_membership", _no_membership)
+    client = TestClient(server.app)
+    response = client.get(
+        "/api/tenant/context",
+        headers={"Authorization": f"Bearer {_token('user-x')}"},
+    )
     assert response.status_code == 403
-    assert response.json()["detail"] == "Authenticated user has no tenant membership"
 
 
-def test_tenant_middleware_resolves_membership_and_isolates_by_user(monkeypatch):
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
-    monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "service")
+def test_valid_jwt_with_membership_resolves(monkeypatch):
+    _enable_postgres(monkeypatch)
 
-    tenant_map = {
-        "user-a": ("tenant-a", "owner"),
-        "user-b": ("tenant-b", "member"),
-    }
+    from backend.tenant_context import TenantContext
 
-    def _membership(user_id: str, requested_tenant_id=None):
-        if user_id not in tenant_map:
-            raise HTTPException(status_code=403, detail="Authenticated user has no tenant membership")
-        tenant_id, role = tenant_map[user_id]
-        from backend.tenant_context import TenantContext
-
-        if requested_tenant_id and requested_tenant_id != tenant_id:
-            raise HTTPException(status_code=403, detail=f"User is not a member of tenant '{requested_tenant_id}'")
-        return TenantContext(user_id=user_id, tenant_id=tenant_id, role=role)
+    def _membership(user_id, requested_tenant_id=None):
+        return TenantContext(user_id=user_id, tenant_id="tenant-a", role="owner")
 
     monkeypatch.setattr("backend.tenant_auth.resolve_tenant_membership", _membership)
-
     client = TestClient(server.app)
-
-    response_a = client.get(
+    response = client.get(
         "/api/tenant/context",
         headers={"Authorization": f"Bearer {_token('user-a')}"},
     )
-    response_b = client.get(
+    assert response.status_code == 200
+    assert response.json() == {"user_id": "user-a", "tenant_id": "tenant-a", "role": "owner"}
+
+
+def test_x_tenant_id_header_is_passed_through(monkeypatch):
+    _enable_postgres(monkeypatch)
+
+    captured = {}
+
+    from backend.tenant_context import TenantContext
+
+    def _membership(user_id, requested_tenant_id=None):
+        captured["requested"] = requested_tenant_id
+        return TenantContext(user_id=user_id, tenant_id=requested_tenant_id or "default", role="member")
+
+    monkeypatch.setattr("backend.tenant_auth.resolve_tenant_membership", _membership)
+    client = TestClient(server.app)
+    client.get(
         "/api/tenant/context",
-        headers={"Authorization": f"Bearer {_token('user-b')}"},
+        headers={
+            "Authorization": f"Bearer {_token('user-a')}",
+            "X-Tenant-Id": "tenant-b",
+        },
     )
-
-    assert response_a.status_code == 200
-    assert response_a.json() == {"user_id": "user-a", "tenant_id": "tenant-a", "role": "owner"}
-
-    assert response_b.status_code == 200
-    assert response_b.json() == {"user_id": "user-b", "tenant_id": "tenant-b", "role": "member"}
+    assert captured["requested"] == "tenant-b"
