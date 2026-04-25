@@ -6,9 +6,9 @@ import { ChatView } from "@/components/chat-view";
 import { OnboardingView } from "@/components/onboarding-view";
 import { SessionSidebar } from "@/components/session-sidebar";
 import { cn } from "@/lib/utils";
-import { fetchSessions, fetchWorkspace } from "@/lib/api";
+import { fetchSessions, fetchWorkspace, logout } from "@/lib/api";
 import type { Session, WorkspaceStatus } from "@/lib/types";
-import { FileText, FileCode, MessageSquare, Lightbulb, Radar, Timer, Plus, Loader2, Target, Settings } from "lucide-react";
+import { FileText, FileCode, MessageSquare, Lightbulb, Radar, Timer, Plus, Loader2, LogOut, Target, Settings } from "lucide-react";
 import { InsightsView } from "@/components/insights-view";
 import { SignalsView } from "@/components/signals-view";
 import { ReportsView } from "@/components/reports-view";
@@ -35,7 +35,8 @@ export default function Home() {
       const ws = await fetchWorkspace();
       setWorkspace(ws);
     } catch {
-      // API unreachable — treat as needs onboarding
+      // API unreachable — leave workspace null but don't trigger onboarding;
+      // a transient failure shouldn't push the user into the welcome flow.
       setWorkspace(null);
     }
     setWsLoading(false);
@@ -55,11 +56,11 @@ export default function Home() {
     loadSessions();
   }, [loadWorkspace, loadSessions]);
 
-  // Only check onboarding status — don't require blueprint
-  // (agent might still be building it, or it might have failed)
+  // Only show onboarding when we have a confirmed not_started status from
+  // the API. A null workspace (transient error, 401, etc.) is NOT enough —
+  // otherwise a stale session traps the user on the welcome screen.
   const needsOnboarding =
-    !wsLoading &&
-    (!workspace || workspace.onboarding === "not_started");
+    !wsLoading && !!workspace && workspace.onboarding === "not_started";
 
   function handleOnboardingComplete() {
     setOnboarding(false);
@@ -257,6 +258,14 @@ export default function Home() {
           <TenantSwitcher />
 
           <ModelSelector />
+
+          <button
+            onClick={() => { logout(); window.location.reload(); }}
+            title="Sign out"
+            className="inline-flex items-center justify-center rounded-md border border-border bg-background px-2 py-1 text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
 
           <button
             onClick={newChat}

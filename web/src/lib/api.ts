@@ -31,7 +31,9 @@ export function setActiveTenantId(tenantId: string) {
 
 /**
  * Fetch wrapper that auto-attaches the bearer token and active tenant.
- * All API calls in this module go through it.
+ * If a tenant-scoped endpoint returns 401 with a token attached, we clear
+ * stale credentials and reload — the AuthGate will land the user on the
+ * sign-in screen instead of trapping them in an error state.
  */
 async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
@@ -43,7 +45,22 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<Response>
   if (tenantId && !headers.has("X-Tenant-Id")) {
     headers.set("X-Tenant-Id", tenantId);
   }
-  return fetch(`${API}${path}`, { ...init, headers });
+  const res = await fetch(`${API}${path}`, { ...init, headers });
+
+  // Auto-recover from dead sessions: if we sent a token to a protected
+  // endpoint and got 401 back, the token is invalid/expired. Clear it
+  // and bounce to login. Skip auth endpoints themselves to avoid loops.
+  if (
+    res.status === 401 &&
+    token &&
+    typeof window !== "undefined" &&
+    !path.startsWith("/api/auth/")
+  ) {
+    clearToken();
+    window.location.reload();
+  }
+
+  return res;
 }
 
 export async function checkAuth(): Promise<{
