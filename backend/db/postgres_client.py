@@ -53,10 +53,12 @@ def get_pool() -> ConnectionPool:
             conninfo=url,
             min_size=1,
             max_size=10,
+            max_idle=300,                          # recycle connections idle > 5min (Neon closes them)
             kwargs={"row_factory": psycopg.rows.dict_row},
+            check=ConnectionPool.check_connection, # validate (SELECT 1) before handing out
             open=True,
         )
-        logger.info("Initialized Neon connection pool (max=10)")
+        logger.info("Initialized Neon connection pool (max=10, check=on)")
         return _pool
 
 
