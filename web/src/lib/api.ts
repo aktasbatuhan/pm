@@ -15,25 +15,94 @@ function setToken(token: string) {
 
 function clearToken() {
   localStorage.removeItem("dash_token");
+  localStorage.removeItem("dash_tenant_id");
 }
 
-function authHeaders(): Record<string, string> {
+export function getActiveTenantId(): string {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("dash_tenant_id") || "";
+}
+
+export function setActiveTenantId(tenantId: string) {
+  if (typeof window === "undefined") return;
+  if (tenantId) localStorage.setItem("dash_tenant_id", tenantId);
+  else localStorage.removeItem("dash_tenant_id");
+}
+
+/**
+ * Fetch wrapper that auto-attaches the bearer token and active tenant.
+ * All API calls in this module go through it.
+ */
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
   const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  if (token && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${token}`);
+  }
+  const tenantId = getActiveTenantId();
+  if (tenantId && !headers.has("X-Tenant-Id")) {
+    headers.set("X-Tenant-Id", tenantId);
+  }
+  return fetch(`${API}${path}`, { ...init, headers });
 }
 
 export async function checkAuth(): Promise<{
   authenticated: boolean;
   needs_setup: boolean;
 }> {
-  const res = await fetch(`${API}/api/auth/check`, { headers: authHeaders() });
+  const res = await apiFetch(`/api/auth/check`);
   return res.json();
+}
+
+// Multi-user / multi-tenant auth (Postgres mode)
+export interface TenantInfo {
+  id: string;
+  slug: string;
+  name: string;
+  role: string;
+  is_default: boolean;
+}
+
+export interface AuthV2Response {
+  token?: string;
+  user?: { id: string; email: string; display_name: string | null };
+  tenants?: TenantInfo[];
+  error?: string;
+}
+
+export async function signInV2(email: string, password: string): Promise<AuthV2Response> {
+  const res = await apiFetch(`/api/auth/v2/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  const data = await res.json();
+  if (res.ok && data.token) {
+    setToken(data.token);
+    const def = data.tenants?.find((t: TenantInfo) => t.is_default) ?? data.tenants?.[0];
+    if (def) setActiveTenantId(def.id);
+  }
+  return { ...data, error: res.ok ? undefined : data.error || "Sign-in failed" };
+}
+
+/**
+ * Probe `/api/auth/v2/me`. Returns:
+ *   { mode: "postgres", user?: ... }  if Postgres auth is enabled (with optional active session)
+ *   { mode: "legacy" }                if Postgres auth is not configured (demo)
+ */
+export async function fetchMe(): Promise<{ mode: "postgres" | "legacy"; user?: AuthV2Response["user"]; tenants?: TenantInfo[] }> {
+  const res = await apiFetch(`/api/auth/v2/me`);
+  if (res.status === 503) return { mode: "legacy" };
+  if (res.status === 401) return { mode: "postgres" }; // Postgres on, but no/invalid token
+  if (!res.ok) return { mode: "legacy" };
+  const data = await res.json();
+  return { mode: "postgres", user: data.user, tenants: data.tenants };
 }
 
 export async function setupPassword(
   password: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${API}/api/auth/setup`, {
+  const res = await apiFetch(`/api/auth/setup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password }),
@@ -46,7 +115,7 @@ export async function setupPassword(
 export async function login(
   password: string
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${API}/api/auth/login`, {
+  const res = await apiFetch(`/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ password }),
@@ -71,32 +140,32 @@ export interface BriefSummary {
 }
 
 export async function fetchBriefs(limit: number = 20): Promise<BriefSummary[]> {
-  const res = await fetch(`${API}/api/briefs?limit=${limit}`);
+  const res = await apiFetch(`/api/briefs?limit=${limit}`);
   const data = await res.json();
   return data.briefs ?? [];
 }
 
 export async function fetchBriefById(briefId: string): Promise<Brief | null> {
-  const res = await fetch(`${API}/api/brief/${briefId}`);
+  const res = await apiFetch(`/api/brief/${briefId}`);
   if (!res.ok) return null;
   const data = await res.json();
   return data.brief ?? null;
 }
 
 export async function fetchBrief(): Promise<Brief | null> {
-  const res = await fetch(`${API}/api/brief/latest`);
+  const res = await apiFetch(`/api/brief/latest`);
   const data = await res.json();
   return data.brief ?? null;
 }
 
 export async function fetchWorkspace(): Promise<WorkspaceStatus | null> {
-  const res = await fetch(`${API}/api/workspace/status`);
+  const res = await apiFetch(`/api/workspace/status`);
   if (!res.ok) return null;
   return res.json();
 }
 
 export async function resolveAction(actionId: string): Promise<void> {
-  await fetch(`${API}/api/brief/actions/${actionId}`, {
+  await apiFetch(`/api/brief/actions/${actionId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status: "resolved" }),
@@ -104,13 +173,13 @@ export async function resolveAction(actionId: string): Promise<void> {
 }
 
 export async function fetchSessions(): Promise<Session[]> {
-  const res = await fetch(`${API}/api/sessions`);
+  const res = await apiFetch(`/api/sessions`);
   const data = await res.json();
   return data.sessions ?? [];
 }
 
 export async function fetchSessionMessages(sessionId: string): Promise<ChatMessage[]> {
-  const res = await fetch(`${API}/api/sessions/${sessionId}`);
+  const res = await apiFetch(`/api/sessions/${sessionId}`);
   const data = await res.json();
   return (data.messages ?? []).map((m: Record<string, unknown>) => ({
     id: String(m.id ?? crypto.randomUUID()),
@@ -122,12 +191,12 @@ export async function fetchSessionMessages(sessionId: string): Promise<ChatMessa
 // ── Onboarding & Integrations ─────────────────────────────────────────
 
 export async function getOnboardingProfile(): Promise<Record<string, string>> {
-  const res = await fetch(`${API}/api/onboarding/profile`);
+  const res = await apiFetch(`/api/onboarding/profile`);
   return res.json();
 }
 
 export async function saveOnboardingProfile(data: Record<string, string>): Promise<void> {
-  await fetch(`${API}/api/onboarding/profile`, {
+  await apiFetch(`/api/onboarding/profile`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -145,7 +214,7 @@ export interface Integration {
 }
 
 export async function getIntegrations(): Promise<Integration[]> {
-  const res = await fetch(`${API}/api/integrations`);
+  const res = await apiFetch(`/api/integrations`);
   const data = await res.json();
   return data.integrations ?? [];
 }
@@ -155,7 +224,7 @@ export async function connectIntegration(
   credentials: string,
   authType: string = "token",
 ): Promise<{ ok: boolean; status: string; message: string }> {
-  const res = await fetch(`${API}/api/integrations/${platform}`, {
+  const res = await apiFetch(`/api/integrations/${platform}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ credentials, auth_type: authType }),
@@ -164,11 +233,11 @@ export async function connectIntegration(
 }
 
 export async function disconnectIntegration(platform: string): Promise<void> {
-  await fetch(`${API}/api/integrations/${platform}`, { method: "DELETE" });
+  await apiFetch(`/api/integrations/${platform}`, { method: "DELETE" });
 }
 
 export async function completeOnboarding(organization: string): Promise<void> {
-  await fetch(`${API}/api/onboarding/complete`, {
+  await apiFetch(`/api/onboarding/complete`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ organization }),
@@ -185,7 +254,7 @@ export async function submitWaitlist(data: {
   team_size: string;
   pain_point: string;
 }): Promise<{ ok: boolean }> {
-  const res = await fetch(`${API}/api/waitlist`, {
+  const res = await apiFetch(`/api/waitlist`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -207,7 +276,7 @@ export function requestNewBrief(): void {
 
 /** Fire an agent task in the background. Does NOT read the SSE stream. */
 export function triggerBackgroundTask(message: string, threadId?: string): void {
-  fetch(`${API}/api/chat`, {
+  apiFetch(`/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -230,19 +299,19 @@ export interface Changelog {
 }
 
 export async function fetchChangelogs(limit: number = 10): Promise<Changelog[]> {
-  const res = await fetch(`${API}/api/changelogs?limit=${limit}`);
+  const res = await apiFetch(`/api/changelogs?limit=${limit}`);
   const data = await res.json();
   return data.changelogs ?? [];
 }
 
 export async function fetchLatestChangelog(): Promise<Changelog | null> {
-  const res = await fetch(`${API}/api/changelogs/latest`);
+  const res = await apiFetch(`/api/changelogs/latest`);
   const data = await res.json();
   return data.changelog ?? null;
 }
 
 export function generateChangelog(): void {
-  fetch(`${API}/api/changelogs/generate`, { method: "POST" }).catch(() => {});
+  apiFetch(`/api/changelogs/generate`, { method: "POST" }).catch(() => {});
 }
 
 // ── Goals ─────────────────────────────────────────────────────────────
@@ -282,14 +351,14 @@ export interface GoalSnapshot {
 }
 
 export async function fetchGoalHistory(goalId: string, limit: number = 20): Promise<GoalSnapshot[]> {
-  const res = await fetch(`${API}/api/goals/${goalId}/history?limit=${limit}`);
+  const res = await apiFetch(`/api/goals/${goalId}/history?limit=${limit}`);
   if (!res.ok) return [];
   const data = await res.json();
   return data.snapshots ?? [];
 }
 
 export async function fetchGoals(status: string = "active"): Promise<Goal[]> {
-  const res = await fetch(`${API}/api/goals?status=${status}`);
+  const res = await apiFetch(`/api/goals?status=${status}`);
   const data = await res.json();
   return data.goals ?? [];
 }
@@ -299,7 +368,7 @@ export async function createGoal(goal: {
   description?: string;
   target_date?: string;
 }): Promise<{ ok: boolean; id: string }> {
-  const res = await fetch(`${API}/api/goals`, {
+  const res = await apiFetch(`/api/goals`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(goal),
@@ -311,7 +380,7 @@ export async function updateGoal(
   goalId: string,
   updates: Partial<Goal>
 ): Promise<void> {
-  await fetch(`${API}/api/goals/${goalId}`, {
+  await apiFetch(`/api/goals/${goalId}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -319,7 +388,7 @@ export async function updateGoal(
 }
 
 export async function deleteGoal(goalId: string): Promise<void> {
-  await fetch(`${API}/api/goals/${goalId}`, { method: "DELETE" });
+  await apiFetch(`/api/goals/${goalId}`, { method: "DELETE" });
 }
 
 // ── Team Pulse ────────────────────────────────────────────────────────
@@ -337,13 +406,13 @@ export interface TeamMember {
 }
 
 export async function fetchTeamPulse(): Promise<TeamMember[]> {
-  const res = await fetch(`${API}/api/team/pulse`);
+  const res = await apiFetch(`/api/team/pulse`);
   const data = await res.json();
   return data.members ?? [];
 }
 
 export function generateTeamPulse(): void {
-  fetch(`${API}/api/team/pulse/generate`, { method: "POST" }).catch(() => {});
+  apiFetch(`/api/team/pulse/generate`, { method: "POST" }).catch(() => {});
 }
 
 // ── Reports ───────────────────────────────────────────────────────────
@@ -373,13 +442,13 @@ export interface Report {
 }
 
 export async function fetchReportTemplates(): Promise<ReportTemplate[]> {
-  const res = await fetch(`${API}/api/reports/templates`);
+  const res = await apiFetch(`/api/reports/templates`);
   const data = await res.json();
   return data.templates ?? [];
 }
 
 export async function fetchReportTemplate(id: string): Promise<ReportTemplate | null> {
-  const res = await fetch(`${API}/api/reports/templates/${id}`);
+  const res = await apiFetch(`/api/reports/templates/${id}`);
   if (!res.ok) return null;
   const data = await res.json();
   return data.template ?? null;
@@ -391,7 +460,7 @@ export async function createReportTemplate(t: {
   resources?: Record<string, unknown>;
   schedule?: string;
 }): Promise<{ ok: boolean; id: string }> {
-  const res = await fetch(`${API}/api/reports/templates`, {
+  const res = await apiFetch(`/api/reports/templates`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(t),
@@ -403,7 +472,7 @@ export async function updateReportTemplate(
   id: string,
   updates: Partial<ReportTemplate>,
 ): Promise<void> {
-  await fetch(`${API}/api/reports/templates/${id}`, {
+  await apiFetch(`/api/reports/templates/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -411,26 +480,26 @@ export async function updateReportTemplate(
 }
 
 export async function deleteReportTemplate(id: string): Promise<void> {
-  await fetch(`${API}/api/reports/templates/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/reports/templates/${id}`, { method: "DELETE" });
 }
 
 export function generateReport(templateId: string): void {
-  fetch(`${API}/api/reports/templates/${templateId}/generate`, {
+  apiFetch(`/api/reports/templates/${templateId}/generate`, {
     method: "POST",
   }).catch(() => {});
 }
 
 export async function fetchReports(templateId?: string, limit: number = 20): Promise<Report[]> {
   const url = templateId
-    ? `${API}/api/reports?template_id=${templateId}&limit=${limit}`
-    : `${API}/api/reports?limit=${limit}`;
+    ? `/api/reports?template_id=${templateId}&limit=${limit}`
+    : `/api/reports?limit=${limit}`;
   const res = await fetch(url);
   const data = await res.json();
   return data.reports ?? [];
 }
 
 export async function deleteReport(id: string): Promise<void> {
-  await fetch(`${API}/api/reports/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/reports/${id}`, { method: "DELETE" });
 }
 
 // ── Schedules ─────────────────────────────────────────────────────────
@@ -450,7 +519,7 @@ export interface Schedule {
 }
 
 export async function fetchSchedules(): Promise<Schedule[]> {
-  const res = await fetch(`${API}/api/schedules`);
+  const res = await apiFetch(`/api/schedules`);
   const data = await res.json();
   return data.schedules ?? [];
 }
@@ -460,7 +529,7 @@ export async function createSchedule(s: {
   prompt: string;
   schedule: string;
 }): Promise<{ ok: boolean; job?: Schedule; error?: string }> {
-  const res = await fetch(`${API}/api/schedules`, {
+  const res = await apiFetch(`/api/schedules`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(s),
@@ -476,7 +545,7 @@ export async function updateSchedule(
   id: string,
   updates: { enabled?: boolean; name?: string },
 ): Promise<void> {
-  await fetch(`${API}/api/schedules/${id}`, {
+  await apiFetch(`/api/schedules/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -484,11 +553,11 @@ export async function updateSchedule(
 }
 
 export async function deleteSchedule(id: string): Promise<void> {
-  await fetch(`${API}/api/schedules/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/schedules/${id}`, { method: "DELETE" });
 }
 
 export async function runScheduleNow(id: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${API}/api/cron/run/${id}`, { method: "POST" });
+  const res = await apiFetch(`/api/cron/run/${id}`, { method: "POST" });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
   return { ok: true };
@@ -518,7 +587,7 @@ export interface CronStatus {
 
 export async function fetchCronStatus(): Promise<CronStatus | null> {
   try {
-    const res = await fetch(`${API}/api/cron/status`);
+    const res = await apiFetch(`/api/cron/status`);
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -556,7 +625,7 @@ export interface Signal {
 }
 
 export async function fetchSignalSources(): Promise<SignalSource[]> {
-  const res = await fetch(`${API}/api/signals/sources`);
+  const res = await apiFetch(`/api/signals/sources`);
   const data = await res.json();
   return data.sources ?? [];
 }
@@ -567,7 +636,7 @@ export async function createSignalSource(source: {
   config: Record<string, unknown>;
   filter?: string;
 }): Promise<{ ok: boolean; id: string }> {
-  const res = await fetch(`${API}/api/signals/sources`, {
+  const res = await apiFetch(`/api/signals/sources`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(source),
@@ -579,7 +648,7 @@ export async function updateSignalSource(
   id: string,
   updates: Partial<SignalSource>,
 ): Promise<void> {
-  await fetch(`${API}/api/signals/sources/${id}`, {
+  await apiFetch(`/api/signals/sources/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -587,17 +656,17 @@ export async function updateSignalSource(
 }
 
 export async function deleteSignalSource(id: string): Promise<void> {
-  await fetch(`${API}/api/signals/sources/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/signals/sources/${id}`, { method: "DELETE" });
 }
 
 export async function fetchSignals(status: string = "all", limit: number = 50): Promise<Signal[]> {
-  const res = await fetch(`${API}/api/signals?status=${status}&limit=${limit}`);
+  const res = await apiFetch(`/api/signals?status=${status}&limit=${limit}`);
   const data = await res.json();
   return data.signals ?? [];
 }
 
 export async function updateSignalStatus(id: string, status: string): Promise<void> {
-  await fetch(`${API}/api/signals/${id}/status`, {
+  await apiFetch(`/api/signals/${id}/status`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -605,7 +674,7 @@ export async function updateSignalStatus(id: string, status: string): Promise<vo
 }
 
 export function triggerSignalFetch(sourceId: string = "all"): void {
-  fetch(`${API}/api/signals/sources/${sourceId}/fetch`, { method: "POST" }).catch(() => {});
+  apiFetch(`/api/signals/sources/${sourceId}/fetch`, { method: "POST" }).catch(() => {});
 }
 
 // ── KPIs ──────────────────────────────────────────────────────────────
@@ -653,13 +722,13 @@ export interface KPI {
 }
 
 export async function fetchKPIs(status: string = "active"): Promise<KPI[]> {
-  const res = await fetch(`${API}/api/kpis?status=${status}`);
+  const res = await apiFetch(`/api/kpis?status=${status}`);
   const data = await res.json();
   return data.kpis ?? [];
 }
 
 export async function fetchKPI(id: string): Promise<KPI | null> {
-  const res = await fetch(`${API}/api/kpis/${id}`);
+  const res = await apiFetch(`/api/kpis/${id}`);
   if (!res.ok) return null;
   const data = await res.json();
   return data.kpi ?? null;
@@ -672,7 +741,7 @@ export async function createKPI(kpi: {
   direction?: "higher" | "lower";
   target_value?: number | null;
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
-  const res = await fetch(`${API}/api/kpis`, {
+  const res = await apiFetch(`/api/kpis`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(kpi),
@@ -683,7 +752,7 @@ export async function createKPI(kpi: {
 }
 
 export async function updateKPI(id: string, updates: Partial<KPI>): Promise<void> {
-  await fetch(`${API}/api/kpis/${id}`, {
+  await apiFetch(`/api/kpis/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(updates),
@@ -691,15 +760,15 @@ export async function updateKPI(id: string, updates: Partial<KPI>): Promise<void
 }
 
 export async function deleteKPI(id: string): Promise<void> {
-  await fetch(`${API}/api/kpis/${id}`, { method: "DELETE" });
+  await apiFetch(`/api/kpis/${id}`, { method: "DELETE" });
 }
 
 export function refreshKPI(id: string): Promise<Response> {
-  return fetch(`${API}/api/kpis/${id}/refresh`, { method: "POST" });
+  return apiFetch(`/api/kpis/${id}/refresh`, { method: "POST" });
 }
 
 export async function updateKPIFlag(flagId: string, status: string): Promise<void> {
-  await fetch(`${API}/api/kpis/flags/${flagId}`, {
+  await apiFetch(`/api/kpis/flags/${flagId}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ status }),
@@ -721,7 +790,7 @@ export interface ModelSetting {
 
 export async function fetchModelSetting(): Promise<ModelSetting | null> {
   try {
-    const res = await fetch(`${API}/api/settings/model`);
+    const res = await apiFetch(`/api/settings/model`);
     if (!res.ok) return null;
     return res.json();
   } catch {
@@ -730,7 +799,7 @@ export async function fetchModelSetting(): Promise<ModelSetting | null> {
 }
 
 export async function updateModelSetting(model: string): Promise<{ ok: boolean; error?: string; current?: string }> {
-  const res = await fetch(`${API}/api/settings/model`, {
+  const res = await apiFetch(`/api/settings/model`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model }),
@@ -769,7 +838,7 @@ export interface GithubRepo {
 }
 
 export async function fetchGithubRepos(): Promise<GithubRepo[]> {
-  const res = await fetch(`${API}/api/integrations/github/repos`);
+  const res = await apiFetch(`/api/integrations/github/repos`);
   if (!res.ok) return [];
   const data = await res.json();
   return data.repos ?? [];
@@ -779,7 +848,7 @@ export async function createIssueFromAction(
   actionId: string,
   payload: { repo: string; title?: string; body?: string },
 ): Promise<{ ok: boolean; issue_url?: string; number?: number; error?: string; hint?: string }> {
-  const res = await fetch(`${API}/api/brief/actions/${actionId}/create-issue`, {
+  const res = await apiFetch(`/api/brief/actions/${actionId}/create-issue`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -790,17 +859,17 @@ export async function createIssueFromAction(
 }
 
 export async function fetchGithubAppStatus(): Promise<GithubAppStatus> {
-  const res = await fetch(`${API}/api/integrations/github/app-status`);
+  const res = await apiFetch(`/api/integrations/github/app-status`);
   if (!res.ok) return { configured: false };
   return res.json();
 }
 
 export function githubAppInstallUrl(): string {
-  return `${API}/api/integrations/github/install`;
+  return `/api/integrations/github/install`;
 }
 
 export async function disconnectGithubApp(): Promise<{ ok: boolean; uninstall_hint?: string | null }> {
-  const res = await fetch(`${API}/api/integrations/github/app`, { method: "DELETE" });
+  const res = await apiFetch(`/api/integrations/github/app`, { method: "DELETE" });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, uninstall_hint: data?.uninstall_hint };
 }
@@ -819,7 +888,7 @@ export interface MCPServer {
 }
 
 export async function fetchMCPServers(): Promise<MCPServer[]> {
-  const res = await fetch(`${API}/api/mcp/servers`);
+  const res = await apiFetch(`/api/mcp/servers`);
   if (!res.ok) return [];
   const data = await res.json();
   return data.servers ?? [];
@@ -835,7 +904,7 @@ export async function createMCPServer(server: {
   headers?: Record<string, string>;
   timeout?: number;
 }): Promise<{ ok: boolean; error?: string; name?: string }> {
-  const res = await fetch(`${API}/api/mcp/servers`, {
+  const res = await apiFetch(`/api/mcp/servers`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(server),
@@ -846,7 +915,7 @@ export async function createMCPServer(server: {
 }
 
 export async function deleteMCPServer(name: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${API}/api/mcp/servers/${encodeURIComponent(name)}`, {
+  const res = await apiFetch(`/api/mcp/servers/${encodeURIComponent(name)}`, {
     method: "DELETE",
   });
   const data = await res.json().catch(() => ({}));
@@ -857,7 +926,7 @@ export async function deleteMCPServer(name: string): Promise<{ ok: boolean; erro
 // ── Sessions ──────────────────────────────────────────────────────────
 
 export async function deleteSession(sessionId: string): Promise<void> {
-  await fetch(`${API}/api/sessions/${sessionId}`, { method: "DELETE" });
+  await apiFetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
 }
 
 /**
@@ -890,7 +959,7 @@ export async function streamChat(
   }
 
   try {
-    const res = await fetch(`${API}/api/chat`, {
+    const res = await apiFetch(`/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: fullMessage, threadId }),
