@@ -18,6 +18,7 @@ import { SettingsView } from "@/components/settings-view";
 import { DashLogo, DashWordmark } from "@/components/dash-logo";
 import { AuthGate } from "@/components/auth-gate";
 import { ModelSelector } from "@/components/model-selector";
+import { TenantSwitcher } from "@/components/tenant-switcher";
 
 export default function Home() {
   const [view, setView] = useState<"brief" | "chat" | "insights" | "signals" | "kpis" | "reports" | "routines" | "settings">("brief");
@@ -252,6 +253,8 @@ export default function Home() {
           </div>
 
           <div className="flex-1" />
+
+          <TenantSwitcher />
 
           <ModelSelector />
 
