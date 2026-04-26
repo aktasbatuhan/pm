@@ -2350,44 +2350,58 @@ def _get_session_db():
 
 
 @app.get("/api/sessions")
-def list_sessions(limit: int = 20, offset: int = 0):
+def list_sessions(limit: int = 20, offset: int = 0, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        sessions = repos.list_sessions(tenant.tenant_id, source="web", limit=limit, offset=offset)
+        if not sessions:
+            sessions = repos.list_sessions(tenant.tenant_id, source=None, limit=limit, offset=offset)
+        return {"sessions": sessions}
+
     db = _get_session_db()
     sessions = db.list_sessions_rich(source="web", limit=limit, offset=offset)
-    # Also include CLI sessions if no web sessions yet
     if not sessions:
         sessions = db.list_sessions_rich(limit=limit, offset=offset)
     return {"sessions": sessions}
 
 
 @app.get("/api/sessions/{session_id}")
-def get_session(session_id: str):
+def get_session(session_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        session = repos.get_session(tenant.tenant_id, session_id)
+        if not session:
+            return JSONResponse({"error": "Session not found"}, status_code=404)
+        messages = repos.get_session_messages(tenant.tenant_id, session_id)
+        display_messages = [
+            {"id": m["id"], "role": m["role"], "content": m["content"]}
+            for m in messages
+            if m["role"] in ("user", "assistant") and m.get("content")
+        ]
+        return {"session": session, "messages": display_messages}
+
     db = _get_session_db()
     session = db.get_session(session_id)
     if not session:
         return JSONResponse({"error": "Session not found"}, status_code=404)
     messages = db.get_messages(session_id)
-    # Filter to user + assistant content messages for display
     display_messages = []
     for msg in messages:
         if msg["role"] == "user" and msg.get("content"):
-            display_messages.append({
-                "id": msg["id"],
-                "role": "user",
-                "content": msg["content"],
-            })
+            display_messages.append({"id": msg["id"], "role": "user", "content": msg["content"]})
         elif msg["role"] == "assistant" and msg.get("content"):
-            display_messages.append({
-                "id": msg["id"],
-                "role": "assistant",
-                "content": msg["content"],
-            })
+            display_messages.append({"id": msg["id"], "role": "assistant", "content": msg["content"]})
     return {"session": session, "messages": display_messages}
 
 
 @app.delete("/api/sessions/{session_id}")
-def delete_session(session_id: str):
-    db = _get_session_db()
-    ok = db.delete_session(session_id)
+def delete_session(session_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.delete_session(tenant.tenant_id, session_id)
+    else:
+        db = _get_session_db()
+        ok = db.delete_session(session_id)
     return {"ok": ok}
 
 

@@ -35,6 +35,7 @@ TENANT_SCOPED_PATH_PREFIXES = (
     "/api/kpis",
     "/api/workspace",
     "/api/chat",
+    "/api/sessions",
 )
 
 

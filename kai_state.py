@@ -209,6 +209,16 @@ class SessionDB:
             ),
         )
         self._conn.commit()
+        # Mirror to Postgres if a tenant is in scope (multi-tenant deployments).
+        try:
+            from backend.session_sync import sync_session
+            sync_session(
+                session_id=session_id, source=source, user_id=user_id, model=model,
+                model_config=model_config, system_prompt=system_prompt,
+                parent_session_id=parent_session_id,
+            )
+        except Exception:
+            pass
         return session_id
 
     def end_session(self, session_id: str, end_reason: str) -> None:
@@ -218,6 +228,11 @@ class SessionDB:
             (time.time(), end_reason, session_id),
         )
         self._conn.commit()
+        try:
+            from backend.session_sync import sync_session_end
+            sync_session_end(session_id, end_reason)
+        except Exception:
+            pass
 
     def update_system_prompt(self, session_id: str, system_prompt: str) -> None:
         """Store the full assembled system prompt snapshot."""
@@ -322,6 +337,11 @@ class SessionDB:
             (title, session_id),
         )
         self._conn.commit()
+        try:
+            from backend.session_sync import sync_session_title
+            sync_session_title(session_id, title)
+        except Exception:
+            pass
         return cursor.rowcount > 0
 
     def get_session_title(self, session_id: str) -> Optional[str]:
@@ -510,6 +530,16 @@ class SessionDB:
             )
 
         self._conn.commit()
+        try:
+            from backend.session_sync import sync_message
+            sync_message(
+                session_id=session_id, role=role, content=content,
+                tool_call_id=tool_call_id, tool_calls=tool_calls,
+                tool_name=tool_name, token_count=token_count,
+                finish_reason=finish_reason,
+            )
+        except Exception:
+            pass
         return msg_id
 
     def get_messages(self, session_id: str) -> List[Dict[str, Any]]:

@@ -196,6 +196,109 @@ def get_workspace_blueprint(tenant_id: str) -> Optional[dict]:
     }
 
 
+# ---------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------
+
+def list_sessions(tenant_id: str, source: Optional[str] = "web",
+                  limit: int = 20, offset: int = 0) -> list[dict]:
+    sql = """
+        SELECT id, source, user_id, model, started_at, ended_at, title,
+               message_count, tool_call_count, input_tokens, output_tokens
+          FROM agent_sessions
+         WHERE tenant_id = %s
+    """
+    args: list[Any] = [tenant_id]
+    if source:
+        sql += " AND source = %s"
+        args.append(source)
+    sql += " ORDER BY started_at DESC LIMIT %s OFFSET %s"
+    args.extend([limit, offset])
+
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            rows = cur.fetchall()
+
+    out = []
+    for r in rows:
+        out.append({
+            "id": r["id"],
+            "source": r["source"],
+            "user_id": r["user_id"],
+            "model": r["model"],
+            "started_at": _ts(r["started_at"]),
+            "ended_at": _ts(r["ended_at"]),
+            "title": r["title"],
+            "message_count": r["message_count"] or 0,
+            "tool_call_count": r["tool_call_count"] or 0,
+            "input_tokens": r["input_tokens"] or 0,
+            "output_tokens": r["output_tokens"] or 0,
+        })
+    return out
+
+
+def get_session(tenant_id: str, session_id: str) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM agent_sessions WHERE tenant_id = %s AND id = %s",
+                (tenant_id, session_id),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "source": row["source"],
+        "user_id": row["user_id"],
+        "model": row["model"],
+        "system_prompt": row["system_prompt"],
+        "title": row["title"],
+        "started_at": _ts(row["started_at"]),
+        "ended_at": _ts(row["ended_at"]),
+        "message_count": row["message_count"] or 0,
+        "tool_call_count": row["tool_call_count"] or 0,
+    }
+
+
+def get_session_messages(tenant_id: str, session_id: str) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, role, content, tool_call_id, tool_calls, tool_name, timestamp
+                  FROM agent_messages
+                 WHERE tenant_id = %s AND session_id = %s
+                 ORDER BY timestamp, id
+                """,
+                (tenant_id, session_id),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "id": r["id"],
+            "role": r["role"],
+            "content": r["content"],
+            "tool_call_id": r["tool_call_id"],
+            "tool_calls": r["tool_calls"],
+            "tool_name": r["tool_name"],
+            "timestamp": _ts(r["timestamp"]),
+        }
+        for r in rows
+    ]
+
+
+def delete_session(tenant_id: str, session_id: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM agent_sessions WHERE tenant_id = %s AND id = %s",
+                (tenant_id, session_id),
+            )
+            return cur.rowcount > 0
+
+
 def list_workspace_learnings(tenant_id: str, limit: int = 50) -> list[dict]:
     with get_pool().connection() as conn:
         with conn.cursor() as cur:
