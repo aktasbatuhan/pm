@@ -89,6 +89,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 @app.middleware("http")
 async def tenant_context_middleware(request: Request, call_next):
     """Resolve per-request tenant context for tenant-scoped API paths."""
+    # Let CORS preflight pass through; browsers don't include the bearer
+    # token on OPTIONS, and CORSMiddleware downstream produces the
+    # appropriate Access-Control-Allow-* response.
+    if request.method == "OPTIONS":
+        return await call_next(request)
     if not is_tenant_scoped_path(request.url.path):
         return await call_next(request)
 
