@@ -1359,25 +1359,41 @@ def github_app_disconnect(tenant=Depends(get_current_tenant)):
 # ── Changelog endpoints ────────────────────────────────────────────────
 
 @app.get("/api/changelogs")
-def list_changelogs(limit: int = 10):
+def list_changelogs(limit: int = 10, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"changelogs": repos.list_changelogs(tenant.tenant_id, limit=limit)}
     db = _ensure_pm_tables()
     rows = db.execute("SELECT * FROM changelogs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
     return {"changelogs": [dict(r) for r in rows]}
 
 
 @app.get("/api/changelogs/latest")
-def latest_changelog():
+def latest_changelog(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"changelog": repos.get_latest_changelog(tenant.tenant_id)}
     db = _ensure_pm_tables()
     row = db.execute("SELECT * FROM changelogs ORDER BY created_at DESC LIMIT 1").fetchone()
     return {"changelog": dict(row) if row else None}
 
 
 @app.post("/api/changelogs")
-async def create_changelog(request: Request):
+async def create_changelog(request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    db = _ensure_pm_tables()
     changelog_id = str(uuid.uuid4())[:8]
     now = time.time()
+    if is_postgres_enabled():
+        from backend import repos
+        repos.create_changelog(
+            tenant.tenant_id, changelog_id=changelog_id,
+            content=body.get("content", ""),
+            period_start=body.get("period_start", now - 604800),
+            period_end=body.get("period_end", now),
+            pr_count=body.get("pr_count", 0),
+        )
+        return {"ok": True, "id": changelog_id}
+    db = _ensure_pm_tables()
     db.execute(
         "INSERT INTO changelogs (id, content, period_start, period_end, pr_count, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (changelog_id, body.get("content", ""), body.get("period_start", now - 604800),
@@ -1730,7 +1746,10 @@ def _trigger_kpi_refresh(kpi_id: str, name: str, plan: str):
 # ── Team pulse endpoints ───────────────────────────────────────────────
 
 @app.get("/api/team/pulse")
-def get_team_pulse():
+def get_team_pulse(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"members": repos.list_team_pulse(tenant.tenant_id)}
     db = _ensure_pm_tables()
     rows = db.execute("SELECT * FROM team_pulse ORDER BY prs_merged DESC").fetchall()
     members = []
@@ -1855,7 +1874,10 @@ def _build_report_prompt(template: dict, generated_by: str = "manual") -> str:
 
 
 @app.get("/api/reports/templates")
-def list_report_templates():
+def list_report_templates(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"templates": repos.list_report_templates(tenant.tenant_id)}
     db = _ensure_pm_tables()
     rows = db.execute("SELECT * FROM report_templates ORDER BY updated_at DESC").fetchall()
     templates = []
@@ -1865,7 +1887,6 @@ def list_report_templates():
             t["resources"] = json.loads(t.get("resources") or "{}")
         except (json.JSONDecodeError, TypeError):
             t["resources"] = {}
-        # Count reports
         count = db.execute("SELECT COUNT(*) as c FROM reports WHERE template_id = ?", (t["id"],)).fetchone()
         t["report_count"] = count["c"] if count else 0
         templates.append(t)
@@ -1873,7 +1894,13 @@ def list_report_templates():
 
 
 @app.get("/api/reports/templates/{template_id}")
-def get_report_template(template_id: str):
+def get_report_template(template_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        t = repos.get_report_template(tenant.tenant_id, template_id)
+        if not t:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        return {"template": t}
     db = _ensure_pm_tables()
     row = db.execute("SELECT * FROM report_templates WHERE id = ?", (template_id,)).fetchone()
     if not row:
@@ -1887,70 +1914,81 @@ def get_report_template(template_id: str):
 
 
 @app.post("/api/reports/templates")
-async def create_report_template(request: Request):
+async def create_report_template(request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    db = _ensure_pm_tables()
     template_id = str(uuid.uuid4())[:8]
-    now = time.time()
     resources = body.get("resources", {})
     if not isinstance(resources, dict):
         resources = {}
-    db.execute(
-        "INSERT INTO report_templates (id, name, body, resources, schedule, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (
-            template_id,
-            body.get("name", "Untitled template"),
-            body.get("body", ""),
-            json.dumps(resources),
-            body.get("schedule", "none"),
-            now, now,
-        ),
-    )
-    db.commit()
-    # If a schedule is set, register a cron job
     schedule = body.get("schedule", "none")
+
+    if is_postgres_enabled():
+        from backend import repos
+        repos.create_report_template(
+            tenant.tenant_id, template_id=template_id,
+            name=body.get("name", "Untitled template"),
+            body=body.get("body", ""), resources=resources, schedule=schedule,
+        )
+    else:
+        db = _ensure_pm_tables()
+        now = time.time()
+        db.execute(
+            "INSERT INTO report_templates (id, name, body, resources, schedule, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (template_id, body.get("name", "Untitled template"), body.get("body", ""),
+             json.dumps(resources), schedule, now, now),
+        )
+        db.commit()
+
     if schedule and schedule != "none":
         _schedule_template_cron(template_id)
     return {"ok": True, "id": template_id}
 
 
 @app.patch("/api/reports/templates/{template_id}")
-async def update_report_template(template_id: str, request: Request):
+async def update_report_template(template_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    db = _ensure_pm_tables()
-    row = db.execute("SELECT * FROM report_templates WHERE id = ?", (template_id,)).fetchone()
-    if not row:
-        return JSONResponse({"error": "Not found"}, status_code=404)
-    updates = []
-    params = []
-    for field in ["name", "body", "resources", "schedule"]:
-        if field in body:
-            updates.append(f"{field} = ?")
-            val = body[field]
-            if field == "resources" and isinstance(val, dict):
-                val = json.dumps(val)
-            params.append(val)
-    if updates:
-        updates.append("updated_at = ?")
-        params.append(time.time())
-        params.append(template_id)
-        db.execute(f"UPDATE report_templates SET {', '.join(updates)} WHERE id = ?", params)
-        db.commit()
 
-    # If schedule changed, re-register cron
+    if is_postgres_enabled():
+        from backend import repos
+        if not repos.get_report_template(tenant.tenant_id, template_id):
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        repos.update_report_template(tenant.tenant_id, template_id, body)
+    else:
+        db = _ensure_pm_tables()
+        row = db.execute("SELECT * FROM report_templates WHERE id = ?", (template_id,)).fetchone()
+        if not row:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        updates, params = [], []
+        for field in ["name", "body", "resources", "schedule"]:
+            if field in body:
+                updates.append(f"{field} = ?")
+                val = body[field]
+                if field == "resources" and isinstance(val, dict):
+                    val = json.dumps(val)
+                params.append(val)
+        if updates:
+            updates.append("updated_at = ?")
+            params.append(time.time())
+            params.append(template_id)
+            db.execute(f"UPDATE report_templates SET {', '.join(updates)} WHERE id = ?", params)
+            db.commit()
+
     if "schedule" in body:
         _unschedule_template_cron(template_id)
         if body["schedule"] and body["schedule"] != "none":
             _schedule_template_cron(template_id)
-
     return {"ok": True}
 
 
 @app.delete("/api/reports/templates/{template_id}")
-def delete_report_template(template_id: str):
-    db = _ensure_pm_tables()
+def delete_report_template(template_id: str, tenant=Depends(get_current_tenant)):
     _unschedule_template_cron(template_id)
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_report_template(tenant.tenant_id, template_id)
+        return {"ok": True}
+    db = _ensure_pm_tables()
     db.execute("DELETE FROM reports WHERE template_id = ?", (template_id,))
     db.execute("DELETE FROM report_templates WHERE id = ?", (template_id,))
     db.commit()
@@ -1958,17 +1996,22 @@ def delete_report_template(template_id: str):
 
 
 @app.post("/api/reports/templates/{template_id}/generate")
-def generate_report(template_id: str):
+def generate_report(template_id: str, tenant=Depends(get_current_tenant)):
     """Fire agent to generate a report from the template."""
-    db = _ensure_pm_tables()
-    row = db.execute("SELECT * FROM report_templates WHERE id = ?", (template_id,)).fetchone()
-    if not row:
-        return JSONResponse({"error": "Template not found"}, status_code=404)
-    template = dict(row)
-    try:
-        template["resources"] = json.loads(template.get("resources") or "{}")
-    except (json.JSONDecodeError, TypeError):
-        template["resources"] = {}
+    template: Optional[dict] = None
+    if is_postgres_enabled():
+        from backend import repos
+        template = repos.get_report_template(tenant.tenant_id, template_id)
+    if not template:
+        db = _ensure_pm_tables()
+        row = db.execute("SELECT * FROM report_templates WHERE id = ?", (template_id,)).fetchone()
+        if not row:
+            return JSONResponse({"error": "Template not found"}, status_code=404)
+        template = dict(row)
+        try:
+            template["resources"] = json.loads(template.get("resources") or "{}")
+        except (json.JSONDecodeError, TypeError):
+            template["resources"] = {}
 
     prompt = _build_report_prompt(template, generated_by="manual")
     triggerBackgroundTask(prompt, f"report-{template_id}-{int(time.time())}")
@@ -1976,7 +2019,10 @@ def generate_report(template_id: str):
 
 
 @app.get("/api/reports")
-def list_reports(template_id: str = "", limit: int = 20):
+def list_reports(template_id: str = "", limit: int = 20, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"reports": repos.list_reports(tenant.tenant_id, template_id=template_id or None, limit=limit)}
     db = _ensure_pm_tables()
     if template_id:
         rows = db.execute(
@@ -1991,7 +2037,11 @@ def list_reports(template_id: str = "", limit: int = 20):
 
 
 @app.delete("/api/reports/{report_id}")
-def delete_report(report_id: str):
+def delete_report(report_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_report(tenant.tenant_id, report_id)
+        return {"ok": True}
     db = _ensure_pm_tables()
     db.execute("DELETE FROM reports WHERE id = ?", (report_id,))
     db.commit()
@@ -2291,7 +2341,10 @@ def delete_schedule(job_id: str):
 # ── Signal Collector endpoints ─────────────────────────────────────────
 
 @app.get("/api/signals/sources")
-def list_signal_sources():
+def list_signal_sources(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"sources": repos.list_signal_sources(tenant.tenant_id)}
     db = _ensure_pm_tables()
     rows = db.execute("SELECT * FROM signal_sources ORDER BY created_at DESC").fetchall()
     sources = []
@@ -2306,32 +2359,40 @@ def list_signal_sources():
 
 
 @app.post("/api/signals/sources")
-async def create_signal_source(request: Request):
+async def create_signal_source(request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    db = _ensure_pm_tables()
     source_id = str(uuid.uuid4())[:8]
+    if is_postgres_enabled():
+        from backend import repos
+        repos.create_signal_source(
+            tenant.tenant_id, source_id=source_id,
+            name=(body.get("name", "").strip() or "Untitled source"),
+            source_type=body.get("type", "exa"),
+            config=body.get("config", {}) or {},
+            filter=body.get("filter", ""),
+        )
+        return {"ok": True, "id": source_id}
+    db = _ensure_pm_tables()
     now = time.time()
     db.execute(
         "INSERT INTO signal_sources (id, name, type, config, filter, enabled, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)",
-        (
-            source_id,
-            body.get("name", "").strip() or "Untitled source",
-            body.get("type", "exa"),
-            json.dumps(body.get("config", {})),
-            body.get("filter", ""),
-            now,
-        ),
+        (source_id, body.get("name", "").strip() or "Untitled source",
+         body.get("type", "exa"), json.dumps(body.get("config", {})),
+         body.get("filter", ""), now),
     )
     db.commit()
     return {"ok": True, "id": source_id}
 
 
 @app.patch("/api/signals/sources/{source_id}")
-async def update_signal_source(source_id: str, request: Request):
+async def update_signal_source(source_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
+    if is_postgres_enabled():
+        from backend import repos
+        repos.update_signal_source(tenant.tenant_id, source_id, body)
+        return {"ok": True}
     db = _ensure_pm_tables()
-    updates = []
-    params = []
+    updates, params = [], []
     for field in ["name", "type", "config", "filter", "enabled"]:
         if field in body:
             updates.append(f"{field} = ?")
@@ -2349,7 +2410,11 @@ async def update_signal_source(source_id: str, request: Request):
 
 
 @app.delete("/api/signals/sources/{source_id}")
-def delete_signal_source(source_id: str):
+def delete_signal_source(source_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_signal_source(tenant.tenant_id, source_id)
+        return {"ok": True}
     db = _ensure_pm_tables()
     db.execute("DELETE FROM signals WHERE source_id = ?", (source_id,))
     db.execute("DELETE FROM signal_sources WHERE id = ?", (source_id,))
@@ -2358,7 +2423,10 @@ def delete_signal_source(source_id: str):
 
 
 @app.get("/api/signals")
-def list_signals(status: str = "all", limit: int = 50):
+def list_signals(status: str = "all", limit: int = 50, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"signals": repos.list_signals(tenant.tenant_id, status=status, limit=limit)}
     db = _ensure_pm_tables()
     if status == "all":
         rows = db.execute(
@@ -2386,20 +2454,56 @@ def list_signals(status: str = "all", limit: int = 50):
 
 
 @app.post("/api/signals/{signal_id}/status")
-async def update_signal_status(signal_id: str, request: Request):
+async def update_signal_status(signal_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
+    new_status = body.get("status", "read")
+    if is_postgres_enabled():
+        from backend import repos
+        repos.update_signal_status(tenant.tenant_id, signal_id, new_status)
+        return {"ok": True}
     db = _ensure_pm_tables()
-    db.execute("UPDATE signals SET status = ? WHERE id = ?", (body.get("status", "read"), signal_id))
+    db.execute("UPDATE signals SET status = ? WHERE id = ?", (new_status, signal_id))
     db.commit()
     return {"ok": True}
 
 
 @app.post("/api/signals/sources/{source_id}/fetch")
-def fetch_signal_source(source_id: str):
+def fetch_signal_source(source_id: str, tenant=Depends(get_current_tenant)):
     """Trigger a fetch for a specific source (or all if id='all')."""
     import threading as _threading
+    tenant_id = tenant.tenant_id if is_postgres_enabled() else None
 
-    def _run():
+    def _run_postgres():
+        from backend import repos
+        sources = repos.list_signal_sources(tenant_id)
+        if source_id != "all":
+            sources = [s for s in sources if s["id"] == source_id]
+        sources = [s for s in sources if s["enabled"]] if source_id == "all" else sources
+
+        for src in sources:
+            try:
+                from signal_fetcher import fetch_source
+                items = fetch_source(src["type"], src["config"], src.get("filter") or "")
+            except Exception as e:
+                logger.exception("Fetch failed for %s: %s", src["id"], e)
+                continue
+
+            for item in items:
+                sig_id = str(uuid.uuid4())[:12]
+                repos.insert_signal(
+                    tenant_id, signal_id=sig_id, source_id=src["id"],
+                    title=(item.get("title") or "")[:500],
+                    body=(item.get("body") or "")[:5000],
+                    url=item.get("url") or "",
+                    author=(item.get("author") or "")[:200],
+                    relevance_score=item.get("relevance_score") or 0,
+                    metadata=item.get("metadata") or {},
+                    external_created_at=item.get("external_created_at"),
+                )
+            repos.update_source_last_fetched(tenant_id, src["id"])
+            logger.info("Fetched %d signals for source %s", len(items), src["id"])
+
+    def _run_sqlite():
         db = _ensure_pm_tables()
         if source_id == "all":
             rows = db.execute("SELECT * FROM signal_sources WHERE enabled = 1").fetchall()
@@ -2418,10 +2522,8 @@ def fetch_signal_source(source_id: str):
             except Exception as e:
                 logger.exception("Fetch failed for %s: %s", src["id"], e)
                 continue
-
             now = time.time()
             for item in items:
-                # Dedupe by URL
                 if item.get("url"):
                     exists = db.execute("SELECT id FROM signals WHERE url = ?", (item["url"],)).fetchone()
                     if exists:
@@ -2430,22 +2532,16 @@ def fetch_signal_source(source_id: str):
                 db.execute(
                     "INSERT INTO signals (id, source_id, title, body, url, author, metadata, external_created_at, created_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        sig_id, src["id"],
-                        item.get("title", "")[:500],
-                        item.get("body", "")[:5000],
-                        item.get("url", ""),
-                        item.get("author", "")[:200],
-                        json.dumps(item.get("metadata", {})),
-                        item.get("external_created_at", now),
-                        now,
-                    ),
+                    (sig_id, src["id"], item.get("title", "")[:500], item.get("body", "")[:5000],
+                     item.get("url", ""), item.get("author", "")[:200],
+                     json.dumps(item.get("metadata", {})),
+                     item.get("external_created_at", now), now),
                 )
             db.execute("UPDATE signal_sources SET last_fetched_at = ? WHERE id = ?", (now, src["id"]))
             db.commit()
             logger.info("Fetched %d signals for source %s", len(items), src["id"])
 
-    _threading.Thread(target=_run, daemon=True).start()
+    _threading.Thread(target=(_run_postgres if tenant_id else _run_sqlite), daemon=True).start()
     return {"ok": True, "message": "Fetch started in background"}
 
 

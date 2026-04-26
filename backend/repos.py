@@ -685,6 +685,356 @@ def delete_github_installation(tenant_id: str) -> bool:
 # Onboarding profile
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Signal sources + signals
+# ---------------------------------------------------------------------------
+
+def list_signal_sources(tenant_id: str) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM signal_sources WHERE tenant_id = %s ORDER BY created_at DESC",
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "id": r["id"],
+            "name": r["name"],
+            "type": r["type"],
+            "config": r["config"] or {},
+            "filter": r["filter"],
+            "enabled": bool(r["enabled"]),
+            "last_fetched_at": _ts(r["last_fetched_at"]),
+            "created_at": _ts(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def create_signal_source(tenant_id: str, *, source_id: str, name: str,
+                         source_type: str, config: dict, filter: Optional[str]) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO signal_sources
+                       (id, tenant_id, name, type, config, filter, enabled)
+                   VALUES (%s,%s,%s,%s,%s,%s, TRUE)""",
+                (source_id, tenant_id, name, source_type, json.dumps(config or {}), filter),
+            )
+
+
+def update_signal_source(tenant_id: str, source_id: str, fields: dict) -> bool:
+    allowed = {"name", "type", "config", "filter", "enabled"}
+    sets, args = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        if k == "config" and isinstance(v, dict):
+            v = json.dumps(v)
+        if k == "enabled":
+            v = bool(v)
+        sets.append(f"{k} = %s")
+        args.append(v)
+    if not sets:
+        return False
+    args.extend([tenant_id, source_id])
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE signal_sources SET {', '.join(sets)} WHERE tenant_id = %s AND id = %s",
+                args,
+            )
+            return cur.rowcount > 0
+
+
+def delete_signal_source(tenant_id: str, source_id: str) -> bool:
+    # signals cascade via FK on source_id (ON DELETE CASCADE)
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM signal_sources WHERE tenant_id = %s AND id = %s",
+                (tenant_id, source_id),
+            )
+            return cur.rowcount > 0
+
+
+def list_signals(tenant_id: str, status: str = "all", limit: int = 50) -> list[dict]:
+    sql = """
+        SELECT s.*, src.name AS source_name, src.type AS source_type
+          FROM signals s
+          JOIN signal_sources src ON s.source_id = src.id
+         WHERE s.tenant_id = %s
+    """
+    args: list[Any] = [tenant_id]
+    if status and status != "all":
+        sql += " AND s.status = %s"
+        args.append(status)
+    sql += " ORDER BY s.external_created_at DESC NULLS LAST, s.created_at DESC LIMIT %s"
+    args.append(limit)
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            rows = cur.fetchall()
+    return [
+        {
+            "id": r["id"], "source_id": r["source_id"],
+            "title": r["title"], "body": r["body"], "url": r["url"], "author": r["author"],
+            "relevance_score": r["relevance_score"] or 0,
+            "status": r["status"],
+            "metadata": r["metadata"] or {},
+            "external_created_at": _ts(r["external_created_at"]),
+            "created_at": _ts(r["created_at"]),
+            "source_name": r["source_name"], "source_type": r["source_type"],
+        }
+        for r in rows
+    ]
+
+
+def update_signal_status(tenant_id: str, signal_id: str, status: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE signals SET status = %s WHERE tenant_id = %s AND id = %s",
+                (status, tenant_id, signal_id),
+            )
+            return cur.rowcount > 0
+
+
+def insert_signal(tenant_id: str, *, signal_id: str, source_id: str, title: Optional[str],
+                  body: Optional[str], url: Optional[str], author: Optional[str],
+                  relevance_score: float, metadata: dict,
+                  external_created_at: Optional[float]) -> bool:
+    """Insert a fetched signal. Returns False if duplicate URL within source."""
+    ext_ts = None
+    if external_created_at is not None:
+        ext_ts = datetime.fromtimestamp(external_created_at, tz=timezone.utc)
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            if url:
+                cur.execute(
+                    "SELECT 1 FROM signals WHERE tenant_id = %s AND source_id = %s AND url = %s",
+                    (tenant_id, source_id, url),
+                )
+                if cur.fetchone():
+                    return False
+            cur.execute(
+                """INSERT INTO signals
+                       (id, tenant_id, source_id, title, body, url, author,
+                        relevance_score, status, metadata, external_created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'new',%s,%s)
+                   ON CONFLICT (id) DO NOTHING""",
+                (signal_id, tenant_id, source_id, title, body, url, author,
+                 relevance_score, json.dumps(metadata or {}), ext_ts),
+            )
+            return cur.rowcount > 0
+
+
+def update_source_last_fetched(tenant_id: str, source_id: str) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE signal_sources SET last_fetched_at = NOW() WHERE tenant_id = %s AND id = %s",
+                (tenant_id, source_id),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Report templates + reports
+# ---------------------------------------------------------------------------
+
+def _shape_template(row: dict, report_count: int = 0) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "body": row["body"],
+        "resources": row["resources"] or {},
+        "schedule": row["schedule"],
+        "cron_job_id": row["cron_job_id"],
+        "created_at": _ts(row["created_at"]),
+        "updated_at": _ts(row["updated_at"]),
+        "report_count": report_count,
+    }
+
+
+def list_report_templates(tenant_id: str) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT t.*, (SELECT count(*) FROM reports r WHERE r.template_id = t.id) AS rc
+                     FROM report_templates t
+                    WHERE t.tenant_id = %s
+                 ORDER BY t.updated_at DESC""",
+                (tenant_id,),
+            )
+            return [_shape_template(r, r["rc"]) for r in cur.fetchall()]
+
+
+def get_report_template(tenant_id: str, template_id: str) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM report_templates WHERE tenant_id = %s AND id = %s",
+                (tenant_id, template_id),
+            )
+            row = cur.fetchone()
+    return _shape_template(row) if row else None
+
+
+def create_report_template(tenant_id: str, *, template_id: str, name: str, body: str,
+                           resources: dict, schedule: str = "none") -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO report_templates
+                       (id, tenant_id, name, body, resources, schedule)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                (template_id, tenant_id, name, body, json.dumps(resources or {}), schedule),
+            )
+
+
+def update_report_template(tenant_id: str, template_id: str, fields: dict) -> bool:
+    allowed = {"name", "body", "resources", "schedule", "cron_job_id"}
+    sets, args = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        if k == "resources" and isinstance(v, dict):
+            v = json.dumps(v)
+        sets.append(f"{k} = %s")
+        args.append(v)
+    if not sets:
+        return False
+    args.extend([tenant_id, template_id])
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE report_templates SET {', '.join(sets)} WHERE tenant_id = %s AND id = %s",
+                args,
+            )
+            return cur.rowcount > 0
+
+
+def delete_report_template(tenant_id: str, template_id: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM report_templates WHERE tenant_id = %s AND id = %s",
+                (tenant_id, template_id),
+            )
+            return cur.rowcount > 0
+
+
+def list_reports(tenant_id: str, template_id: Optional[str] = None, limit: int = 20) -> list[dict]:
+    sql = "SELECT * FROM reports WHERE tenant_id = %s"
+    args: list[Any] = [tenant_id]
+    if template_id:
+        sql += " AND template_id = %s"
+        args.append(template_id)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    args.append(limit)
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            return [
+                {"id": r["id"], "template_id": r["template_id"],
+                 "content": r["content"], "created_at": _ts(r["created_at"])}
+                for r in cur.fetchall()
+            ]
+
+
+def delete_report(tenant_id: str, report_id: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM reports WHERE tenant_id = %s AND id = %s",
+                (tenant_id, report_id),
+            )
+            return cur.rowcount > 0
+
+
+def insert_report(tenant_id: str, *, report_id: str, template_id: str, content: str) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO reports (id, tenant_id, template_id, content) VALUES (%s,%s,%s,%s)",
+                (report_id, tenant_id, template_id, content),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Team pulse + changelogs
+# ---------------------------------------------------------------------------
+
+def list_team_pulse(tenant_id: str) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM team_pulse
+                    WHERE tenant_id = %s
+                 ORDER BY prs_merged DESC""",
+                (tenant_id,),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "id": r["id"], "member_name": r["member_name"], "github_handle": r["github_handle"],
+            "prs_merged": r["prs_merged"] or 0, "reviews_done": r["reviews_done"] or 0,
+            "days_since_active": r["days_since_active"] or 0,
+            "flags": r["flags"] or [],
+            "period": r["period"],
+            "created_at": _ts(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def list_changelogs(tenant_id: str, limit: int = 10) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM changelogs WHERE tenant_id = %s ORDER BY created_at DESC LIMIT %s",
+                (tenant_id, limit),
+            )
+            return [_shape_changelog(r) for r in cur.fetchall()]
+
+
+def get_latest_changelog(tenant_id: str) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM changelogs WHERE tenant_id = %s ORDER BY created_at DESC LIMIT 1",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+    return _shape_changelog(row) if row else None
+
+
+def _shape_changelog(row: dict) -> dict:
+    return {
+        "id": row["id"], "content": row["content"],
+        "period_start": _ts(row["period_start"]),
+        "period_end": _ts(row["period_end"]),
+        "pr_count": row["pr_count"] or 0,
+        "created_at": _ts(row["created_at"]),
+    }
+
+
+def create_changelog(tenant_id: str, *, changelog_id: str, content: str,
+                     period_start: Optional[float], period_end: Optional[float],
+                     pr_count: int = 0) -> None:
+    ps = datetime.fromtimestamp(period_start, tz=timezone.utc) if period_start else None
+    pe = datetime.fromtimestamp(period_end, tz=timezone.utc) if period_end else None
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO changelogs
+                       (id, tenant_id, content, period_start, period_end, pr_count)
+                   VALUES (%s,%s,%s,%s,%s,%s)""",
+                (changelog_id, tenant_id, content, ps, pe, pr_count),
+            )
+
+
 def get_onboarding_profile(tenant_id: str) -> dict:
     with get_pool().connection() as conn:
         with conn.cursor() as cur:
