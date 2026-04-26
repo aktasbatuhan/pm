@@ -36,11 +36,22 @@ TENANT_SCOPED_PATH_PREFIXES = (
     "/api/workspace",
     "/api/chat",
     "/api/sessions",
+    "/api/integrations",
+    "/api/onboarding",
+)
+
+# Paths under tenant-scoped prefixes that must NOT require auth (OAuth callbacks
+# from external services come without our JWT).
+_TENANT_AUTH_BYPASS = (
+    "/api/integrations/github/install",
+    "/api/integrations/github/callback",
 )
 
 
 def is_tenant_scoped_path(path: str) -> bool:
     if not is_postgres_enabled():
+        return False
+    if any(path.startswith(p) for p in _TENANT_AUTH_BYPASS):
         return False
     return any(path.startswith(prefix) for prefix in TENANT_SCOPED_PATH_PREFIXES)
 

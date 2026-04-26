@@ -803,15 +803,22 @@ def waitlist_list(request: Request):
 # ── Onboarding endpoints ───────────────────────────────────────────────
 
 @app.get("/api/onboarding/profile")
-def get_onboarding_profile():
+def get_onboarding_profile(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return repos.get_onboarding_profile(tenant.tenant_id)
     db = _get_integrations_db()
     rows = db.execute("SELECT key, value FROM onboarding_profile").fetchall()
     return {r["key"]: r["value"] for r in rows}
 
 
 @app.post("/api/onboarding/profile")
-async def save_onboarding_profile(request: Request):
+async def save_onboarding_profile(request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
+    if is_postgres_enabled():
+        from backend import repos
+        repos.save_onboarding_profile(tenant.tenant_id, body)
+        return {"ok": True}
     db = _get_integrations_db()
     for key, value in body.items():
         db.execute(
@@ -824,52 +831,65 @@ async def save_onboarding_profile(request: Request):
 
 
 @app.get("/api/integrations")
-def list_integrations():
+def list_integrations(tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        items = repos.list_integrations(tenant.tenant_id)
+        for it in items:
+            it["credentials"] = "••••" + str(it.get("credentials") or "")[-4:]
+        return {"integrations": items}
+
     db = _get_integrations_db()
     rows = db.execute("SELECT * FROM integrations ORDER BY connected_at DESC").fetchall()
     items = []
     for r in rows:
         item = dict(r)
-        # Never return raw credentials
         item["credentials"] = "••••" + str(item.get("credentials", ""))[-4:]
         items.append(item)
     return {"integrations": items}
 
 
 @app.post("/api/integrations/{platform}")
-async def connect_integration(platform: str, request: Request):
+async def connect_integration(platform: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    auth_type = body.get("auth_type", "token")  # token, oauth, api_key
+    auth_type = body.get("auth_type", "token")
     credentials = body.get("credentials", "")
     display_name = body.get("display_name", platform)
-
     if not credentials:
         return JSONResponse({"error": "credentials required"}, status_code=400)
 
-    # Validate the credential
     valid, message = _validate_integration(platform, auth_type, credentials)
-
-    db = _get_integrations_db()
-    now = time.time()
     status = "connected" if valid else "invalid"
-    db.execute(
-        "INSERT INTO integrations (platform, auth_type, credentials, status, display_name, connected_at, last_verified) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(platform) DO UPDATE SET auth_type=excluded.auth_type, credentials=excluded.credentials, "
-        "status=excluded.status, display_name=excluded.display_name, connected_at=excluded.connected_at, last_verified=excluded.last_verified",
-        (platform, auth_type, credentials, status, display_name, now, now),
-    )
-    db.commit()
 
-    # If valid, also inject into the environment for the agent to use
+    if is_postgres_enabled():
+        from backend import repos
+        repos.upsert_integration(
+            tenant.tenant_id, platform=platform, auth_type=auth_type,
+            credentials=credentials, status=status, display_name=display_name,
+        )
+    else:
+        db = _get_integrations_db()
+        now = time.time()
+        db.execute(
+            "INSERT INTO integrations (platform, auth_type, credentials, status, display_name, connected_at, last_verified) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(platform) DO UPDATE SET auth_type=excluded.auth_type, credentials=excluded.credentials, "
+            "status=excluded.status, display_name=excluded.display_name, connected_at=excluded.connected_at, last_verified=excluded.last_verified",
+            (platform, auth_type, credentials, status, display_name, now, now),
+        )
+        db.commit()
+
     if valid:
         _inject_credential(platform, credentials)
-
     return {"ok": valid, "status": status, "message": message}
 
 
 @app.delete("/api/integrations/{platform}")
-def disconnect_integration(platform: str):
+def disconnect_integration(platform: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_integration(tenant.tenant_id, platform)
+        return {"ok": True}
     db = _get_integrations_db()
     db.execute("DELETE FROM integrations WHERE platform = ?", (platform,))
     db.commit()
@@ -1116,17 +1136,22 @@ def _tool_availability_snapshot():
 
 
 @app.get("/api/integrations/github/app-status")
-def github_app_status():
+def github_app_status(tenant=Depends(get_current_tenant)):
     """Expose whether the GitHub App is configured (so the UI can pick install-flow vs PAT-fallback)."""
     cfg = _github_app_config()
     if not cfg:
         return {"configured": False}
-    db = _get_integrations_db()
-    row = db.execute(
-        "SELECT installation_id, account_login, account_type, repo_selection, installed_at, updated_at "
-        "FROM github_installations ORDER BY updated_at DESC LIMIT 1"
-    ).fetchone()
-    inst = dict(row) if row else None
+    inst = None
+    if is_postgres_enabled():
+        from backend import repos
+        inst = repos.get_github_installation(tenant.tenant_id)
+    else:
+        db = _get_integrations_db()
+        row = db.execute(
+            "SELECT installation_id, account_login, account_type, repo_selection, installed_at, updated_at "
+            "FROM github_installations ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        inst = dict(row) if row else None
     permissions = {}
     if inst:
         # Query live installation permissions so the UI knows whether write
@@ -1292,9 +1317,9 @@ def github_app_install_callback(
 
 
 @app.get("/api/integrations/github/repos")
-def github_list_repos_endpoint():
+def github_list_repos_endpoint(tenant=Depends(get_current_tenant)):
     """Proxy /installation/repositories for the frontend repo picker."""
-    _refresh_github_token_env()
+    _refresh_github_token_env(tenant_id=tenant.tenant_id if is_postgres_enabled() else None)
     from tools.pm_github_tools import github_list_repos
     import json as _json
     try:
@@ -1307,17 +1332,21 @@ def github_list_repos_endpoint():
 
 
 @app.delete("/api/integrations/github/app")
-def github_app_disconnect():
+def github_app_disconnect(tenant=Depends(get_current_tenant)):
     """Remove the stored installation. The user should also uninstall on GitHub.com."""
-    db = _get_integrations_db()
-    row = db.execute(
-        "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
-    ).fetchone()
-    if row:
-        db.execute("DELETE FROM github_installations WHERE installation_id = ?", (row["installation_id"],))
-    db.execute("DELETE FROM integrations WHERE platform = 'github' AND auth_type = 'github_app'")
-    db.commit()
-    # Clear env so the agent no longer sees the stale token
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_github_installation(tenant.tenant_id)
+        repos.delete_integration(tenant.tenant_id, "github")
+    else:
+        db = _get_integrations_db()
+        row = db.execute(
+            "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
+        ).fetchone()
+        if row:
+            db.execute("DELETE FROM github_installations WHERE installation_id = ?", (row["installation_id"],))
+        db.execute("DELETE FROM integrations WHERE platform = 'github' AND auth_type = 'github_app'")
+        db.commit()
     os.environ.pop("GITHUB_TOKEN", None)
     os.environ.pop("GITHUB_PERSONAL_ACCESS_TOKEN", None)
     cfg = _github_app_config()
@@ -1373,7 +1402,11 @@ def generate_changelog():
 # ── Goals endpoints ────────────────────────────────────────────────────
 
 @app.get("/api/goals")
-def list_goals(status: str = "active"):
+def list_goals(status: str = "active", tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"goals": repos.list_goals(tenant.tenant_id, status=status)}
+
     db = _ensure_pm_tables()
     if status == "all":
         rows = db.execute("SELECT * FROM goals ORDER BY created_at DESC").fetchall()
@@ -1392,7 +1425,11 @@ def list_goals(status: str = "active"):
 
 
 @app.get("/api/goals/{goal_id}/history")
-def goal_history(goal_id: str, limit: int = 20):
+def goal_history(goal_id: str, limit: int = 20, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"snapshots": repos.goal_history(tenant.tenant_id, goal_id, limit=limit)}
+
     db = _ensure_pm_tables()
     rows = db.execute(
         "SELECT * FROM goal_snapshots WHERE goal_id = ? ORDER BY created_at DESC LIMIT ?",
@@ -1410,10 +1447,20 @@ def goal_history(goal_id: str, limit: int = 20):
 
 
 @app.post("/api/goals")
-async def create_goal(request: Request):
+async def create_goal(request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    db = _ensure_pm_tables()
     goal_id = str(uuid.uuid4())[:8]
+
+    if is_postgres_enabled():
+        from backend import repos
+        repos.create_goal(
+            tenant.tenant_id, goal_id=goal_id,
+            title=body.get("title", ""), description=body.get("description", ""),
+            target_date=body.get("target_date", ""),
+        )
+        return {"ok": True, "id": goal_id}
+
+    db = _ensure_pm_tables()
     now = time.time()
     db.execute(
         "INSERT INTO goals (id, title, description, target_date, status, progress, trajectory, related_items, created_at, updated_at) "
@@ -1426,14 +1473,25 @@ async def create_goal(request: Request):
 
 
 @app.patch("/api/goals/{goal_id}")
-async def update_goal(goal_id: str, request: Request):
+async def update_goal(goal_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
+
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.update_goal(tenant.tenant_id, goal_id, body)
+        if not ok:
+            # Could be either "not found" or "no fields to update"; treat as success
+            # if the goal exists, 404 if not.
+            existing = next((g for g in repos.list_goals(tenant.tenant_id, status="all") if g["id"] == goal_id), None)
+            if not existing:
+                return JSONResponse({"error": "Not found"}, status_code=404)
+        return {"ok": True}
+
     db = _ensure_pm_tables()
     row = db.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
     if not row:
         return JSONResponse({"error": "Not found"}, status_code=404)
-    updates = []
-    params = []
+    updates, params = [], []
     for field in ["title", "description", "target_date", "status", "progress", "trajectory", "related_items"]:
         if field in body:
             updates.append(f"{field} = ?")
@@ -1451,7 +1509,11 @@ async def update_goal(goal_id: str, request: Request):
 
 
 @app.delete("/api/goals/{goal_id}")
-def delete_goal(goal_id: str):
+def delete_goal(goal_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_goal(tenant.tenant_id, goal_id)
+        return {"ok": True}
     db = _ensure_pm_tables()
     db.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
     db.commit()
@@ -1488,7 +1550,11 @@ def _kpi_row_to_dict(r, include_history: bool = False, include_flags: bool = Fal
 
 
 @app.get("/api/kpis")
-def list_kpis(status: str = "active"):
+def list_kpis(status: str = "active", tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        return {"kpis": repos.list_kpis(tenant.tenant_id, status=status)}
+
     db = _ensure_pm_tables()
     if status == "all":
         rows = db.execute("SELECT * FROM kpis ORDER BY created_at DESC").fetchall()
@@ -1501,7 +1567,14 @@ def list_kpis(status: str = "active"):
 
 
 @app.get("/api/kpis/{kpi_id}")
-def get_kpi(kpi_id: str):
+def get_kpi(kpi_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        kpi = repos.get_kpi(tenant.tenant_id, kpi_id)
+        if not kpi:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        return {"kpi": kpi}
+
     db = _ensure_pm_tables()
     row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
     if not row:
@@ -1510,14 +1583,12 @@ def get_kpi(kpi_id: str):
 
 
 @app.post("/api/kpis")
-async def create_kpi(request: Request):
+async def create_kpi(request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
     name = (body.get("name") or "").strip()
     if not name:
         return JSONResponse({"error": "name required"}, status_code=400)
-    db = _ensure_pm_tables()
     kpi_id = str(uuid.uuid4())[:8]
-    now = time.time()
     direction = body.get("direction") or "higher"
     if direction not in ("higher", "lower"):
         direction = "higher"
@@ -1526,23 +1597,41 @@ async def create_kpi(request: Request):
         target = float(target) if target not in (None, "") else None
     except (TypeError, ValueError):
         target = None
-    db.execute(
-        "INSERT INTO kpis (id, name, description, unit, direction, target_value, "
-        "measurement_plan, measurement_status, status, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'active', ?, ?)",
-        (kpi_id, name, body.get("description", ""), body.get("unit", ""), direction, target, now, now),
-    )
-    db.commit()
 
-    # Trigger the agent to self-configure this KPI asynchronously.
+    if is_postgres_enabled():
+        from backend import repos
+        repos.create_kpi(
+            tenant.tenant_id, kpi_id=kpi_id, name=name,
+            description=body.get("description", ""), unit=body.get("unit", ""),
+            direction=direction, target_value=target,
+        )
+    else:
+        db = _ensure_pm_tables()
+        now = time.time()
+        db.execute(
+            "INSERT INTO kpis (id, name, description, unit, direction, target_value, "
+            "measurement_plan, measurement_status, status, created_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, '', 'pending', 'active', ?, ?)",
+            (kpi_id, name, body.get("description", ""), body.get("unit", ""), direction, target, now, now),
+        )
+        db.commit()
+
     _trigger_kpi_configure(kpi_id, name, body.get("description", ""))
-
     return {"ok": True, "id": kpi_id}
 
 
 @app.patch("/api/kpis/{kpi_id}")
-async def update_kpi(kpi_id: str, request: Request):
+async def update_kpi(kpi_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
+
+    if is_postgres_enabled():
+        from backend import repos
+        kpi = repos.get_kpi(tenant.tenant_id, kpi_id)
+        if not kpi:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        repos.update_kpi(tenant.tenant_id, kpi_id, body)
+        return {"ok": True}
+
     db = _ensure_pm_tables()
     row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
     if not row:
@@ -1564,7 +1653,11 @@ async def update_kpi(kpi_id: str, request: Request):
 
 
 @app.delete("/api/kpis/{kpi_id}")
-def delete_kpi(kpi_id: str):
+def delete_kpi(kpi_id: str, tenant=Depends(get_current_tenant)):
+    if is_postgres_enabled():
+        from backend import repos
+        repos.delete_kpi(tenant.tenant_id, kpi_id)
+        return {"ok": True}
     db = _ensure_pm_tables()
     db.execute("DELETE FROM kpi_values WHERE kpi_id = ?", (kpi_id,))
     db.execute("DELETE FROM kpi_flags WHERE kpi_id = ?", (kpi_id,))
@@ -1574,8 +1667,16 @@ def delete_kpi(kpi_id: str):
 
 
 @app.post("/api/kpis/{kpi_id}/refresh")
-def refresh_kpi(kpi_id: str):
+def refresh_kpi(kpi_id: str, tenant=Depends(get_current_tenant)):
     """Manually trigger a KPI measurement refresh."""
+    if is_postgres_enabled():
+        from backend import repos
+        kpi = repos.get_kpi(tenant.tenant_id, kpi_id)
+        if not kpi:
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        _trigger_kpi_refresh(kpi_id, kpi["name"], kpi.get("measurement_plan") or "")
+        return {"ok": True, "message": "Refresh triggered"}
+
     db = _ensure_pm_tables()
     row = db.execute("SELECT * FROM kpis WHERE id = ?", (kpi_id,)).fetchone()
     if not row:
@@ -1585,10 +1686,16 @@ def refresh_kpi(kpi_id: str):
 
 
 @app.post("/api/kpis/flags/{flag_id}")
-async def update_kpi_flag(flag_id: str, request: Request):
+async def update_kpi_flag(flag_id: str, request: Request, tenant=Depends(get_current_tenant)):
     body = await request.json()
-    db = _ensure_pm_tables()
     new_status = body.get("status", "resolved")
+
+    if is_postgres_enabled():
+        from backend import repos
+        repos.update_kpi_flag_status(tenant.tenant_id, flag_id, new_status)
+        return {"ok": True, "status": new_status}
+
+    db = _ensure_pm_tables()
     db.execute(
         "UPDATE kpi_flags SET status = ?, updated_at = ? WHERE id = ?",
         (new_status, time.time(), flag_id),

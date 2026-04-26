@@ -113,29 +113,61 @@ def get_installation_token(installation_id: str) -> Optional[str]:
         db.close()
 
 
-def refresh_github_token_env() -> bool:
+def refresh_github_token_env(tenant_id: Optional[str] = None) -> bool:
     """If a GitHub App installation exists, mint a fresh token and inject it as GITHUB_TOKEN.
+
+    Resolution order:
+      1. If tenant_id is provided AND Postgres is enabled, look up that tenant's installation in Neon.
+      2. Else fall back to the most recent installation in the local SQLite (single-tenant legacy).
 
     Called at the start of every agent run (chat, cron, brief) so the agent
     always has a non-expired installation token available to `gh api` / `curl`.
     """
-    import sqlite3
+    installation_id: Optional[str] = None
+
+    # Postgres path (multi-tenant)
     try:
-        db = sqlite3.connect(str(_integrations_db_path()), check_same_thread=False, timeout=10.0)
-        db.row_factory = sqlite3.Row
+        from backend.db.postgres_client import is_postgres_enabled
+        from backend.tenant_context import get_current_tenant as _get_ctx
+        if is_postgres_enabled():
+            effective_tenant = tenant_id
+            if not effective_tenant:
+                ctx = _get_ctx()
+                if ctx and ctx.tenant_id and ctx.tenant_id != "default":
+                    effective_tenant = ctx.tenant_id
+                else:
+                    env_tid = os.getenv("KAI_TENANT_ID", "").strip()
+                    if env_tid and env_tid != "default":
+                        effective_tenant = env_tid
+            if effective_tenant:
+                from backend import repos
+                inst = repos.get_github_installation(effective_tenant)
+                if inst:
+                    installation_id = inst["installation_id"]
     except Exception:
-        return False
-    try:
-        row = db.execute(
-            "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
-        ).fetchone()
-    except Exception:
+        pass
+
+    # SQLite fallback
+    if not installation_id:
+        import sqlite3
+        try:
+            db = sqlite3.connect(str(_integrations_db_path()), check_same_thread=False, timeout=10.0)
+            db.row_factory = sqlite3.Row
+        except Exception:
+            return False
+        try:
+            row = db.execute(
+                "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
+            ).fetchone()
+        except Exception:
+            row = None
         db.close()
+        if row:
+            installation_id = row["installation_id"]
+
+    if not installation_id:
         return False
-    db.close()
-    if not row:
-        return False
-    token = get_installation_token(row["installation_id"])
+    token = get_installation_token(installation_id)
     if not token:
         return False
     os.environ["GITHUB_TOKEN"] = token

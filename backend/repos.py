@@ -11,6 +11,7 @@ returns rows belonging to that tenant.
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from backend.db.postgres_client import get_pool
@@ -297,6 +298,413 @@ def delete_session(tenant_id: str, session_id: str) -> bool:
                 (tenant_id, session_id),
             )
             return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Goals
+# ---------------------------------------------------------------------------
+
+def _shape_goal(row: dict) -> dict:
+    related = row.get("related_items") or []
+    actions = row.get("action_items") or []
+    if isinstance(related, str):
+        try: related = json.loads(related)
+        except: related = []
+    if isinstance(actions, str):
+        try: actions = json.loads(actions)
+        except: actions = []
+    return {
+        "id": row["id"],
+        "title": row["title"],
+        "description": row.get("description"),
+        "target_date": row.get("target_date"),
+        "status": row.get("status"),
+        "progress": row.get("progress") or 0,
+        "trajectory": row.get("trajectory"),
+        "related_items": related,
+        "action_items": actions,
+        "last_evaluated_at": _ts(row.get("last_evaluated_at")),
+        "created_at": _ts(row["created_at"]),
+        "updated_at": _ts(row["updated_at"]),
+    }
+
+
+def list_goals(tenant_id: str, status: Optional[str] = "active") -> list[dict]:
+    sql = "SELECT * FROM goals WHERE tenant_id = %s"
+    args: list[Any] = [tenant_id]
+    if status and status != "all":
+        sql += " AND status = %s"
+        args.append(status)
+    sql += " ORDER BY created_at DESC"
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            return [_shape_goal(r) for r in cur.fetchall()]
+
+
+def create_goal(tenant_id: str, *, goal_id: str, title: str,
+                description: str = "", target_date: str = "") -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO goals (id, tenant_id, title, description, target_date, status, progress)
+                   VALUES (%s, %s, %s, %s, %s, 'active', 0)""",
+                (goal_id, tenant_id, title, description, target_date),
+            )
+
+
+def update_goal(tenant_id: str, goal_id: str, fields: dict) -> bool:
+    allowed = {"title", "description", "target_date", "status",
+               "progress", "trajectory", "related_items"}
+    sets, args = [], []
+    for k, v in fields.items():
+        if k not in allowed:
+            continue
+        if k == "related_items" and isinstance(v, list):
+            v = json.dumps(v)
+        sets.append(f"{k} = %s")
+        args.append(v)
+    if not sets:
+        return False
+    args.extend([tenant_id, goal_id])
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE goals SET {', '.join(sets)} WHERE tenant_id = %s AND id = %s",
+                args,
+            )
+            return cur.rowcount > 0
+
+
+def delete_goal(tenant_id: str, goal_id: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM goals WHERE tenant_id = %s AND id = %s",
+                (tenant_id, goal_id),
+            )
+            return cur.rowcount > 0
+
+
+def goal_history(tenant_id: str, goal_id: str, limit: int = 20) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM goal_snapshots
+                    WHERE tenant_id = %s AND goal_id = %s
+                    ORDER BY created_at DESC LIMIT %s""",
+                (tenant_id, goal_id, limit),
+            )
+            rows = cur.fetchall()
+    out = []
+    for r in rows:
+        ai = r.get("action_items") or []
+        if isinstance(ai, str):
+            try: ai = json.loads(ai)
+            except: ai = []
+        out.append({
+            "id": r["id"],
+            "goal_id": r["goal_id"],
+            "progress": r["progress"] or 0,
+            "trajectory": r["trajectory"],
+            "action_items": ai,
+            "brief_id": r["brief_id"],
+            "notes": r["notes"],
+            "created_at": _ts(r["created_at"]),
+        })
+    return out
+
+
+# ---------------------------------------------------------------------------
+# KPIs
+# ---------------------------------------------------------------------------
+
+def _shape_kpi(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "description": row.get("description"),
+        "unit": row.get("unit"),
+        "direction": row.get("direction"),
+        "target_value": row.get("target_value"),
+        "current_value": row.get("current_value"),
+        "previous_value": row.get("previous_value"),
+        "measurement_plan": row.get("measurement_plan") or "",
+        "measurement_status": row.get("measurement_status"),
+        "measurement_error": row.get("measurement_error"),
+        "cron_job_id": row.get("cron_job_id"),
+        "status": row.get("status"),
+        "created_at": _ts(row.get("created_at")),
+        "updated_at": _ts(row.get("updated_at")),
+        "last_measured_at": _ts(row.get("last_measured_at")),
+    }
+
+
+def list_kpis(tenant_id: str, status: Optional[str] = "active",
+              with_history: bool = True, with_flags: bool = True) -> list[dict]:
+    sql = "SELECT * FROM kpis WHERE tenant_id = %s"
+    args: list[Any] = [tenant_id]
+    if status and status != "all":
+        sql += " AND status = %s"
+        args.append(status)
+    sql += " ORDER BY created_at DESC"
+
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            kpi_rows = cur.fetchall()
+            kpis = [_shape_kpi(r) for r in kpi_rows]
+            if with_history:
+                for k in kpis:
+                    cur.execute(
+                        """SELECT id, value, source, notes, recorded_at FROM kpi_values
+                            WHERE tenant_id = %s AND kpi_id = %s
+                            ORDER BY recorded_at DESC LIMIT 60""",
+                        (tenant_id, k["id"]),
+                    )
+                    k["history"] = [
+                        {**dict(r), "recorded_at": _ts(r["recorded_at"])}
+                        for r in cur.fetchall()
+                    ]
+            if with_flags:
+                for k in kpis:
+                    cur.execute(
+                        """SELECT * FROM kpi_flags
+                            WHERE tenant_id = %s AND kpi_id = %s AND status = 'open'
+                            ORDER BY created_at DESC""",
+                        (tenant_id, k["id"]),
+                    )
+                    flags = []
+                    for f in cur.fetchall():
+                        refs = f.get("references_json") or []
+                        if isinstance(refs, str):
+                            try: refs = json.loads(refs)
+                            except: refs = []
+                        flags.append({
+                            "id": f["id"], "kpi_id": f["kpi_id"], "kind": f["kind"],
+                            "title": f["title"], "description": f.get("description"),
+                            "references": refs, "brief_id": f.get("brief_id"),
+                            "status": f["status"],
+                            "created_at": _ts(f["created_at"]),
+                            "updated_at": _ts(f["updated_at"]),
+                        })
+                    k["flags"] = flags
+    return kpis
+
+
+def get_kpi(tenant_id: str, kpi_id: str) -> Optional[dict]:
+    kpis = list_kpis(tenant_id, status=None, with_history=True, with_flags=True)
+    return next((k for k in kpis if k["id"] == kpi_id), None)
+
+
+def create_kpi(tenant_id: str, *, kpi_id: str, name: str, description: str = "",
+               unit: str = "", direction: str = "higher", target_value: Optional[float] = None) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO kpis (id, tenant_id, name, description, unit, direction,
+                                     target_value, measurement_plan, measurement_status, status)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,'','pending','active')""",
+                (kpi_id, tenant_id, name, description, unit, direction, target_value),
+            )
+
+
+def update_kpi(tenant_id: str, kpi_id: str, fields: dict) -> bool:
+    allowed = {"name", "description", "unit", "direction", "target_value",
+               "status", "measurement_plan", "measurement_status", "measurement_error"}
+    sets, args = [], []
+    for k, v in fields.items():
+        if k in allowed:
+            sets.append(f"{k} = %s")
+            args.append(v)
+    if not sets:
+        return False
+    args.extend([tenant_id, kpi_id])
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE kpis SET {', '.join(sets)} WHERE tenant_id = %s AND id = %s",
+                args,
+            )
+            return cur.rowcount > 0
+
+
+def delete_kpi(tenant_id: str, kpi_id: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM kpis WHERE tenant_id = %s AND id = %s",
+                (tenant_id, kpi_id),
+            )
+            return cur.rowcount > 0
+
+
+def update_kpi_flag_status(tenant_id: str, flag_id: str, status: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE kpi_flags SET status = %s WHERE tenant_id = %s AND id = %s",
+                (status, tenant_id, flag_id),
+            )
+            return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Integration connections
+# ---------------------------------------------------------------------------
+
+def list_integrations(tenant_id: str) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT platform, auth_type, credentials, status, display_name,
+                          connected_at, last_verified
+                     FROM integration_connections
+                    WHERE tenant_id = %s
+                 ORDER BY connected_at DESC NULLS LAST""",
+                (tenant_id,),
+            )
+            return [
+                {
+                    "platform": r["platform"],
+                    "auth_type": r["auth_type"],
+                    "credentials": r["credentials"],
+                    "status": r["status"],
+                    "display_name": r["display_name"],
+                    "connected_at": _ts(r["connected_at"]),
+                    "last_verified": _ts(r["last_verified"]),
+                }
+                for r in cur.fetchall()
+            ]
+
+
+def upsert_integration(tenant_id: str, *, platform: str, auth_type: str, credentials: str,
+                       status: str, display_name: str) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO integration_connections
+                       (tenant_id, platform, auth_type, credentials, status, display_name,
+                        connected_at, last_verified)
+                   VALUES (%s,%s,%s,%s,%s,%s, NOW(), NOW())
+                   ON CONFLICT (tenant_id, platform) DO UPDATE SET
+                        auth_type = EXCLUDED.auth_type,
+                        credentials = EXCLUDED.credentials,
+                        status = EXCLUDED.status,
+                        display_name = EXCLUDED.display_name,
+                        connected_at = EXCLUDED.connected_at,
+                        last_verified = EXCLUDED.last_verified""",
+                (tenant_id, platform, auth_type, credentials, status, display_name),
+            )
+
+
+def delete_integration(tenant_id: str, platform: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM integration_connections WHERE tenant_id = %s AND platform = %s",
+                (tenant_id, platform),
+            )
+            return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# GitHub installation
+# ---------------------------------------------------------------------------
+
+def get_github_installation(tenant_id: str) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM integration_github_installations
+                    WHERE tenant_id = %s
+                 ORDER BY installed_at DESC LIMIT 1""",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "installation_id": row["installation_id"],
+        "account_login": row["account_login"],
+        "account_type": row["account_type"],
+        "repo_selection": row["repo_selection"],
+        "cached_token": row["cached_token"],
+        "cached_token_expires_at": _ts(row["cached_token_expires_at"]),
+        "installed_at": _ts(row["installed_at"]),
+        "updated_at": _ts(row["updated_at"]),
+    }
+
+
+def upsert_github_installation(tenant_id: str, *, installation_id: str,
+                                account_login: str, account_type: str,
+                                repo_selection: str) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO integration_github_installations
+                       (installation_id, tenant_id, account_login, account_type,
+                        repo_selection, installed_at, updated_at)
+                   VALUES (%s,%s,%s,%s,%s, NOW(), NOW())
+                   ON CONFLICT (installation_id) DO UPDATE SET
+                        tenant_id = EXCLUDED.tenant_id,
+                        account_login = EXCLUDED.account_login,
+                        account_type = EXCLUDED.account_type,
+                        repo_selection = EXCLUDED.repo_selection,
+                        updated_at = NOW()""",
+                (installation_id, tenant_id, account_login, account_type, repo_selection),
+            )
+
+
+def update_github_token(installation_id: str, token: Optional[str],
+                        expires_at_unix: Optional[float]) -> None:
+    expires_at = None
+    if expires_at_unix is not None:
+        expires_at = datetime.fromtimestamp(expires_at_unix, tz=timezone.utc)
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE integration_github_installations
+                      SET cached_token = %s, cached_token_expires_at = %s, updated_at = NOW()
+                    WHERE installation_id = %s""",
+                (token, expires_at, installation_id),
+            )
+
+
+def delete_github_installation(tenant_id: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM integration_github_installations WHERE tenant_id = %s",
+                (tenant_id,),
+            )
+            return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Onboarding profile
+# ---------------------------------------------------------------------------
+
+def get_onboarding_profile(tenant_id: str) -> dict:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT key, value FROM tenant_onboarding_profile WHERE tenant_id = %s",
+                (tenant_id,),
+            )
+            return {r["key"]: r["value"] for r in cur.fetchall()}
+
+
+def save_onboarding_profile(tenant_id: str, fields: dict) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            for k, v in fields.items():
+                cur.execute(
+                    """INSERT INTO tenant_onboarding_profile (tenant_id, key, value)
+                       VALUES (%s, %s, %s)
+                       ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value""",
+                    (tenant_id, str(k), str(v)),
+                )
 
 
 def list_workspace_learnings(tenant_id: str, limit: int = 50) -> list[dict]:
