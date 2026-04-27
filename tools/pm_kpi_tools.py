@@ -14,6 +14,7 @@ import time
 import uuid
 
 from kai_env import kai_home
+from backend.db.postgres_client import is_postgres_enabled
 from backend.tenant_context import require_tenant_context
 from tools.registry import registry
 
@@ -98,6 +99,14 @@ def _fetch_history(db, kpi_id: str, tenant_id: str, limit: int = 30):
 
 def kpi_list(status: str = "active", **kwargs) -> str:
     tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_list")
+    if is_postgres_enabled():
+        from backend import repos
+        kpis = repos.list_kpis(tenant.tenant_id, status=status, with_history=True, with_flags=False)
+        # Tool callers expect 'recent_values' not 'history'; rename and limit to 8.
+        for k in kpis:
+            k["recent_values"] = (k.pop("history", []) or [])[:8]
+        return json.dumps({"count": len(kpis), "kpis": kpis})
+
     db = _db()
     if status == "all":
         rows = db.execute("SELECT * FROM kpis WHERE tenant_id = ? ORDER BY created_at DESC", (tenant.tenant_id,)).fetchall()
@@ -134,6 +143,15 @@ KPI_LIST_SCHEMA = {
 
 def kpi_get(kpi_id: str, history_limit: int = 30, **kwargs) -> str:
     tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_get")
+    if is_postgres_enabled():
+        from backend import repos
+        k = repos.get_kpi(tenant.tenant_id, kpi_id)
+        if not k:
+            return json.dumps({"error": f"KPI {kpi_id} not found."})
+        k["history"] = (k.get("history") or [])[:history_limit]
+        k["open_flags"] = k.pop("flags", [])
+        return json.dumps(k)
+
     db = _db()
     row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
     if not row:
@@ -175,12 +193,22 @@ def kpi_set_measurement_plan(
 ) -> str:
     """Set or update the agent-authored measurement plan for a KPI."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_set_measurement_plan")
+    if status not in ("configured", "failed", "pending"):
+        status = "configured"
+
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.kpi_set_measurement_plan(
+            tenant.tenant_id, kpi_id, plan=plan, status=status, error=error,
+        )
+        if not ok:
+            return json.dumps({"error": f"KPI {kpi_id} not found."})
+        return json.dumps({"ok": True, "kpi_id": kpi_id, "measurement_status": status})
+
     db = _db()
     row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"KPI {kpi_id} not found."})
-    if status not in ("configured", "failed", "pending"):
-        status = "configured"
     now = time.time()
     db.execute(
         "UPDATE kpis SET measurement_plan = ?, measurement_status = ?, measurement_error = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
@@ -233,18 +261,33 @@ def kpi_record_value(
 ) -> str:
     """Record a new measurement for a KPI. Updates current/previous values."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_record_value")
-    db = _db()
-    row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
-    if not row:
-        return json.dumps({"error": f"KPI {kpi_id} not found."})
-
     try:
         value = float(value)
     except (TypeError, ValueError):
         return json.dumps({"error": "value must be numeric"})
 
-    now = time.time()
     vid = uuid.uuid4().hex[:12]
+
+    if is_postgres_enabled():
+        from backend import repos
+        result = repos.kpi_record_value(
+            tenant.tenant_id, kpi_id, value_id=vid, value=value,
+            source=source or None, notes=notes or None,
+        )
+        if result is None:
+            return json.dumps({"error": f"KPI {kpi_id} not found."})
+        prev = result["previous"]
+        change_pct = None
+        if prev is not None and prev != 0:
+            change_pct = round((value - prev) / abs(prev) * 100, 2)
+        return json.dumps({"ok": True, "kpi_id": kpi_id, "value": value,
+                           "previous": prev, "change_pct": change_pct})
+
+    db = _db()
+    row = db.execute("SELECT * FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
+    if not row:
+        return json.dumps({"error": f"KPI {kpi_id} not found."})
+    now = time.time()
     db.execute(
         "INSERT INTO kpi_values (id, tenant_id, kpi_id, value, source, notes, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (vid, tenant.tenant_id, kpi_id, value, source or None, notes or None, now),
@@ -255,18 +298,12 @@ def kpi_record_value(
         (value, now, now, kpi_id, tenant.tenant_id),
     )
     db.commit()
-
     prev = row["current_value"]
     change_pct = None
     if prev is not None and prev != 0:
         change_pct = round((value - prev) / abs(prev) * 100, 2)
-    return json.dumps({
-        "ok": True,
-        "kpi_id": kpi_id,
-        "value": value,
-        "previous": prev,
-        "change_pct": change_pct,
-    })
+    return json.dumps({"ok": True, "kpi_id": kpi_id, "value": value,
+                       "previous": prev, "change_pct": change_pct})
 
 
 KPI_RECORD_VALUE_SCHEMA = {
@@ -311,11 +348,6 @@ def kpi_flag(
         return json.dumps({"error": "kind must be 'risk' or 'opportunity'"})
 
     tenant = require_tenant_context(kwargs=kwargs, consumer="kpi_flag")
-    db = _db()
-    row = db.execute("SELECT id FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
-    if not row:
-        return json.dumps({"error": f"KPI {kpi_id} not found."})
-
     try:
         refs = json.loads(references) if isinstance(references, str) else references
         if not isinstance(refs, list):
@@ -324,6 +356,22 @@ def kpi_flag(
         refs = []
 
     flag_id = uuid.uuid4().hex[:12]
+
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.kpi_create_flag(
+            tenant.tenant_id, flag_id=flag_id, kpi_id=kpi_id, kind=kind,
+            title=title, description=description or None,
+            references=refs, brief_id=brief_id or None,
+        )
+        if not ok:
+            return json.dumps({"error": f"KPI {kpi_id} not found."})
+        return json.dumps({"ok": True, "flag_id": flag_id, "kind": kind})
+
+    db = _db()
+    row = db.execute("SELECT id FROM kpis WHERE id = ? AND tenant_id = ?", (kpi_id, tenant.tenant_id)).fetchone()
+    if not row:
+        return json.dumps({"error": f"KPI {kpi_id} not found."})
     now = time.time()
     db.execute(
         "INSERT INTO kpi_flags (id, tenant_id, kpi_id, kind, title, description, references_json, "

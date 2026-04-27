@@ -2711,9 +2711,7 @@ class AIAgent:
             for msg in messages:
                 api_msg = msg.copy()
                 if msg.get("role") == "assistant":
-                    reasoning = msg.get("reasoning")
-                    if reasoning:
-                        api_msg["reasoning_content"] = reasoning
+                    api_msg["reasoning_content"] = msg.get("reasoning") or ""
                 api_msg.pop("reasoning", None)
                 api_msg.pop("finish_reason", None)
                 api_msg.pop("_flush_sentinel", None)
@@ -3577,12 +3575,13 @@ class AIAgent:
                 api_msg = msg.copy()
 
                 # For ALL assistant messages, pass reasoning back to the API
-                # This ensures multi-turn reasoning context is preserved
+                # This ensures multi-turn reasoning context is preserved.
+                # DeepSeek V4 Flash + similar thinking-mode models reject the
+                # request unless every assistant turn carries reasoning_content,
+                # so default to empty string when no reasoning was captured.
                 if msg.get("role") == "assistant":
-                    reasoning_text = msg.get("reasoning")
-                    if reasoning_text:
-                        # Add reasoning_content for API compatibility (Moonshot AI, Novita, OpenRouter)
-                        api_msg["reasoning_content"] = reasoning_text
+                    reasoning_text = msg.get("reasoning") or ""
+                    api_msg["reasoning_content"] = reasoning_text
 
                 # Remove 'reasoning' field - it's for trajectory storage only
                 # We've copied it to 'reasoning_content' for the API above

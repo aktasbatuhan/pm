@@ -386,6 +386,42 @@ def delete_goal(tenant_id: str, goal_id: str) -> bool:
             return cur.rowcount > 0
 
 
+def get_goal(tenant_id: str, goal_id: str) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM goals WHERE tenant_id = %s AND id = %s",
+                (tenant_id, goal_id),
+            )
+            row = cur.fetchone()
+    return _shape_goal(row) if row else None
+
+
+def update_goal_progress(tenant_id: str, goal_id: str, *, progress: int,
+                         trajectory: str, action_items: list,
+                         snapshot_id: str, brief_id: Optional[str],
+                         notes: Optional[str]) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE goals
+                      SET progress = %s, trajectory = %s, action_items = %s,
+                          last_evaluated_at = NOW()
+                    WHERE tenant_id = %s AND id = %s""",
+                (progress, trajectory, json.dumps(action_items), tenant_id, goal_id),
+            )
+            if cur.rowcount == 0:
+                return False
+            cur.execute(
+                """INSERT INTO goal_snapshots
+                       (id, tenant_id, goal_id, progress, trajectory, action_items, brief_id, notes)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (snapshot_id, tenant_id, goal_id, progress, trajectory,
+                 json.dumps(action_items), brief_id or None, notes or None),
+            )
+    return True
+
+
 def goal_history(tenant_id: str, goal_id: str, limit: int = 20) -> list[dict]:
     with get_pool().connection() as conn:
         with conn.cursor() as cur:
@@ -537,6 +573,74 @@ def delete_kpi(tenant_id: str, kpi_id: str) -> bool:
                 (tenant_id, kpi_id),
             )
             return cur.rowcount > 0
+
+
+def kpi_record_value(tenant_id: str, kpi_id: str, *, value_id: str, value: float,
+                     source: Optional[str], notes: Optional[str]) -> Optional[dict]:
+    """Record a new value, update kpis.current_value/previous_value. Returns prior current_value."""
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT current_value FROM kpis WHERE tenant_id = %s AND id = %s",
+                (tenant_id, kpi_id),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            prev = row["current_value"]
+            cur.execute(
+                """INSERT INTO kpi_values (id, tenant_id, kpi_id, value, source, notes, recorded_at)
+                   VALUES (%s,%s,%s,%s,%s,%s, NOW())""",
+                (value_id, tenant_id, kpi_id, value, source or None, notes or None),
+            )
+            cur.execute(
+                """UPDATE kpis
+                      SET previous_value = current_value,
+                          current_value = %s,
+                          last_measured_at = NOW(),
+                          measurement_status = 'configured',
+                          measurement_error = NULL
+                    WHERE tenant_id = %s AND id = %s""",
+                (value, tenant_id, kpi_id),
+            )
+    return {"previous": prev}
+
+
+def kpi_set_measurement_plan(tenant_id: str, kpi_id: str, *, plan: str,
+                              status: str, error: Optional[str]) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE kpis
+                      SET measurement_plan = %s,
+                          measurement_status = %s,
+                          measurement_error = %s
+                    WHERE tenant_id = %s AND id = %s""",
+                (plan, status, error or None, tenant_id, kpi_id),
+            )
+            return cur.rowcount > 0
+
+
+def kpi_create_flag(tenant_id: str, *, flag_id: str, kpi_id: str, kind: str,
+                    title: str, description: Optional[str],
+                    references: list, brief_id: Optional[str]) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM kpis WHERE tenant_id = %s AND id = %s",
+                (tenant_id, kpi_id),
+            )
+            if not cur.fetchone():
+                return False
+            cur.execute(
+                """INSERT INTO kpi_flags
+                       (id, tenant_id, kpi_id, kind, title, description,
+                        references_json, brief_id, status)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'open')""",
+                (flag_id, tenant_id, kpi_id, kind, title, description or None,
+                 json.dumps(references or []), brief_id or None),
+            )
+    return True
 
 
 def update_kpi_flag_status(tenant_id: str, flag_id: str, status: str) -> bool:

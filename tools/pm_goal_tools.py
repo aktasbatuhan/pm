@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from kai_env import kai_home
+from backend.db.postgres_client import is_postgres_enabled
 from backend.tenant_context import require_tenant_context
 from tools.registry import registry
 
@@ -89,6 +90,11 @@ def _db() -> sqlite3.Connection:
 
 def goal_list(status: str = "active", **kwargs) -> str:
     tenant = require_tenant_context(kwargs=kwargs, consumer="goal_list")
+    if is_postgres_enabled():
+        from backend import repos
+        goals = repos.list_goals(tenant.tenant_id, status=status)
+        return json.dumps({"count": len(goals), "goals": goals})
+
     db = _db()
     if status == "all":
         rows = db.execute("SELECT * FROM goals WHERE tenant_id = ? ORDER BY created_at DESC", (tenant.tenant_id,)).fetchall()
@@ -130,6 +136,15 @@ GOAL_LIST_SCHEMA = {
 
 def goal_get(goal_id: str, include_history: bool = False, **kwargs) -> str:
     tenant = require_tenant_context(kwargs=kwargs, consumer="goal_get")
+    if is_postgres_enabled():
+        from backend import repos
+        g = repos.get_goal(tenant.tenant_id, goal_id)
+        if not g:
+            return json.dumps({"error": f"Goal {goal_id} not found."})
+        if include_history:
+            g["history"] = repos.goal_history(tenant.tenant_id, goal_id, limit=10)
+        return json.dumps(g)
+
     db = _db()
     row = db.execute("SELECT * FROM goals WHERE id = ? AND tenant_id = ?", (goal_id, tenant.tenant_id)).fetchone()
     if not row:
@@ -189,10 +204,6 @@ def goal_update_progress(
 ) -> str:
     """Update a goal's progress and write a snapshot for trajectory tracking."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="goal_update_progress")
-    db = _db()
-    row = db.execute("SELECT * FROM goals WHERE id = ? AND tenant_id = ?", (goal_id, tenant.tenant_id)).fetchone()
-    if not row:
-        return json.dumps({"error": f"Goal {goal_id} not found."})
 
     try:
         items = json.loads(action_items) if isinstance(action_items, str) else action_items
@@ -202,13 +213,30 @@ def goal_update_progress(
         return json.dumps({"error": "action_items must be valid JSON array"})
 
     progress = max(0, min(100, int(progress)))
-    now = time.time()
+    snapshot_id = uuid.uuid4().hex[:12]
 
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.update_goal_progress(
+            tenant.tenant_id, goal_id, progress=progress, trajectory=trajectory,
+            action_items=items, snapshot_id=snapshot_id,
+            brief_id=brief_id or None, notes=notes or None,
+        )
+        if not ok:
+            return json.dumps({"error": f"Goal {goal_id} not found."})
+        return json.dumps({"ok": True, "goal_id": goal_id, "progress": progress,
+                           "snapshot_id": snapshot_id, "action_items_count": len(items)})
+
+    db = _db()
+    row = db.execute("SELECT * FROM goals WHERE id = ? AND tenant_id = ?", (goal_id, tenant.tenant_id)).fetchone()
+    if not row:
+        return json.dumps({"error": f"Goal {goal_id} not found."})
+
+    now = time.time()
     db.execute(
         "UPDATE goals SET progress = ?, trajectory = ?, action_items = ?, last_evaluated_at = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
         (progress, trajectory, json.dumps(items), now, now, goal_id, tenant.tenant_id),
     )
-    snapshot_id = uuid.uuid4().hex[:12]
     db.execute(
         "INSERT INTO goal_snapshots (id, tenant_id, goal_id, progress, trajectory, action_items, brief_id, notes, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -216,11 +244,8 @@ def goal_update_progress(
     )
     db.commit()
     return json.dumps({
-        "ok": True,
-        "goal_id": goal_id,
-        "progress": progress,
-        "snapshot_id": snapshot_id,
-        "action_items_count": len(items),
+        "ok": True, "goal_id": goal_id, "progress": progress,
+        "snapshot_id": snapshot_id, "action_items_count": len(items),
     })
 
 
