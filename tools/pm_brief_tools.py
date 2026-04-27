@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from kai_env import kai_home
+from backend.db.postgres_client import is_postgres_enabled
 from backend.tenant_context import require_tenant_context
 
 _kai_home = kai_home()
@@ -237,28 +238,37 @@ def _normalize_action_items(action_items):
 def brief_store(summary: str, action_items: str, headline: str = "", data_sources: str = "", suggested_prompts: str = "", **kwargs) -> str:
     """Store a completed brief with its action items."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="brief_store")
-    db = _get_db()
     brief_id = str(uuid.uuid4())[:8]
-    now = time.time()
 
     items, error = _normalize_action_items(action_items)
     if error:
         return json.dumps({"error": error})
 
-    # Parse suggested prompts
     try:
         prompts = json.loads(suggested_prompts) if suggested_prompts else []
     except json.JSONDecodeError:
         prompts = []
 
-    # Store brief
+    if is_postgres_enabled():
+        from backend import repos
+        repos.insert_brief(
+            tenant.tenant_id, brief_id=brief_id, summary=summary,
+            headline=headline or "", action_items=items,
+            data_sources=data_sources, suggested_prompts=prompts,
+        )
+        return json.dumps({
+            "success": True, "brief_id": brief_id,
+            "action_items_count": len(items),
+            "message": f"Brief stored with {len(items)} action items.",
+        })
+
+    db = _get_db()
+    now = time.time()
     db.execute(
         "INSERT INTO briefs (id, tenant_id, workspace_id, summary, action_items, data_sources, suggested_prompts, headline, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (brief_id, tenant.tenant_id, tenant.tenant_id, summary, json.dumps(items), data_sources, json.dumps(prompts), headline or "", now)
     )
-
-    # Store individual action items
     for item in items:
         action_id = str(uuid.uuid4())[:8]
         db.execute(
@@ -267,11 +277,9 @@ def brief_store(summary: str, action_items: str, headline: str = "", data_source
              item.get("description", ""), item.get("priority", "medium"),
              json.dumps(item.get("references", [])), now, now)
         )
-
     db.commit()
     return json.dumps({
-        "success": True,
-        "brief_id": brief_id,
+        "success": True, "brief_id": brief_id,
         "action_items_count": len(items),
         "message": f"Brief stored with {len(items)} action items."
     })
@@ -316,16 +324,30 @@ BRIEF_STORE_SCHEMA = {
 def brief_get_latest(**kwargs) -> str:
     """Get the most recent brief."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="brief_get_latest")
+
+    if is_postgres_enabled():
+        from backend import repos
+        brief = repos.get_latest_brief(tenant.tenant_id)
+        if not brief:
+            return json.dumps({"message": "No briefs stored yet."})
+        actions = repos.list_brief_actions(tenant.tenant_id, brief_id=brief["id"])
+        return json.dumps({
+            "brief_id": brief["id"],
+            "summary": brief["summary"],
+            "action_items": actions,
+            "data_sources": brief.get("data_sources"),
+            "created_at": brief.get("created_at"),
+            "headline": brief.get("headline") or "",
+        })
+
     db = _get_db()
     row = db.execute("SELECT * FROM briefs WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 1", (tenant.tenant_id,)).fetchone()
     if not row:
         return json.dumps({"message": "No briefs stored yet."})
-
     actions = db.execute(
         "SELECT * FROM brief_actions WHERE tenant_id = ? AND brief_id = ? ORDER BY created_at",
         (tenant.tenant_id, row["id"])
     ).fetchall()
-
     out = {
         "brief_id": row["id"],
         "summary": row["summary"],
@@ -354,6 +376,17 @@ BRIEF_GET_LATEST_SCHEMA = {
 def brief_get_action_items(status: str = "pending", **kwargs) -> str:
     """Get action items filtered by status."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="brief_get_action_items")
+
+    if is_postgres_enabled():
+        from backend import repos
+        items = repos.list_brief_actions(
+            tenant.tenant_id,
+            status=None if status == "all" else status,
+        )[:20]
+        if not items:
+            return json.dumps({"message": f"No {status} action items.", "items": []})
+        return json.dumps({"count": len(items), "items": items})
+
     db = _get_db()
     if status == "all":
         rows = db.execute("SELECT * FROM brief_actions WHERE tenant_id = ? ORDER BY created_at DESC LIMIT 20", (tenant.tenant_id,)).fetchall()
@@ -362,14 +395,9 @@ def brief_get_action_items(status: str = "pending", **kwargs) -> str:
             "SELECT * FROM brief_actions WHERE tenant_id = ? AND status = ? ORDER BY created_at DESC LIMIT 20",
             (tenant.tenant_id, status)
         ).fetchall()
-
     if not rows:
         return json.dumps({"message": f"No {status} action items.", "items": []})
-
-    return json.dumps({
-        "count": len(rows),
-        "items": [dict(r) for r in rows]
-    })
+    return json.dumps({"count": len(rows), "items": [dict(r) for r in rows]})
 
 
 BRIEF_GET_ACTION_ITEMS_SCHEMA = {
@@ -395,11 +423,18 @@ BRIEF_GET_ACTION_ITEMS_SCHEMA = {
 def brief_resolve_action(action_id: str, status: str = "resolved", **kwargs) -> str:
     """Update an action item's status."""
     tenant = require_tenant_context(kwargs=kwargs, consumer="brief_resolve_action")
+
+    if is_postgres_enabled():
+        from backend import repos
+        ok = repos.update_brief_action(tenant.tenant_id, action_id, status=status)
+        if not ok:
+            return json.dumps({"error": f"Action item {action_id} not found."})
+        return json.dumps({"success": True, "action_id": action_id, "new_status": status})
+
     db = _get_db()
     row = db.execute("SELECT * FROM brief_actions WHERE id = ? AND tenant_id = ?", (action_id, tenant.tenant_id)).fetchone()
     if not row:
         return json.dumps({"error": f"Action item {action_id} not found."})
-
     db.execute(
         "UPDATE brief_actions SET status = ?, updated_at = ? WHERE id = ? AND tenant_id = ?",
         (status, time.time(), action_id, tenant.tenant_id)

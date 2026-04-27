@@ -134,6 +134,49 @@ def list_brief_actions(tenant_id: str, brief_id: Optional[str] = None,
     return [_shape_action(r) for r in rows]
 
 
+def insert_brief(tenant_id: str, *, brief_id: str, summary: str, headline: str,
+                 action_items: list, data_sources: str = "",
+                 suggested_prompts: Optional[list] = None,
+                 cover_url: str = "") -> None:
+    """Insert a brief and its action items atomically. action_items: list of
+    dicts with title/description/category/priority/references."""
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO briefs (id, tenant_id, summary, headline, action_items,
+                                       suggested_prompts, data_sources, cover_url)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (brief_id, tenant_id, summary, headline,
+                 json.dumps(action_items or []),
+                 json.dumps(suggested_prompts or []),
+                 data_sources, cover_url),
+            )
+            for item in (action_items or []):
+                action_id = item.get("id") or __import__("uuid").uuid4().hex[:8]
+                cur.execute(
+                    """INSERT INTO brief_actions
+                           (id, tenant_id, brief_id, category, title, description,
+                            priority, status, references_json)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,'pending',%s)""",
+                    (action_id, tenant_id, brief_id,
+                     item.get("category", "risk"),
+                     item.get("title", ""),
+                     item.get("description", ""),
+                     item.get("priority", "medium"),
+                     json.dumps(item.get("references", []))),
+                )
+
+
+def update_brief_cover(tenant_id: str, brief_id: str, cover_url: str) -> bool:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE briefs SET cover_url = %s WHERE tenant_id = %s AND id = %s",
+                (cover_url, tenant_id, brief_id),
+            )
+            return cur.rowcount > 0
+
+
 def update_brief_action(tenant_id: str, action_id: str, *, status: Optional[str] = None,
                         chat_session_id: Optional[str] = None) -> bool:
     sets = []
