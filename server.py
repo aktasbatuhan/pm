@@ -1209,7 +1209,13 @@ def github_app_install_redirect(tenant=Depends(get_current_tenant)):
         db.commit()
 
     import urllib.parse as _p
-    url = f"https://github.com/apps/{cfg['slug']}/installations/new?state={_p.quote(state)}"
+    # Use /installations/select_target instead of /installations/new so GitHub
+    # always shows the account picker — even when the user already has an
+    # installation on a different account. The plain /new path auto-redirects
+    # to the existing install's Configure page, trapping users who want to
+    # install on a second org. Both paths carry our state through to the
+    # callback URL.
+    url = f"https://github.com/apps/{cfg['slug']}/installations/select_target?state={_p.quote(state)}"
     # Return JSON so the frontend (which sends our JWT via fetch) can window.open()
     # the GitHub URL directly. A redirect here would lose the auth header on
     # browser navigation and 401 the user out of the install flow.
