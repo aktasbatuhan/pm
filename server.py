@@ -1188,13 +1188,23 @@ def github_app_status(tenant=Depends(get_current_tenant)):
 
 @app.get("/api/integrations/github/install")
 def github_app_install_redirect(tenant=Depends(get_current_tenant)):
-    """Start the GitHub App install flow. Redirects the user to GitHub."""
+    """Start the GitHub App install flow.
+
+    Returns a JSON {url, state} payload AND sets an HttpOnly cookie carrying
+    the same state. The cookie is the resilient channel — we use it in the
+    callback when GitHub strips/loses the query param (which it does when
+    the user navigates between accounts or when they hit the public app
+    page rather than /installations/new).
+
+    The URL we return is /installations/new with a state query param, but
+    even if GitHub redirects mid-flow and the param is dropped, the
+    cookie-based state lets the callback still attribute the install to
+    the correct tenant.
+    """
     cfg = _github_app_config()
     if not cfg:
         return JSONResponse({"error": "GitHub App not configured"}, status_code=503)
 
-    # CSRF state — store the tenant that initiated the install so the
-    # callback (which has no JWT) can attribute the new installation correctly.
     state = secrets.token_urlsafe(24)
     if is_postgres_enabled():
         from backend import repos
@@ -1209,21 +1219,28 @@ def github_app_install_redirect(tenant=Depends(get_current_tenant)):
         db.commit()
 
     import urllib.parse as _p
-    # Use /installations/select_target instead of /installations/new so GitHub
-    # always shows the account picker — even when the user already has an
-    # installation on a different account. The plain /new path auto-redirects
-    # to the existing install's Configure page, trapping users who want to
-    # install on a second org. Both paths carry our state through to the
-    # callback URL.
-    url = f"https://github.com/apps/{cfg['slug']}/installations/select_target?state={_p.quote(state)}"
-    # Return JSON so the frontend (which sends our JWT via fetch) can window.open()
-    # the GitHub URL directly. A redirect here would lose the auth header on
-    # browser navigation and 401 the user out of the install flow.
-    return {"url": url}
+    url = f"https://github.com/apps/{cfg['slug']}/installations/new?state={_p.quote(state)}"
+    response = JSONResponse({"url": url})
+    # Cookie carries the state through GitHub's roundtrip even if the user
+    # switches accounts or GitHub redirects in a way that drops the param.
+    # SameSite=Lax: top-level navigations from github.com back to our domain
+    # carry the cookie. Path scoped to the github callback so it doesn't
+    # leak into other endpoints.
+    response.set_cookie(
+        key="dash_gh_install_state",
+        value=state,
+        max_age=600,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+        path="/api/integrations/github",
+    )
+    return response
 
 
 @app.get("/api/integrations/github/callback")
 def github_app_install_callback(
+    request: Request,
     installation_id: Optional[str] = None,
     setup_action: Optional[str] = None,
     state: Optional[str] = None,
@@ -1237,12 +1254,16 @@ def github_app_install_callback(
     if not installation_id:
         return HTMLResponse("<p>Missing installation_id. Did you cancel the install?</p>", status_code=400)
 
-    # Recover the tenant that initiated this install from the OAuth state.
+    # State recovery: GitHub may strip our state query param when the user
+    # switches accounts or follows certain redirect paths. Fall back to the
+    # HttpOnly cookie we set in the install endpoint.
+    effective_state = state or request.cookies.get("dash_gh_install_state") or ""
+
     initiating_tenant_id: Optional[str] = None
     if is_postgres_enabled():
         from backend import repos
-        if state:
-            consumed = repos.consume_oauth_state(state)
+        if effective_state:
+            consumed = repos.consume_oauth_state(effective_state)
             if consumed:
                 initiating_tenant_id = consumed.get("tenant_id")
         if not initiating_tenant_id:
@@ -1252,10 +1273,10 @@ def github_app_install_callback(
             )
     else:
         db = _get_integrations_db()
-        if state:
-            srow = db.execute("SELECT state FROM oauth_states WHERE state = ?", (state,)).fetchone()
+        if effective_state:
+            srow = db.execute("SELECT state FROM oauth_states WHERE state = ?", (effective_state,)).fetchone()
             if srow:
-                db.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+                db.execute("DELETE FROM oauth_states WHERE state = ?", (effective_state,))
                 db.commit()
 
     # Call GitHub as the App to fetch installation details
@@ -1351,7 +1372,14 @@ def github_app_install_callback(
     </script>
     </body></html>
     """
-    return HTMLResponse(html)
+    response = HTMLResponse(html)
+    # Clear the install-state cookie so it doesn't bleed into a later install
+    # attempt by the same browser.
+    response.delete_cookie(
+        key="dash_gh_install_state",
+        path="/api/integrations/github",
+    )
+    return response
 
 
 @app.get("/api/integrations/github/repos")
