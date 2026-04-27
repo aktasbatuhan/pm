@@ -818,6 +818,36 @@ def update_github_token(installation_id: str, token: Optional[str],
             )
 
 
+def store_oauth_state(state: str, *, tenant_id: Optional[str], purpose: str) -> None:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO oauth_states (state, tenant_id, purpose)
+                   VALUES (%s, %s, %s)
+                   ON CONFLICT (state) DO UPDATE
+                       SET tenant_id = EXCLUDED.tenant_id,
+                           purpose = EXCLUDED.purpose,
+                           created_at = NOW()""",
+                (state, tenant_id, purpose),
+            )
+            cur.execute("DELETE FROM oauth_states WHERE created_at < NOW() - INTERVAL '10 minutes'")
+
+
+def consume_oauth_state(state: str) -> Optional[dict]:
+    """Return the state row (with tenant_id) and delete it. Returns None if not found."""
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT tenant_id, purpose FROM oauth_states WHERE state = %s", (state,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            cur.execute("DELETE FROM oauth_states WHERE state = %s", (state,))
+            return {
+                "tenant_id": str(row["tenant_id"]) if row["tenant_id"] else None,
+                "purpose": row["purpose"],
+            }
+
+
 def delete_github_installation(tenant_id: str) -> bool:
     with get_pool().connection() as conn:
         with conn.cursor() as cur:

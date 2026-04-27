@@ -116,20 +116,26 @@ def get_installation_token(installation_id: str) -> Optional[str]:
 def refresh_github_token_env(tenant_id: Optional[str] = None) -> bool:
     """If a GitHub App installation exists, mint a fresh token and inject it as GITHUB_TOKEN.
 
-    Resolution order:
-      1. If tenant_id is provided AND Postgres is enabled, look up that tenant's installation in Neon.
-      2. Else fall back to the most recent installation in the local SQLite (single-tenant legacy).
+    Resolution:
+      - Postgres mode: look up the active tenant's installation in Neon. If
+        the tenant has no installation, do nothing. We deliberately do NOT
+        fall back to SQLite here — that fallback would leak another tenant's
+        GitHub access into the current request.
+      - SQLite mode (no DATABASE_URL, single-tenant legacy): use the most
+        recent installation from the local integrations.db.
 
-    Called at the start of every agent run (chat, cron, brief) so the agent
-    always has a non-expired installation token available to `gh api` / `curl`.
+    Also clears any stale GITHUB_TOKEN from the environment when no
+    installation is found, so a previous tenant's token can't bleed across
+    request boundaries on the same Railway process.
     """
     installation_id: Optional[str] = None
+    pg_enabled = False
 
-    # Postgres path (multi-tenant)
     try:
         from backend.db.postgres_client import is_postgres_enabled
         from backend.tenant_context import get_current_tenant as _get_ctx
-        if is_postgres_enabled():
+        pg_enabled = is_postgres_enabled()
+        if pg_enabled:
             effective_tenant = tenant_id
             if not effective_tenant:
                 ctx = _get_ctx()
@@ -147,14 +153,15 @@ def refresh_github_token_env(tenant_id: Optional[str] = None) -> bool:
     except Exception:
         pass
 
-    # SQLite fallback
-    if not installation_id:
+    # SQLite fallback ONLY in legacy single-tenant mode. In Postgres mode
+    # the absence of a tenant install is the correct answer — no token.
+    if not installation_id and not pg_enabled:
         import sqlite3
         try:
             db = sqlite3.connect(str(_integrations_db_path()), check_same_thread=False, timeout=10.0)
             db.row_factory = sqlite3.Row
         except Exception:
-            return False
+            return _clear_github_env(False)
         try:
             row = db.execute(
                 "SELECT installation_id FROM github_installations ORDER BY updated_at DESC LIMIT 1"
@@ -166,10 +173,17 @@ def refresh_github_token_env(tenant_id: Optional[str] = None) -> bool:
             installation_id = row["installation_id"]
 
     if not installation_id:
-        return False
+        return _clear_github_env(False)
     token = get_installation_token(installation_id)
     if not token:
-        return False
+        return _clear_github_env(False)
     os.environ["GITHUB_TOKEN"] = token
     os.environ["GITHUB_PERSONAL_ACCESS_TOKEN"] = token
     return True
+
+
+def _clear_github_env(return_value: bool) -> bool:
+    """Drop any stale GITHUB_TOKEN so it doesn't leak across tenants."""
+    os.environ.pop("GITHUB_TOKEN", None)
+    os.environ.pop("GITHUB_PERSONAL_ACCESS_TOKEN", None)
+    return return_value

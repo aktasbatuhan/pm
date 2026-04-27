@@ -45,9 +45,9 @@ TENANT_SCOPED_PATH_PREFIXES = (
 )
 
 # Paths under tenant-scoped prefixes that must NOT require auth (OAuth callbacks
-# from external services come without our JWT).
+# from external services come without our JWT). The /install path now does
+# require auth so we can record which tenant initiated the install.
 _TENANT_AUTH_BYPASS = (
-    "/api/integrations/github/install",
     "/api/integrations/github/callback",
 )
 

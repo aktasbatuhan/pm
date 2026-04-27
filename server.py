@@ -1187,24 +1187,26 @@ def github_app_status(tenant=Depends(get_current_tenant)):
 
 
 @app.get("/api/integrations/github/install")
-def github_app_install_redirect():
+def github_app_install_redirect(tenant=Depends(get_current_tenant)):
     """Start the GitHub App install flow. Redirects the user to GitHub."""
     cfg = _github_app_config()
     if not cfg:
         return JSONResponse({"error": "GitHub App not configured"}, status_code=503)
 
-    # CSRF state — stored briefly so the callback can verify origin.
+    # CSRF state — store the tenant that initiated the install so the
+    # callback (which has no JWT) can attribute the new installation correctly.
     state = secrets.token_urlsafe(24)
-    db = _get_integrations_db()
-    db.execute(
-        "INSERT OR REPLACE INTO oauth_states (state, purpose, created_at) VALUES (?, 'github_app_install', ?)",
-        (state, time.time()),
-    )
-    db.commit()
-
-    # Clean up states older than 10 minutes
-    db.execute("DELETE FROM oauth_states WHERE created_at < ?", (time.time() - 600,))
-    db.commit()
+    if is_postgres_enabled():
+        from backend import repos
+        repos.store_oauth_state(state, tenant_id=tenant.tenant_id, purpose="github_app_install")
+    else:
+        db = _get_integrations_db()
+        db.execute(
+            "INSERT OR REPLACE INTO oauth_states (state, purpose, created_at) VALUES (?, 'github_app_install', ?)",
+            (state, time.time()),
+        )
+        db.execute("DELETE FROM oauth_states WHERE created_at < ?", (time.time() - 600,))
+        db.commit()
 
     import urllib.parse as _p
     url = f"https://github.com/apps/{cfg['slug']}/installations/new?state={_p.quote(state)}"
@@ -1226,14 +1228,26 @@ def github_app_install_callback(
     if not installation_id:
         return HTMLResponse("<p>Missing installation_id. Did you cancel the install?</p>", status_code=400)
 
-    db = _get_integrations_db()
-
-    # Validate state (best-effort — GitHub doesn't always preserve it on "Install" button)
-    if state:
-        srow = db.execute("SELECT state FROM oauth_states WHERE state = ?", (state,)).fetchone()
-        if srow:
-            db.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
-            db.commit()
+    # Recover the tenant that initiated this install from the OAuth state.
+    initiating_tenant_id: Optional[str] = None
+    if is_postgres_enabled():
+        from backend import repos
+        if state:
+            consumed = repos.consume_oauth_state(state)
+            if consumed:
+                initiating_tenant_id = consumed.get("tenant_id")
+        if not initiating_tenant_id:
+            return HTMLResponse(
+                "<p>Install state expired or missing. Please retry the install from Dash so we can attribute it to your workspace.</p>",
+                status_code=400,
+            )
+    else:
+        db = _get_integrations_db()
+        if state:
+            srow = db.execute("SELECT state FROM oauth_states WHERE state = ?", (state,)).fetchone()
+            if srow:
+                db.execute("DELETE FROM oauth_states WHERE state = ?", (state,))
+                db.commit()
 
     # Call GitHub as the App to fetch installation details
     import urllib.request
@@ -1259,25 +1273,40 @@ def github_app_install_callback(
     repo_selection = install.get("repository_selection") or "selected"
     now = time.time()
 
-    db.execute(
-        "INSERT INTO github_installations (installation_id, account_login, account_type, repo_selection, installed_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(installation_id) DO UPDATE SET account_login = excluded.account_login, "
-        "account_type = excluded.account_type, repo_selection = excluded.repo_selection, updated_at = excluded.updated_at",
-        (str(installation_id), account_login, account_type, repo_selection, now, now),
-    )
-    db.execute(
-        "INSERT INTO integrations (platform, auth_type, credentials, status, display_name, connected_at, last_verified) "
-        "VALUES ('github', 'github_app', ?, 'connected', ?, ?, ?) "
-        "ON CONFLICT(platform) DO UPDATE SET auth_type = 'github_app', credentials = excluded.credentials, "
-        "status = 'connected', display_name = excluded.display_name, connected_at = excluded.connected_at, "
-        "last_verified = excluded.last_verified",
-        (str(installation_id), account_login or "github", now, now),
-    )
-    db.commit()
-
-    # Mint an initial token so the agent can use GitHub immediately.
-    _refresh_github_token_env()
+    if is_postgres_enabled() and initiating_tenant_id:
+        from backend import repos
+        repos.upsert_github_installation(
+            initiating_tenant_id,
+            installation_id=str(installation_id),
+            account_login=account_login,
+            account_type=account_type,
+            repo_selection=repo_selection,
+        )
+        repos.upsert_integration(
+            initiating_tenant_id, platform="github", auth_type="github_app",
+            credentials=str(installation_id), status="connected",
+            display_name=account_login or "github",
+        )
+        _refresh_github_token_env(tenant_id=initiating_tenant_id)
+    else:
+        db = _get_integrations_db()
+        db.execute(
+            "INSERT INTO github_installations (installation_id, account_login, account_type, repo_selection, installed_at, updated_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(installation_id) DO UPDATE SET account_login = excluded.account_login, "
+            "account_type = excluded.account_type, repo_selection = excluded.repo_selection, updated_at = excluded.updated_at",
+            (str(installation_id), account_login, account_type, repo_selection, now, now),
+        )
+        db.execute(
+            "INSERT INTO integrations (platform, auth_type, credentials, status, display_name, connected_at, last_verified) "
+            "VALUES ('github', 'github_app', ?, 'connected', ?, ?, ?) "
+            "ON CONFLICT(platform) DO UPDATE SET auth_type = 'github_app', credentials = excluded.credentials, "
+            "status = 'connected', display_name = excluded.display_name, connected_at = excluded.connected_at, "
+            "last_verified = excluded.last_verified",
+            (str(installation_id), account_login or "github", now, now),
+        )
+        db.commit()
+        _refresh_github_token_env()
 
     # If the popup was blocked and the user landed in the main tab, we still
     # want to take them back to the dashboard. DASH_FRONTEND_URL is set per
