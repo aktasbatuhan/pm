@@ -10,7 +10,7 @@ import {
   fetchWorkspace,
   fetchBrief,
   fetchGithubAppStatus,
-  githubAppInstallUrl,
+  fetchGithubAppInstallUrl,
   type GithubAppStatus,
 } from "@/lib/api";
 import type { Brief, WorkspaceStatus } from "@/lib/types";
@@ -214,9 +214,15 @@ export function OnboardingView({ onComplete }: Props) {
     return () => window.removeEventListener("message", onMessage);
   }, []);
 
-  function openGithubInstall() {
+  async function openGithubInstall() {
     setGithubAppWaiting(true);
-    window.open(githubAppInstallUrl(), "github-app-install", "width=780,height=720");
+    const url = await fetchGithubAppInstallUrl();
+    if (!url) {
+      setGithubAppWaiting(false);
+      alert("Could not start GitHub install. Please retry.");
+      return;
+    }
+    window.open(url, "github-app-install", "width=780,height=720");
   }
 
   function next() {

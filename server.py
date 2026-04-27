@@ -1210,7 +1210,10 @@ def github_app_install_redirect(tenant=Depends(get_current_tenant)):
 
     import urllib.parse as _p
     url = f"https://github.com/apps/{cfg['slug']}/installations/new?state={_p.quote(state)}"
-    return RedirectResponse(url)
+    # Return JSON so the frontend (which sends our JWT via fetch) can window.open()
+    # the GitHub URL directly. A redirect here would lose the auth header on
+    # browser navigation and 401 the user out of the install flow.
+    return {"url": url}
 
 
 @app.get("/api/integrations/github/callback")

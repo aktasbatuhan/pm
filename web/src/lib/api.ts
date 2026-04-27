@@ -881,8 +881,19 @@ export async function fetchGithubAppStatus(): Promise<GithubAppStatus> {
   return res.json();
 }
 
-export function githubAppInstallUrl(): string {
-  return `/api/integrations/github/install`;
+/**
+ * Fetch the GitHub App install URL.
+ *
+ * The endpoint is auth-protected (we need to know which tenant initiated the
+ * install so the callback can attribute the new installation correctly), so
+ * we can't use a plain redirect — that would lose the bearer token. Caller
+ * should window.open() the returned URL.
+ */
+export async function fetchGithubAppInstallUrl(): Promise<string | null> {
+  const res = await apiFetch(`/api/integrations/github/install`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.url ?? null;
 }
 
 export async function disconnectGithubApp(): Promise<{ ok: boolean; uninstall_hint?: string | null }> {

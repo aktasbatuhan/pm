@@ -12,7 +12,7 @@ import {
   createMCPServer,
   deleteMCPServer,
   fetchGithubAppStatus,
-  githubAppInstallUrl,
+  fetchGithubAppInstallUrl,
   disconnectGithubApp,
   type Integration,
   type MCPServer,
@@ -121,8 +121,12 @@ function GithubAppCard({
   const install = status.installation;
   const [busy, setBusy] = useState(false);
 
-  function openInstall() {
-    const url = githubAppInstallUrl();
+  async function openInstall() {
+    const url = await fetchGithubAppInstallUrl();
+    if (!url) {
+      alert("Could not start GitHub install. Please retry or check that the GitHub App is configured.");
+      return;
+    }
     window.open(url, "github-app-install", "width=780,height=720");
   }
 
