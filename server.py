@@ -2679,6 +2679,99 @@ def delete_session(session_id: str, tenant=Depends(get_current_tenant)):
 
 # ── Fleet supervisor (issue lifecycle orchestration) ───────────────────
 
+@app.post("/api/fleet/observe")
+async def fleet_observe(request: Request, tenant=Depends(get_current_tenant)):
+    """Run the observer + evolver. Autonomous workflow changes get applied
+    (new revision authored by 'dash'); propose-only changes get filed as
+    brief actions tagged 'workflow-proposal'."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Observer requires Postgres"}, status_code=503)
+    if not _refresh_github_token_env(tenant_id=tenant.tenant_id):
+        return JSONResponse(
+            {"error": "No GitHub installation for this tenant."}, status_code=400,
+        )
+    token = os.environ.get("GITHUB_TOKEN", "")
+
+    from tools.pm_github_tools import github_list_repos
+    try:
+        data = json.loads(github_list_repos())
+        repos_list = [r["full_name"] for r in data.get("repos", []) if r.get("full_name")]
+    except Exception as e:
+        return JSONResponse({"error": f"Couldn't list repos: {e}"}, status_code=502)
+
+    # Resolve active workflow
+    from agent_fleet import workflow as wf_module
+    from backend import repos as pg_repos
+    active = pg_repos.get_active_workflow(tenant.tenant_id)
+    if active:
+        try:
+            workflow_obj = wf_module.parse_workflow(active["body"])
+            workflow_text = active["body"]
+        except Exception as e:
+            return JSONResponse({"error": f"Active workflow won't parse: {e}"}, status_code=500)
+    else:
+        workflow_obj = wf_module.default_workflow()
+        workflow_text = wf_module.DEFAULT_WORKFLOW_TEXT
+
+    # Gather signals
+    from agent_fleet.observer import gather_signals
+    signals = gather_signals(workflow=workflow_obj, repos_list=repos_list, token=token)
+
+    # Build evolver context with persistence injection
+    def _save_revision(*, tenant_id, name, body, author, rationale, based_on_signals):
+        return pg_repos.save_workflow_revision(
+            tenant_id, name=name, body=body, author=author,
+            rationale=rationale, based_on_signals=based_on_signals,
+        )
+
+    def _file_proposal(tenant_id: str, signal) -> Optional[str]:
+        # File the proposal as a pending brief_action so it shows up in the brief.
+        action_id = uuid.uuid4().hex[:8]
+        change = signal.suggested_change or {}
+        title = f"Workflow proposal: {signal.kind}"
+        description = (
+            f"{signal.rationale}\n\n"
+            f"Suggested change: `{change.get('section')}.{change.get('field')}`: "
+            f"`{change.get('from')}` → `{change.get('to')}`"
+        )
+        try:
+            with pg_repos.get_pool().connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """INSERT INTO brief_actions
+                               (id, tenant_id, brief_id, category, title, description,
+                                priority, status, references_json)
+                           VALUES (%s, %s, NULL, 'workflow-proposal', %s, %s, 'medium',
+                                   'pending', %s)""",
+                        (action_id, tenant_id, title, description, json.dumps([])),
+                    )
+            return action_id
+        except Exception:
+            logger.exception("failed to file workflow proposal as brief_action")
+            return None
+
+    from agent_fleet.evolver import EvolverContext, evolve
+    ctx = EvolverContext(
+        tenant_id=tenant.tenant_id,
+        workflow=workflow_obj,
+        workflow_text=workflow_text,
+        save_revision=_save_revision,
+        file_proposal=_file_proposal,
+    )
+    decisions = evolve(ctx=ctx, signals=signals)
+
+    return {
+        "ok": True,
+        "signals_count": len(signals),
+        "decisions": [d.to_dict() for d in decisions],
+        "summary": {
+            "applied": sum(1 for d in decisions if d.outcome == "applied"),
+            "proposed": sum(1 for d in decisions if d.outcome == "proposed"),
+            "skipped": sum(1 for d in decisions if d.outcome == "skipped"),
+        },
+    }
+
+
 @app.get("/api/fleet/delegations")
 def fleet_list_delegations(tenant=Depends(get_current_tenant)):
     """List all Dash-tagged GitHub issues across the tenant's repos with
