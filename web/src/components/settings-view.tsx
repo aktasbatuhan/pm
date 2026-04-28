@@ -17,11 +17,16 @@ import {
   fetchActiveWorkflow,
   saveWorkflow,
   fetchWorkflowRevisions,
+  fetchDelegations,
+  runSupervisor,
+  refileDelegation,
   type Integration,
   type MCPServer,
   type GithubAppStatus,
   type WorkflowResponse,
   type WorkflowRevision,
+  type Delegation,
+  type SupervisorReportResponse,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -37,6 +42,9 @@ import {
   ExternalLink,
   GitBranch,
   History,
+  Bot,
+  RefreshCw,
+  Play,
 } from "lucide-react";
 
 // Simple inline GitHub mark — lucide dropped the brand icon.
@@ -69,7 +77,7 @@ function timeAgo(ts: number | null): string {
 }
 
 export function SettingsView() {
-  const [tab, setTab] = useState<"integrations" | "mcp" | "workflow">("integrations");
+  const [tab, setTab] = useState<"integrations" | "mcp" | "workflow" | "fleet">("integrations");
 
   return (
     <ScrollArea className="h-full">
@@ -118,11 +126,24 @@ export function SettingsView() {
             <GitBranch className="h-3.5 w-3.5" />
             Workflow
           </button>
+          <button
+            onClick={() => setTab("fleet")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-all",
+              tab === "fleet"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <Bot className="h-3.5 w-3.5" />
+            Fleet
+          </button>
         </div>
 
         {tab === "integrations" && <IntegrationsSection />}
         {tab === "mcp" && <MCPServersSection />}
         {tab === "workflow" && <WorkflowSection />}
+        {tab === "fleet" && <FleetSection />}
 
         <div className="h-16" />
       </div>
@@ -948,6 +969,264 @@ function WorkflowSection() {
           </Card>
         )}
       </div>
+    </div>
+  );
+}
+
+
+// ── Fleet section ───────────────────────────────────────────────────────
+
+function statusBadgeVariant(status: string): "default" | "secondary" | "outline" | "destructive" {
+  if (status === "approved" || status === "resolved") return "default";
+  if (status === "changes_requested") return "destructive";
+  if (status === "pr_opened" || status === "reviewed") return "secondary";
+  return "outline";
+}
+
+function formatStatus(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
+function FleetSection() {
+  const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const [summary, setSummary] = useState<string>("");
+  const [loading, setLoading] = useState(true);
+  const [supervising, setSupervising] = useState(false);
+  const [report, setReport] = useState<SupervisorReportResponse | null>(null);
+  const [refilingId, setRefilingId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    const data = await fetchDelegations();
+    setLoading(false);
+    if (!data) {
+      setError("Could not load delegations.");
+      setDelegations([]);
+      return;
+    }
+    setDelegations(data.delegations || []);
+    setSummary(data.summary || "");
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function handleRunSupervisor() {
+    setSupervising(true);
+    setError(null);
+    const r = await runSupervisor();
+    setSupervising(false);
+    if (!r) {
+      setError("Supervisor run failed.");
+      return;
+    }
+    setReport(r);
+    await load();
+  }
+
+  async function handleRefile(d: Delegation) {
+    if (!confirm(
+      `Refile ${d.repo}#${d.issue_number} to the next agent in the workflow's fallback chain? ` +
+      `This closes the current issue and creates a new one.`,
+    )) return;
+    const key = `${d.repo}#${d.issue_number}`;
+    setRefilingId(key);
+    setError(null);
+    const result = await refileDelegation(d.repo, d.issue_number);
+    setRefilingId(null);
+    if (!result.ok) {
+      setError(result.error || "Refile failed.");
+      return;
+    }
+    await load();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading delegations…
+      </div>
+    );
+  }
+
+  const stalled = delegations.filter((d) => d.has_stalled_marker && !d.has_refiled_marker);
+  const refiled = delegations.filter((d) => d.has_refiled_marker);
+  const active = delegations.filter((d) => !d.has_stalled_marker);
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <div className="mb-3 flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+              Fleet supervisor
+            </h2>
+            <p className="mt-1 text-xs text-muted-foreground">{summary}</p>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={load}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <RefreshCw className="h-3 w-3" />
+              Refresh
+            </button>
+            <button
+              onClick={handleRunSupervisor}
+              disabled={supervising}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+            >
+              {supervising ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+              Run supervisor
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <Card className="mb-3 border-red-500/30 bg-red-500/5">
+            <CardContent className="p-3 text-xs text-red-600">{error}</CardContent>
+          </Card>
+        )}
+
+        {report && (
+          <Card className="mb-3 bg-muted/30">
+            <CardContent className="space-y-1 p-3 text-xs">
+              <div className="font-medium">
+                Last run: {report.delegations_seen} delegations across {report.repos_scanned} repos
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(report.by_kind).map(([kind, count]) => (
+                  <Badge key={kind} variant="outline" className="text-[10px]">
+                    {kind}: {count}
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {stalled.length > 0 && (
+          <div className="mb-4">
+            <h3 className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Stalled — refile-eligible ({stalled.length})
+            </h3>
+            <div className="space-y-2">
+              {stalled.map((d) => (
+                <DelegationRow
+                  key={`${d.repo}#${d.issue_number}`}
+                  d={d}
+                  isRefiling={refilingId === `${d.repo}#${d.issue_number}`}
+                  onRefile={() => handleRefile(d)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {active.length > 0 && (
+          <div className="mb-4">
+            <h3 className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Active ({active.length})
+            </h3>
+            <div className="space-y-2">
+              {active.map((d) => (
+                <DelegationRow key={`${d.repo}#${d.issue_number}`} d={d} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {refiled.length > 0 && (
+          <div className="mb-4">
+            <h3 className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              Already refiled ({refiled.length})
+            </h3>
+            <div className="space-y-2">
+              {refiled.map((d) => (
+                <DelegationRow key={`${d.repo}#${d.issue_number}`} d={d} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {delegations.length === 0 && (
+          <Card>
+            <CardContent className="p-4 text-xs text-muted-foreground">
+              No Dash delegations found yet. File one with{" "}
+              <code className="rounded bg-muted px-1 py-0.5">github_delegate_task</code>{" "}
+              from chat or the brief.
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DelegationRow({
+  d,
+  isRefiling,
+  onRefile,
+}: {
+  d: Delegation;
+  isRefiling?: boolean;
+  onRefile?: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-card p-3 text-xs">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={d.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono text-[11px] text-foreground hover:text-primary"
+          >
+            {d.repo}#{d.issue_number}
+          </a>
+          <Badge variant={statusBadgeVariant(d.status)} className="text-[9px]">
+            {formatStatus(d.status)}
+          </Badge>
+          <span className="text-[10px] text-muted-foreground">→ {d.agent_id}</span>
+          {d.pr_number && (
+            <a
+              href={`https://github.com/${d.repo}/pull/${d.pr_number}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-primary"
+            >
+              <ExternalLink className="h-2.5 w-2.5" />
+              PR #{d.pr_number}
+            </a>
+          )}
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1">
+          {d.has_dash_review && (
+            <span className="text-[10px] text-muted-foreground">reviewed</span>
+          )}
+          {d.has_stalled_marker && !d.has_refiled_marker && (
+            <span className="text-[10px] text-amber-600">stalled</span>
+          )}
+          {d.has_refiled_marker && (
+            <span className="text-[10px] text-muted-foreground">refiled</span>
+          )}
+        </div>
+      </div>
+      {onRefile && (
+        <button
+          onClick={onRefile}
+          disabled={!d.refile_eligible || isRefiling}
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-40"
+        >
+          {isRefiling ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+          Refile
+        </button>
+      )}
     </div>
   );
 }

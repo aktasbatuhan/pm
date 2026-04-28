@@ -2679,6 +2679,71 @@ def delete_session(session_id: str, tenant=Depends(get_current_tenant)):
 
 # ── Fleet supervisor (issue lifecycle orchestration) ───────────────────
 
+@app.get("/api/fleet/delegations")
+def fleet_list_delegations(tenant=Depends(get_current_tenant)):
+    """List all Dash-tagged GitHub issues across the tenant's repos with
+    enough state for a UI panel to render badges + 'Refile' buttons."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Fleet listing requires Postgres"}, status_code=503)
+
+    if not _refresh_github_token_env(tenant_id=tenant.tenant_id):
+        return {"ok": True, "repos": [], "delegations": [],
+                "summary": "No GitHub installation for this tenant."}
+    token = os.environ.get("GITHUB_TOKEN", "")
+
+    from tools.pm_github_tools import github_list_repos
+    try:
+        data = json.loads(github_list_repos())
+        repos_list = [r["full_name"] for r in data.get("repos", []) if r.get("full_name")]
+    except Exception as e:
+        return JSONResponse({"error": f"Couldn't list repos: {e}"}, status_code=502)
+
+    from agent_fleet.supervisor import (
+        _DASH_REFILED_MARKER, _DASH_STALLED_MARKER, _DASH_REVIEW_MARKER,
+        _list_issue_comments,
+    )
+    from agent_fleet.watcher import watch_repo_delegations
+
+    delegations = []
+    for repo in repos_list:
+        try:
+            results = watch_repo_delegations(repo, token)
+        except Exception as e:
+            logger.warning("watch_repo_delegations failed for %s: %s", repo, e)
+            continue
+        for r in results:
+            # Refile-eligible = stalled marker present AND no refile yet.
+            issue_comments = _list_issue_comments(repo, r.issue_number, token)
+            has_stalled = any(_DASH_STALLED_MARKER in (c.get("body") or "") for c in issue_comments)
+            has_refiled = any(_DASH_REFILED_MARKER in (c.get("body") or "") for c in issue_comments)
+            review_present = False
+            if r.pr_number:
+                pr_comments = _list_issue_comments(repo, r.pr_number, token)
+                review_present = any(_DASH_REVIEW_MARKER in (c.get("body") or "") for c in pr_comments)
+
+            delegations.append({
+                "repo": repo,
+                "issue_number": r.issue_number,
+                "task_id": r.task_id,
+                "agent_id": r.agent_id,
+                "status": r.status,
+                "pr_number": r.pr_number,
+                "url": f"https://github.com/{repo}/issues/{r.issue_number}",
+                "review_verdict": r.review.verdict if r.review else None,
+                "has_dash_review": review_present,
+                "has_stalled_marker": has_stalled,
+                "has_refiled_marker": has_refiled,
+                "refile_eligible": has_stalled and not has_refiled,
+            })
+
+    return {
+        "ok": True,
+        "repos": repos_list,
+        "delegations": delegations,
+        "summary": f"{len(delegations)} delegations across {len(repos_list)} repos",
+    }
+
+
 @app.post("/api/fleet/refile")
 async def fleet_refile(request: Request, tenant=Depends(get_current_tenant)):
     """Refile a stalled Dash delegation to the next agent in the fallback chain.

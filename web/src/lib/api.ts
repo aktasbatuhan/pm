@@ -881,6 +881,76 @@ export async function fetchGithubAppStatus(): Promise<GithubAppStatus> {
   return res.json();
 }
 
+// ── Fleet supervisor ─────────────────────────────────────────────────────────
+
+export interface Delegation {
+  repo: string;
+  issue_number: number;
+  task_id: string;
+  agent_id: string;
+  status: string;            // delegated | pr_opened | changes_requested | approved | resolved | reviewed
+  pr_number: number | null;
+  url: string;
+  review_verdict: string | null;
+  has_dash_review: boolean;
+  has_stalled_marker: boolean;
+  has_refiled_marker: boolean;
+  refile_eligible: boolean;
+}
+
+export interface FleetDelegationsResponse {
+  ok: boolean;
+  repos: string[];
+  delegations: Delegation[];
+  summary: string;
+}
+
+export interface SupervisorActionRecord {
+  repo: string;
+  issue_number: number;
+  kind: string;
+  detail: string;
+  error: string | null;
+}
+
+export interface SupervisorReportResponse {
+  ok: boolean;
+  workflow_revision: number;
+  repos_scanned: number;
+  delegations_seen: number;
+  by_kind: Record<string, number>;
+  actions: SupervisorActionRecord[];
+}
+
+export async function fetchDelegations(): Promise<FleetDelegationsResponse | null> {
+  const res = await apiFetch(`/api/fleet/delegations`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function runSupervisor(): Promise<SupervisorReportResponse | null> {
+  const res = await apiFetch(`/api/fleet/supervise`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({}),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function refileDelegation(
+  repo: string, issue_number: number, agent_id?: string,
+): Promise<{ ok: boolean; new_issue_number?: number; new_issue_url?: string; new_agent_id?: string; error?: string }> {
+  const res = await apiFetch(`/api/fleet/refile`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ repo, issue_number, agent_id }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  return { ok: true, ...data };
+}
+
 // ── Workflow contract ────────────────────────────────────────────────────────
 
 export interface WorkflowResponse {
