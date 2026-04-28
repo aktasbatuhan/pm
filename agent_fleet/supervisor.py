@@ -13,15 +13,15 @@ Design goals:
   - Observable: returns a structured SupervisorReport so the caller can
     surface a summary in the brief or settings UI.
 
-Phase 2 scope (this file ships):
+State coverage:
   PR opened + unreviewed         → auto-review (skip if Dash already reviewed)
   Resolved (PR merged)           → run on_merged hooks (close_dash_issue,
                                    resolve_brief_action)
-
-Phase 2.5 (next):
-  Stale delegations              → escalation policy
-  Changes requested + idle       → re-ping with structured feedback
-  on_approved / on_failed hooks
+  Delegated + stale (phase 2.5)  → evaluate_task_health → re-ping or mark stalled
+  Changes requested (phase 2.5)  → post structured feedback comment to the agent,
+                                   tracked toward review.max_retries
+  Approved (phase 2.5)           → workflow.review.on_approve dispatch
+                                   (comment | auto-merge)
 """
 
 from __future__ import annotations
@@ -79,17 +79,56 @@ class SupervisorReport:
 # Helpers — markers used to detect prior Dash actions on a PR/issue
 # ---------------------------------------------------------------------------
 
-# A canonical heading we drop into review comments so we can detect on the
-# next run that we've already reviewed this PR (and don't double-comment).
+# Canonical headings dropped into comments so we can detect prior Dash
+# actions on the next run and avoid double-commenting / spamming.
 _DASH_REVIEW_MARKER = "## Dash Review"
+_DASH_REPING_MARKER = "## Dash Re-ping"
+_DASH_FEEDBACK_MARKER = "## Dash Feedback"
+_DASH_STALLED_MARKER = "## Dash Stalled"
+
+
+def _list_issue_comments(repo: str, issue_number: int, token: str) -> List[dict]:
+    status, comments = _gh("GET", f"/repos/{repo}/issues/{issue_number}/comments", token)
+    if status != 200 or not isinstance(comments, list):
+        return []
+    return comments
 
 
 def _has_existing_dash_review(repo: str, pr_number: int, token: str) -> bool:
     """True if any issue comment on the PR already contains the Dash review marker."""
-    status, comments = _gh("GET", f"/repos/{repo}/issues/{pr_number}/comments", token)
-    if status != 200 or not isinstance(comments, list):
-        return False
-    return any(_DASH_REVIEW_MARKER in (c.get("body") or "") for c in comments)
+    return any(
+        _DASH_REVIEW_MARKER in (c.get("body") or "")
+        for c in _list_issue_comments(repo, pr_number, token)
+    )
+
+
+def _count_marker_comments(repo: str, issue_number: int, marker: str, token: str) -> int:
+    """How many comments on this issue carry a given marker (e.g. re-pings, feedback)."""
+    return sum(
+        1 for c in _list_issue_comments(repo, issue_number, token)
+        if marker in (c.get("body") or "")
+    )
+
+
+def _post_comment(repo: str, issue_number: int, body: str, token: str) -> bool:
+    status, _ = _gh(
+        "POST", f"/repos/{repo}/issues/{issue_number}/comments",
+        token, body={"body": body},
+    )
+    return status in (200, 201)
+
+
+def _merge_pr(repo: str, pr_number: int, token: str) -> Tuple[bool, str]:
+    """Merge a PR via GitHub's merge endpoint. Returns (ok, detail)."""
+    status, body = _gh(
+        "PUT", f"/repos/{repo}/pulls/{pr_number}/merge",
+        token, body={"merge_method": "squash"},
+    )
+    if status in (200, 201):
+        return True, f"merged PR #{pr_number}"
+    if status == 405:
+        return False, f"PR #{pr_number} not mergeable (likely conflicts or branch protection)"
+    return False, f"merge failed: HTTP {status}"
 
 
 def _close_issue(repo: str, issue_number: int, token: str) -> Tuple[bool, str]:
@@ -269,6 +308,214 @@ def _handle_pr_opened(result: WatchResult, repo: str, token: str,
     ))
 
 
+def _handle_delegated(result: WatchResult, repo: str, token: str,
+                     workflow: Workflow, report: SupervisorReport,
+                     issue: dict) -> None:
+    """No PR yet. Run the health check; re-ping if stale, mark stalled if we've
+    given up. Re-files to a fallback agent are NOT done here — they're a
+    separate, riskier action we surface explicitly rather than triggering
+    on a 15-min cron."""
+    from agent_fleet.escalation import (
+        DelegationPolicy, HealthStatus, evaluate_task_health,
+    )
+
+    policy = DelegationPolicy(
+        default_agent=workflow.routing.default,
+        fallback_chain=workflow.escalation.fallback_chain,
+        max_retries_per_agent=workflow.review.max_retries,
+        stall_timeout_hours=workflow.escalation.stall_timeout_hours,
+        auto_escalate=workflow.escalation.auto_escalate,
+    )
+
+    issue_url = issue.get("html_url") or ""
+    title = issue.get("title") or ""
+    created_at = issue.get("created_at") or ""
+
+    # ping_count = number of Dash re-ping comments we've previously left.
+    ping_count = _count_marker_comments(repo, result.issue_number, _DASH_REPING_MARKER, token)
+
+    verdict = evaluate_task_health(
+        task_status=result.status,
+        agent_id=result.agent_id,
+        issue_number=result.issue_number,
+        issue_url=issue_url,
+        task_title=title,
+        created_at=created_at,
+        last_activity_at=None,
+        pr_number=None,
+        pr_url=None,
+        review_verdict=None,
+        ping_count=ping_count,
+        policy=policy,
+    )
+
+    if verdict.status == HealthStatus.OK:
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip", detail=f"on track ({verdict.reason})",
+        ))
+        return
+
+    if verdict.status == HealthStatus.NUDGE:
+        comment = (
+            f"{_DASH_REPING_MARKER}\n\n"
+            f"Hi @{result.agent_id} — checking in. "
+            f"It's been {ping_count + 1} nudge(s); the issue is past the expected window. "
+            f"Reason: {verdict.reason}\n\n"
+            f"If you're blocked, reply with what you need."
+        )
+        ok = _post_comment(repo, result.issue_number, comment, token)
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="re_ping",
+            detail=f"posted re-ping #{ping_count + 1}; {verdict.reason}",
+            error=None if ok else "comment failed",
+        ))
+        return
+
+    # STALLED: don't auto-refile; just record it once, surface to the user.
+    if verdict.status == HealthStatus.STALLED:
+        already_marked = _count_marker_comments(repo, result.issue_number, _DASH_STALLED_MARKER, token) > 0
+        if already_marked:
+            report.actions.append(SupervisorAction(
+                repo=repo, issue_number=result.issue_number,
+                kind="skip", detail="stalled; already flagged on a previous run",
+            ))
+            return
+        next_agent = verdict.fallback_agent_id or "<no fallback>"
+        comment = (
+            f"{_DASH_STALLED_MARKER}\n\n"
+            f"This delegation is stalled. {verdict.reason}\n\n"
+            f"Suggested next step: re-file to **{next_agent}** "
+            f"(via `github_delegate_task`) or close manually."
+        )
+        _post_comment(repo, result.issue_number, comment, token)
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="mark_stalled",
+            detail=f"flagged stalled; suggested fallback: {next_agent}",
+        ))
+        return
+
+    if verdict.status == HealthStatus.NEEDS_HUMAN:
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="needs_human", detail=verdict.reason,
+        ))
+        return
+
+
+def _handle_changes_requested(result: WatchResult, repo: str, token: str,
+                             workflow: Workflow, report: SupervisorReport) -> None:
+    """PR has request_changes from Dash review. Post a structured feedback
+    comment mentioning the agent. Tracked toward review.max_retries via
+    Dash Feedback markers; escalation past that limit is left to the user."""
+    if not result.pr_number:
+        return
+    if not result.review or not result.review.criteria:
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip", detail="changes_requested but no review payload",
+        ))
+        return
+
+    feedback_count = _count_marker_comments(
+        repo, result.pr_number, _DASH_FEEDBACK_MARKER, token,
+    )
+    if feedback_count >= workflow.review.max_retries:
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip",
+            detail=(
+                f"feedback already posted {feedback_count}× (max_retries="
+                f"{workflow.review.max_retries}); awaiting human"
+            ),
+        ))
+        return
+
+    unmet = [c.text for c in result.review.criteria if c.status != "met"]
+    if not unmet:
+        # The verdict was request_changes but we can't see which criterion is at
+        # fault. Skip rather than spam.
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip", detail="changes_requested but no unmet criteria parsed",
+        ))
+        return
+
+    bullet_list = "\n".join(f"- {c}" for c in unmet)
+    comment = (
+        f"{_DASH_FEEDBACK_MARKER}\n\n"
+        f"@{result.agent_id} — the review couldn't verify these criteria:\n\n"
+        f"{bullet_list}\n\n"
+        f"Push commits that address each, then push to the PR. "
+        f"This is feedback round {feedback_count + 1} of "
+        f"{workflow.review.max_retries}."
+    )
+    ok = _post_comment(repo, result.pr_number, comment, token)
+    report.actions.append(SupervisorAction(
+        repo=repo, issue_number=result.issue_number,
+        kind="post_feedback",
+        detail=(
+            f"PR #{result.pr_number}: feedback {feedback_count + 1}/"
+            f"{workflow.review.max_retries}, {len(unmet)} unmet criteria"
+        ),
+        error=None if ok else "comment failed",
+    ))
+
+
+def _handle_approved(result: WatchResult, repo: str, token: str,
+                    workflow: Workflow, report: SupervisorReport) -> None:
+    """Review verdict is approve. Apply workflow.review.on_approve and run
+    on_approved hooks. Idempotent: skip if PR is already merged or closed."""
+    if not result.pr_number:
+        return
+
+    # Idempotency: don't try to merge an already-merged PR.
+    status, pr = _gh("GET", f"/repos/{repo}/pulls/{result.pr_number}", token)
+    if status != 200 or not isinstance(pr, dict):
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="error", detail=f"couldn't refetch PR #{result.pr_number}",
+            error=f"HTTP {status}",
+        ))
+        return
+    if pr.get("merged"):
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip", detail=f"PR #{result.pr_number} already merged",
+        ))
+        return
+
+    on_approve = workflow.review.on_approve
+    if on_approve == "auto-merge":
+        ok, detail = _merge_pr(repo, result.pr_number, token)
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="auto_merge", detail=detail,
+            error=None if ok else detail,
+        ))
+    else:
+        # Default 'comment' branch: the review comment was already posted on
+        # PR open; no-op so we don't spam approvals every cron run.
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip",
+            detail=f"approved; on_approve='{on_approve}', awaiting human merge",
+        ))
+
+    # Run on_approved hooks regardless of merge mode.
+    if workflow.hooks.on_approved:
+        ctx = {
+            "repo": repo,
+            "issue_number": result.issue_number,
+            "tenant_id": "",  # tenant_id not needed for current handlers
+            "token": token,
+            "pr_number": result.pr_number,
+        }
+        _run_hooks(workflow.hooks.on_approved, ctx, report)
+
+
 def _handle_resolved(result: WatchResult, repo: str, token: str, tenant_id: str,
                     workflow: Workflow, report: SupervisorReport,
                     metadata: dict) -> None:
@@ -338,14 +585,22 @@ def run_supervisor(
             if status == 200 and isinstance(issue, dict):
                 metadata = parse_dash_metadata(issue.get("body") or "") or {}
 
+            issue_dict = issue if isinstance(issue, dict) else {}
+
             if result.status == TaskStatus.PR_OPENED:
                 _handle_pr_opened(result, repo, token, workflow, report)
             elif result.status == TaskStatus.RESOLVED:
                 _handle_resolved(result, repo, token, tenant_id, workflow, report, metadata)
+            elif result.status == TaskStatus.DELEGATED:
+                _handle_delegated(result, repo, token, workflow, report, issue_dict)
+            elif result.status == TaskStatus.CHANGES_REQUESTED:
+                _handle_changes_requested(result, repo, token, workflow, report)
+            elif result.status == TaskStatus.APPROVED:
+                _handle_approved(result, repo, token, workflow, report)
             else:
                 report.actions.append(SupervisorAction(
                     repo=repo, issue_number=result.issue_number,
-                    kind="skip", detail=f"status={result.status} not handled in phase 2",
+                    kind="skip", detail=f"status={result.status} not handled",
                 ))
 
     return report

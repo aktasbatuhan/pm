@@ -100,10 +100,11 @@ class TestResolveBriefAction:
 # ---------------------------------------------------------------------------
 
 class TestRunSupervisor:
-    def test_skips_when_status_not_handled(self):
+    def test_skips_unhandled_status(self):
+        # IN_PROGRESS / REVIEWED are not currently mapped to handlers.
         result = WatchResult(
             issue_number=1, task_id="t1", agent_id="claude-code",
-            status=TaskStatus.DELEGATED,
+            status=TaskStatus.REVIEWED,
         )
         with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
              patch("agent_fleet.supervisor._gh", _gh_mock({"/issues/1": (200, {"body": ""})})):
@@ -178,6 +179,251 @@ class TestRunSupervisor:
                 tenant_id="t", repos_list=["acme/api"], token="tok",
             )
         assert "already closed" in report.actions[-1].detail
+
+
+class TestHandleDelegated:
+    def _setup(self, *, created_at, ping_count=0):
+        """Build the routes a stale-delegation run hits."""
+        comments = [
+            {"body": "## Dash Re-ping\n\nfirst nudge"} for _ in range(ping_count)
+        ]
+        # _handle_delegated reads the issue body too (already loaded in run_supervisor)
+        return _gh_mock({
+            f"/issues/1/comments": (200, comments),
+            f"/issues/1": (200, {
+                "html_url": "https://github.com/acme/api/issues/1",
+                "title": "Fix login",
+                "created_at": created_at,
+            }),
+        })
+
+    def test_re_pings_when_stale_with_no_pings(self):
+        # 2 hours ago, expected window is 30 min for claude-code → NUDGE
+        from datetime import datetime, timedelta, timezone
+        old = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = WatchResult(
+            issue_number=1, task_id="t1", agent_id="claude-code",
+            status=TaskStatus.DELEGATED,
+        )
+        gh_calls = []
+
+        def gh(method, path, token, body=None, timeout=30):
+            gh_calls.append((method, path))
+            if "/issues/1/comments" in path and method == "GET":
+                return (200, [])
+            if "/issues/1/comments" in path and method == "POST":
+                return (201, {})
+            if "/issues/1" in path:
+                return (200, {
+                    "html_url": "https://github.com/acme/api/issues/1",
+                    "title": "Fix login",
+                    "created_at": old,
+                })
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+
+        kinds = report.by_kind()
+        assert "re_ping" in kinds
+        # We posted exactly one comment with the marker
+        post_calls = [c for c in gh_calls if c[0] == "POST" and "/comments" in c[1]]
+        assert len(post_calls) == 1
+
+    def test_marks_stalled_after_max_retries(self):
+        # 25 hours ago + 2 prior re-pings → STALLED
+        from datetime import datetime, timedelta, timezone
+        very_old = (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = WatchResult(
+            issue_number=1, task_id="t1", agent_id="claude-code",
+            status=TaskStatus.DELEGATED,
+        )
+
+        def gh(method, path, token, body=None, timeout=30):
+            if "/issues/1/comments" in path and method == "GET":
+                return (200, [
+                    {"body": "## Dash Re-ping\n\n1"},
+                    {"body": "## Dash Re-ping\n\n2"},
+                ])
+            if "/issues/1/comments" in path and method == "POST":
+                return (201, {})
+            if "/issues/1" in path:
+                return (200, {
+                    "html_url": "https://github.com/acme/api/issues/1",
+                    "title": "Fix login",
+                    "created_at": very_old,
+                })
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+        assert "mark_stalled" in report.by_kind()
+
+    def test_skips_when_already_marked_stalled(self):
+        from datetime import datetime, timedelta, timezone
+        very_old = (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = WatchResult(
+            issue_number=1, task_id="t1", agent_id="claude-code",
+            status=TaskStatus.DELEGATED,
+        )
+
+        def gh(method, path, token, body=None, timeout=30):
+            if "/issues/1/comments" in path and method == "GET":
+                return (200, [{"body": "## Dash Stalled\n\nflagged"}])
+            if "/issues/1" in path:
+                return (200, {
+                    "html_url": "https://github.com/acme/api/issues/1",
+                    "title": "Fix login",
+                    "created_at": very_old,
+                })
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+        assert "skip" in report.by_kind()
+        assert any("already flagged" in a.detail for a in report.actions)
+
+
+class TestHandleChangesRequested:
+    def test_posts_feedback_with_unmet_criteria(self):
+        review = ReviewResult(
+            verdict="request_changes",
+            criteria=[
+                CriterionResult(text="Add tests", status="unmet"),
+                CriterionResult(text="Fix race condition", status="unmet"),
+                CriterionResult(text="Update docs", status="met"),
+            ],
+            summary="needs work",
+        )
+        result = WatchResult(
+            issue_number=10, task_id="t1", agent_id="codex",
+            status=TaskStatus.CHANGES_REQUESTED, pr_number=42,
+            review=review,
+        )
+        posted = []
+
+        def gh(method, path, token, body=None, timeout=30):
+            if "/issues/42/comments" in path and method == "GET":
+                return (200, [])
+            if "/issues/42/comments" in path and method == "POST":
+                posted.append(body)
+                return (201, {})
+            if "/issues/10" in path:
+                return (200, {"body": "<!-- dash-delegation -->", "state": "open"})
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+        assert "post_feedback" in report.by_kind()
+        assert len(posted) == 1
+        assert "Add tests" in posted[0]["body"]
+        assert "Fix race condition" in posted[0]["body"]
+        assert "Update docs" not in posted[0]["body"]
+        assert "@codex" in posted[0]["body"]
+
+    def test_stops_after_max_retries(self):
+        review = ReviewResult(
+            verdict="request_changes",
+            criteria=[CriterionResult(text="x", status="unmet")],
+        )
+        result = WatchResult(
+            issue_number=10, task_id="t1", agent_id="codex",
+            status=TaskStatus.CHANGES_REQUESTED, pr_number=42,
+            review=review,
+        )
+        prior = [
+            {"body": "## Dash Feedback\n\nround 1"},
+            {"body": "## Dash Feedback\n\nround 2"},
+        ]
+
+        def gh(method, path, token, body=None, timeout=30):
+            if "/issues/42/comments" in path and method == "GET":
+                return (200, prior)
+            if "/issues/10" in path:
+                return (200, {"body": ""})
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+        assert "skip" in report.by_kind()
+        assert any("max_retries" in a.detail for a in report.actions)
+
+
+class TestHandleApproved:
+    def test_default_on_approve_skips_with_message(self):
+        result = WatchResult(
+            issue_number=10, task_id="t1", agent_id="claude-code",
+            status=TaskStatus.APPROVED, pr_number=42,
+        )
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", _gh_mock({
+                 "/pulls/42": (200, {"merged": False, "mergeable": True}),
+                 "/issues/10": (200, {"body": ""}),
+             })):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+        assert any("awaiting human merge" in a.detail for a in report.actions)
+
+    def test_auto_merge_calls_merge_endpoint(self):
+        from agent_fleet.workflow import default_workflow
+        wf = default_workflow()
+        wf.review.on_approve = "auto-merge"
+
+        result = WatchResult(
+            issue_number=10, task_id="t1", agent_id="claude-code",
+            status=TaskStatus.APPROVED, pr_number=42,
+        )
+        merge_called = []
+
+        def gh(method, path, token, body=None, timeout=30):
+            if method == "PUT" and "/pulls/42/merge" in path:
+                merge_called.append(body)
+                return (200, {"merged": True})
+            if "/pulls/42" in path:
+                return (200, {"merged": False, "mergeable": True})
+            if "/issues/10" in path:
+                return (200, {"body": ""})
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+                workflow=wf,
+            )
+        assert "auto_merge" in report.by_kind()
+        assert len(merge_called) == 1
+
+    def test_skip_when_pr_already_merged(self):
+        result = WatchResult(
+            issue_number=10, task_id="t1", agent_id="claude-code",
+            status=TaskStatus.APPROVED, pr_number=42,
+        )
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", _gh_mock({
+                 "/pulls/42": (200, {"merged": True}),
+                 "/issues/10": (200, {"body": ""}),
+             })):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok",
+            )
+        assert any("already merged" in a.detail for a in report.actions)
 
 
 class TestSupervisorReport:
