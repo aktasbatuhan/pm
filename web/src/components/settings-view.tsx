@@ -14,9 +14,14 @@ import {
   fetchGithubAppStatus,
   fetchGithubAppInstallUrl,
   disconnectGithubApp,
+  fetchActiveWorkflow,
+  saveWorkflow,
+  fetchWorkflowRevisions,
   type Integration,
   type MCPServer,
   type GithubAppStatus,
+  type WorkflowResponse,
+  type WorkflowRevision,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import {
@@ -30,6 +35,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
+  GitBranch,
+  History,
 } from "lucide-react";
 
 // Simple inline GitHub mark — lucide dropped the brand icon.
@@ -62,7 +69,7 @@ function timeAgo(ts: number | null): string {
 }
 
 export function SettingsView() {
-  const [tab, setTab] = useState<"integrations" | "mcp">("integrations");
+  const [tab, setTab] = useState<"integrations" | "mcp" | "workflow">("integrations");
 
   return (
     <ScrollArea className="h-full">
@@ -99,9 +106,23 @@ export function SettingsView() {
             <Server className="h-3.5 w-3.5" />
             MCP Servers
           </button>
+          <button
+            onClick={() => setTab("workflow")}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-all",
+              tab === "workflow"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            Workflow
+          </button>
         </div>
 
-        {tab === "integrations" ? <IntegrationsSection /> : <MCPServersSection />}
+        {tab === "integrations" && <IntegrationsSection />}
+        {tab === "mcp" && <MCPServersSection />}
+        {tab === "workflow" && <WorkflowSection />}
 
         <div className="h-16" />
       </div>
@@ -744,5 +765,189 @@ function AddMCPServerForm({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+
+// ── Workflow section ────────────────────────────────────────────────────
+
+function WorkflowSection() {
+  const [workflow, setWorkflow] = useState<WorkflowResponse | null>(null);
+  const [revisions, setRevisions] = useState<WorkflowRevision[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [rationale, setRationale] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    const [w, h] = await Promise.all([fetchActiveWorkflow(), fetchWorkflowRevisions()]);
+    setWorkflow(w);
+    setRevisions(h);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  function startEdit() {
+    setDraft(workflow?.body ?? "");
+    setRationale("");
+    setError(null);
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    const result = await saveWorkflow(draft, rationale.trim() || undefined);
+    setSaving(false);
+    if (!result.ok) {
+      setError(result.error ?? "Save failed");
+      return;
+    }
+    setEditing(false);
+    await load();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        Loading workflow…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h2 className="mb-1 text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+          Workflow contract
+        </h2>
+        <p className="mb-4 text-xs text-muted-foreground">
+          The declarative lifecycle Dash follows when delegating, reviewing, and closing GitHub issues.
+          Customers and Dash itself can edit this. Each save creates a revision.
+        </p>
+
+        <Card>
+          <CardContent className="space-y-3 p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{workflow?.name}</span>
+                  {workflow?.is_default ? (
+                    <Badge variant="secondary" className="text-[10px]">Dash default</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-[10px]">rev {workflow?.revision}</Badge>
+                  )}
+                </div>
+                {workflow?.rationale && (
+                  <p className="mt-1 text-xs text-muted-foreground">{workflow.rationale}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowHistory((v) => !v)}
+                  disabled={revisions.length === 0}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-40"
+                >
+                  <History className="h-3 w-3" />
+                  History {revisions.length > 0 && `(${revisions.length})`}
+                </button>
+                {!editing && (
+                  <button
+                    onClick={startEdit}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                  >
+                    Edit
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {!editing && (
+              <pre className="max-h-[480px] overflow-auto rounded-md border border-border bg-muted/40 p-3 text-[11px] leading-relaxed font-mono whitespace-pre-wrap">
+                {workflow?.body}
+              </pre>
+            )}
+
+            {editing && (
+              <div className="space-y-2">
+                <textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={20}
+                  spellCheck={false}
+                  className="w-full rounded-md border border-border bg-background p-3 font-mono text-[11px] leading-relaxed focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/10"
+                />
+                <input
+                  type="text"
+                  placeholder="Optional: why this change?"
+                  value={rationale}
+                  onChange={(e) => setRationale(e.target.value)}
+                  className="w-full rounded-md border border-border bg-background px-3 py-2 text-xs focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/10"
+                />
+                {error && <p className="text-xs text-red-600">{error}</p>}
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setEditing(false)}
+                    className="rounded-md px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    disabled={!draft.trim() || saving}
+                    className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                  >
+                    {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                    Save revision
+                  </button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {showHistory && revisions.length > 0 && (
+          <Card className="mt-3">
+            <CardContent className="space-y-2 p-4">
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                Revision history
+              </h3>
+              <div className="space-y-1">
+                {revisions.map((r) => (
+                  <div
+                    key={r.revision}
+                    className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-xs"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[11px]">rev {r.revision}</span>
+                        {r.is_active && <Badge variant="default" className="text-[9px]">active</Badge>}
+                        <span className="text-muted-foreground">
+                          {r.author === "dash" ? "Dash" : "you"}
+                        </span>
+                      </div>
+                      {r.rationale && (
+                        <p className="mt-0.5 text-[11px] text-muted-foreground">{r.rationale}</p>
+                      )}
+                    </div>
+                    <span className="text-[10px] text-muted-foreground">
+                      {timeAgo(r.created_at)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+      </div>
+    </div>
   );
 }

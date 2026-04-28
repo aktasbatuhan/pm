@@ -42,6 +42,7 @@ TENANT_SCOPED_PATH_PREFIXES = (
     "/api/reports",
     "/api/changelogs",
     "/api/team",
+    "/api/workflow",
 )
 
 # Paths under tenant-scoped prefixes that must NOT require auth (OAuth callbacks

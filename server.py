@@ -2677,6 +2677,101 @@ def delete_session(session_id: str, tenant=Depends(get_current_tenant)):
 
 # ── Workspace endpoint ─────────────────────────────────────────────────
 
+# ── Workflow contract (issue lifecycle) ────────────────────────────────
+
+@app.get("/api/workflow")
+def workflow_get_active(tenant=Depends(get_current_tenant)):
+    """Return the active workflow for this tenant (or the default if none saved)."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflows require Postgres"}, status_code=503)
+    from agent_fleet.workflow import (
+        DEFAULT_WORKFLOW_TEXT, default_workflow, parse_workflow,
+    )
+    from backend import repos
+
+    active = repos.get_active_workflow(tenant.tenant_id)
+    if active:
+        try:
+            wf = parse_workflow(active["body"])
+            parsed = wf.to_dict()
+        except Exception as e:
+            parsed = {"error": f"Active workflow won't parse: {e}"}
+        return {
+            "revision": active["revision"],
+            "name": active["name"],
+            "body": active["body"],
+            "rationale": active["rationale"],
+            "author": active["author"],
+            "based_on_signals": active["based_on_signals"],
+            "created_at": active["created_at"],
+            "is_default": False,
+            "parsed": parsed,
+        }
+
+    # No tenant-specific revision yet — return the shipped default.
+    wf = default_workflow()
+    return {
+        "revision": 0,
+        "name": wf.name,
+        "body": DEFAULT_WORKFLOW_TEXT,
+        "rationale": "Dash default; no tenant-specific revision yet",
+        "author": "dash",
+        "based_on_signals": None,
+        "created_at": None,
+        "is_default": True,
+        "parsed": wf.to_dict(),
+    }
+
+
+@app.put("/api/workflow")
+async def workflow_save(request: Request, tenant=Depends(get_current_tenant)):
+    """Save a new workflow revision. Body: { body: <markdown+yaml>, rationale?: str }."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflows require Postgres"}, status_code=503)
+
+    body = await request.json()
+    text = (body.get("body") or "").strip()
+    rationale = (body.get("rationale") or "").strip() or None
+    if not text:
+        return JSONResponse({"error": "body required"}, status_code=400)
+
+    # Parse before saving so we never persist a malformed workflow.
+    from agent_fleet.workflow import parse_workflow, WorkflowParseError
+    try:
+        wf = parse_workflow(text)
+    except WorkflowParseError as e:
+        return JSONResponse({"error": f"Invalid workflow: {e}"}, status_code=400)
+
+    from backend import repos
+    rev = repos.save_workflow_revision(
+        tenant.tenant_id,
+        name=wf.name,
+        body=text,
+        author=tenant.user_id,
+        rationale=rationale,
+    )
+    return {"ok": True, "revision": rev, "name": wf.name}
+
+
+@app.get("/api/workflow/revisions")
+def workflow_list_revisions(limit: int = 20, tenant=Depends(get_current_tenant)):
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflows require Postgres"}, status_code=503)
+    from backend import repos
+    return {"revisions": repos.list_workflow_revisions(tenant.tenant_id, limit=limit)}
+
+
+@app.get("/api/workflow/revisions/{revision}")
+def workflow_get_revision(revision: int, tenant=Depends(get_current_tenant)):
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflows require Postgres"}, status_code=503)
+    from backend import repos
+    rev = repos.get_workflow_revision(tenant.tenant_id, revision)
+    if not rev:
+        return JSONResponse({"error": "Revision not found"}, status_code=404)
+    return rev
+
+
 @app.get("/api/workspace/status")
 def workspace_status(tenant=Depends(get_current_tenant)):
     if is_postgres_enabled():

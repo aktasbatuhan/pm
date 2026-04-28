@@ -818,6 +818,120 @@ def update_github_token(installation_id: str, token: Optional[str],
             )
 
 
+# ---------------------------------------------------------------------------
+# Workflow contract (per-tenant, revisioned)
+# ---------------------------------------------------------------------------
+
+def get_active_workflow(tenant_id: str) -> Optional[dict]:
+    """Return the active workflow revision for a tenant, or None if never set."""
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT revision, name, body, rationale, author, based_on_signals,
+                          created_at
+                     FROM tenant_workflows
+                    WHERE tenant_id = %s AND is_active = TRUE""",
+                (tenant_id,),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "revision": row["revision"],
+        "name": row["name"],
+        "body": row["body"],
+        "rationale": row["rationale"],
+        "author": row["author"],
+        "based_on_signals": row["based_on_signals"],
+        "created_at": _ts(row["created_at"]),
+    }
+
+
+def list_workflow_revisions(tenant_id: str, limit: int = 20) -> list[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT revision, name, rationale, author, is_active, created_at
+                     FROM tenant_workflows
+                    WHERE tenant_id = %s
+                 ORDER BY revision DESC
+                    LIMIT %s""",
+                (tenant_id, limit),
+            )
+            rows = cur.fetchall()
+    return [
+        {
+            "revision": r["revision"],
+            "name": r["name"],
+            "rationale": r["rationale"],
+            "author": r["author"],
+            "is_active": r["is_active"],
+            "created_at": _ts(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def get_workflow_revision(tenant_id: str, revision: int) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT revision, name, body, rationale, author, based_on_signals,
+                          is_active, created_at
+                     FROM tenant_workflows
+                    WHERE tenant_id = %s AND revision = %s""",
+                (tenant_id, revision),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    return {
+        "revision": row["revision"],
+        "name": row["name"],
+        "body": row["body"],
+        "rationale": row["rationale"],
+        "author": row["author"],
+        "based_on_signals": row["based_on_signals"],
+        "is_active": row["is_active"],
+        "created_at": _ts(row["created_at"]),
+    }
+
+
+def save_workflow_revision(tenant_id: str, *, name: str, body: str, author: str,
+                           rationale: Optional[str] = None,
+                           based_on_signals: Optional[list] = None) -> int:
+    """Atomically save a new revision and mark it active.
+
+    Returns the new revision number. Caller is responsible for parsing/validating
+    the body before calling.
+    """
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            # next revision number
+            cur.execute(
+                "SELECT COALESCE(MAX(revision), 0) AS r FROM tenant_workflows WHERE tenant_id = %s",
+                (tenant_id,),
+            )
+            next_rev = (cur.fetchone()["r"] or 0) + 1
+
+            # deactivate current active (if any)
+            cur.execute(
+                "UPDATE tenant_workflows SET is_active = FALSE WHERE tenant_id = %s AND is_active = TRUE",
+                (tenant_id,),
+            )
+
+            # insert new active revision
+            signals = json.dumps(based_on_signals) if based_on_signals else None
+            cur.execute(
+                """INSERT INTO tenant_workflows
+                       (tenant_id, revision, name, body, rationale, author,
+                        is_active, based_on_signals)
+                   VALUES (%s, %s, %s, %s, %s, %s, TRUE, %s)""",
+                (tenant_id, next_rev, name, body, rationale, author, signals),
+            )
+    return next_rev
+
+
 def store_oauth_state(state: str, *, tenant_id: Optional[str], purpose: str) -> None:
     with get_pool().connection() as conn:
         with conn.cursor() as cur:

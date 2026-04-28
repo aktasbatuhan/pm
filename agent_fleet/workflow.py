@@ -107,6 +107,39 @@ class HooksConfig:
 
 
 @dataclass
+class EvolutionAutonomyConfig:
+    """What workflow changes Dash can make unilaterally vs. propose to a human.
+
+    Handler names are curated in the evolver; unknown names are ignored.
+    Built-in handlers (phase 3):
+      tighten_retries          — adjust review.max_retries within ±50%
+      rotate_fallback_chain    — reorder escalation.fallback_chain
+      adjust_stall_timeout     — bump escalation.stall_timeout_hours
+      add_remove_agents        — change routing.default or rules' agent
+      change_routing_rules     — add/remove routing.rules entries
+      change_triggers          — change which labels Dash adopts
+    """
+    autonomous: List[str] = field(default_factory=lambda: [
+        "tighten_retries",
+        "rotate_fallback_chain",
+        "adjust_stall_timeout",
+    ])
+    propose_only: List[str] = field(default_factory=lambda: [
+        "add_remove_agents",
+        "change_routing_rules",
+        "change_triggers",
+    ])
+
+
+@dataclass
+class EvolutionConfig:
+    """How Dash's observer/evolver can reshape this workflow over time."""
+    autonomy: EvolutionAutonomyConfig = field(default_factory=EvolutionAutonomyConfig)
+    min_evidence: int = 5                   # don't act on fewer than N data points
+    review_frequency: str = "weekly"        # how often the evolver reviews signals
+
+
+@dataclass
 class Workflow:
     """The full per-tenant (or per-repo) workflow contract."""
     name: str
@@ -118,6 +151,7 @@ class Workflow:
     review: ReviewConfig = field(default_factory=ReviewConfig)
     escalation: EscalationConfig = field(default_factory=EscalationConfig)
     hooks: HooksConfig = field(default_factory=HooksConfig)
+    evolution: EvolutionConfig = field(default_factory=EvolutionConfig)
     prompt_template: str = ""               # Markdown body, populated with delegation context
 
     def to_dict(self) -> Dict[str, Any]:
@@ -190,6 +224,17 @@ def _from_dict(data: Dict[str, Any], prompt_template: str) -> Workflow:
     )
     hooks = HooksConfig(**(data.get("hooks") or {}))
 
+    evo_data = data.get("evolution") or {}
+    autonomy_data = evo_data.get("autonomy") or {}
+    evolution = EvolutionConfig(
+        autonomy=EvolutionAutonomyConfig(
+            autonomous=list(autonomy_data.get("autonomous") or EvolutionAutonomyConfig().autonomous),
+            propose_only=list(autonomy_data.get("propose_only") or EvolutionAutonomyConfig().propose_only),
+        ) if autonomy_data else EvolutionAutonomyConfig(),
+        min_evidence=int(evo_data.get("min_evidence") or 5),
+        review_frequency=evo_data.get("review_frequency", "weekly"),
+    )
+
     return Workflow(
         name=data.get("name", "default"),
         description=data.get("description", ""),
@@ -200,6 +245,7 @@ def _from_dict(data: Dict[str, Any], prompt_template: str) -> Workflow:
         review=review,
         escalation=escalation,
         hooks=hooks,
+        evolution=evolution,
         prompt_template=prompt_template,
     )
 
@@ -261,6 +307,19 @@ hooks:
     - close_dash_issue
     - resolve_brief_action
   on_failed: []
+
+evolution:
+  autonomy:
+    autonomous:
+      - tighten_retries
+      - rotate_fallback_chain
+      - adjust_stall_timeout
+    propose_only:
+      - add_remove_agents
+      - change_routing_rules
+      - change_triggers
+  min_evidence: 5
+  review_frequency: weekly
 ---
 ## Problem
 

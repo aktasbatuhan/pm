@@ -881,6 +881,52 @@ export async function fetchGithubAppStatus(): Promise<GithubAppStatus> {
   return res.json();
 }
 
+// ── Workflow contract ──────────────────────────────────────────────────
+
+export interface WorkflowResponse {
+  revision: number;
+  name: string;
+  body: string;
+  rationale: string | null;
+  author: string;
+  is_default: boolean;
+  created_at: number | null;
+  parsed?: Record<string, unknown>;
+}
+
+export interface WorkflowRevision {
+  revision: number;
+  name: string;
+  rationale: string | null;
+  author: string;
+  is_active: boolean;
+  created_at: number;
+}
+
+export async function fetchActiveWorkflow(): Promise<WorkflowResponse | null> {
+  const res = await apiFetch(`/api/workflow`);
+  if (!res.ok) return null;
+  return res.json();
+}
+
+export async function saveWorkflow(body: string, rationale?: string): Promise<{ ok: boolean; revision?: number; error?: string }> {
+  const res = await apiFetch(`/api/workflow`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body, rationale }),
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  return { ok: true, revision: data.revision };
+}
+
+export async function fetchWorkflowRevisions(): Promise<WorkflowRevision[]> {
+  const res = await apiFetch(`/api/workflow/revisions`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.revisions ?? [];
+}
+
 /**
  * Fetch the GitHub App install URL.
  *
