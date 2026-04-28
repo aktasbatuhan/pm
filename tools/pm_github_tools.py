@@ -729,6 +729,101 @@ registry.register(
 
 
 # =============================================================================
+# Tool: fleet_refile_delegation
+# =============================================================================
+
+def fleet_refile_delegation(repo: str, issue_number: int, agent_id: str = "", **kwargs) -> str:
+    """Move a stalled Dash delegation to the next agent in the fallback chain.
+
+    Closes the original issue, creates a new one with the same task content
+    routed to the fallback agent (or `agent_id` if explicitly supplied).
+    """
+    import os
+    from agent_fleet.supervisor import refile_delegation
+    from agent_fleet.workflow import default_workflow, parse_workflow
+
+    if "/" not in (repo or ""):
+        return json.dumps({"error": "repo must be 'owner/name'"})
+    try:
+        issue_number_int = int(issue_number)
+    except (TypeError, ValueError):
+        return json.dumps({"error": "issue_number must be an integer"})
+
+    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GITHUB_PERSONAL_ACCESS_TOKEN")
+    if not token:
+        return json.dumps({"error": "No GitHub token. The supervisor's token refresh should have set one."})
+
+    # Resolve active workflow for this tenant if Postgres is on; else default.
+    workflow = default_workflow()
+    try:
+        from backend.db.postgres_client import is_postgres_enabled
+        from backend import repos as pg_repos
+        from backend.tenant_context import get_current_tenant as _ctx
+        if is_postgres_enabled():
+            ctx = _ctx()
+            tenant_id = ctx.tenant_id if ctx and ctx.tenant_id and ctx.tenant_id != "default" else None
+            if tenant_id:
+                active = pg_repos.get_active_workflow(tenant_id)
+                if active:
+                    try:
+                        workflow = parse_workflow(active["body"])
+                    except Exception:
+                        pass
+    except Exception:
+        pass
+
+    rf = refile_delegation(
+        repo=repo, issue_number=issue_number_int, token=token,
+        workflow=workflow, target_agent_id=(agent_id.strip() or None),
+    )
+    if not rf.ok:
+        return json.dumps({"ok": False, "error": rf.error})
+    return json.dumps({
+        "ok": True,
+        "new_issue_number": rf.new_issue_number,
+        "new_issue_url": rf.new_issue_url,
+        "new_agent_id": rf.new_agent_id,
+        "closed_issue_number": issue_number_int,
+    })
+
+
+FLEET_REFILE_SCHEMA = {
+    "name": "fleet_refile_delegation",
+    "description": (
+        "Refile a stalled Dash delegation issue to the next agent in the "
+        "workflow's fallback chain. Closes the original issue and creates a "
+        "new one with the same problem statement and acceptance criteria, "
+        "routed to the next agent. Use this when a delegation has been "
+        "flagged stalled and the user wants to escalate. Requires the user's "
+        "approval — this creates a visible GitHub issue and closes another."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "repo": {"type": "string", "description": "'owner/name' of the repo."},
+            "issue_number": {"type": "integer", "description": "Number of the stalled Dash issue to refile."},
+            "agent_id": {
+                "type": "string",
+                "description": "Optional: target agent id to override the fallback chain (e.g. 'codex').",
+            },
+        },
+        "required": ["repo", "issue_number"],
+    },
+}
+
+registry.register(
+    name="fleet_refile_delegation",
+    toolset="pm-github",
+    schema=FLEET_REFILE_SCHEMA,
+    handler=lambda args, **kw: fleet_refile_delegation(
+        repo=args.get("repo", ""),
+        issue_number=args.get("issue_number", 0),
+        agent_id=args.get("agent_id", ""),
+    ),
+)
+
+
+# =============================================================================
 # Tool: github_find_dash_issues
 # =============================================================================
 

@@ -2679,6 +2679,59 @@ def delete_session(session_id: str, tenant=Depends(get_current_tenant)):
 
 # ── Fleet supervisor (issue lifecycle orchestration) ───────────────────
 
+@app.post("/api/fleet/refile")
+async def fleet_refile(request: Request, tenant=Depends(get_current_tenant)):
+    """Refile a stalled Dash delegation to the next agent in the fallback chain.
+    Body: { repo: 'owner/name', issue_number: <n>, agent_id?: '...' }
+    The optional agent_id forces a specific target instead of the chain."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Refile requires Postgres"}, status_code=503)
+
+    body = await request.json()
+    repo = (body.get("repo") or "").strip()
+    issue_number = body.get("issue_number")
+    target_agent_id = (body.get("agent_id") or "").strip() or None
+
+    if "/" not in repo:
+        return JSONResponse({"error": "repo must be 'owner/name'"}, status_code=400)
+    if not isinstance(issue_number, int) or issue_number < 1:
+        return JSONResponse({"error": "issue_number is required"}, status_code=400)
+
+    if not _refresh_github_token_env(tenant_id=tenant.tenant_id):
+        return JSONResponse(
+            {"error": "No GitHub installation for this tenant. Connect GitHub first."},
+            status_code=400,
+        )
+    token = os.environ.get("GITHUB_TOKEN", "")
+
+    # Resolve active workflow (for fallback chain)
+    from agent_fleet import workflow as wf_module
+    from backend import repos as pg_repos
+    active = pg_repos.get_active_workflow(tenant.tenant_id)
+    if active:
+        try:
+            workflow_obj = wf_module.parse_workflow(active["body"])
+        except Exception as e:
+            return JSONResponse({"error": f"Active workflow won't parse: {e}"}, status_code=500)
+    else:
+        workflow_obj = wf_module.default_workflow()
+
+    from agent_fleet.supervisor import refile_delegation
+    rf = refile_delegation(
+        repo=repo, issue_number=issue_number, token=token,
+        workflow=workflow_obj, target_agent_id=target_agent_id,
+    )
+    if not rf.ok:
+        return JSONResponse({"ok": False, "error": rf.error}, status_code=400)
+    return {
+        "ok": True,
+        "new_issue_number": rf.new_issue_number,
+        "new_issue_url": rf.new_issue_url,
+        "new_agent_id": rf.new_agent_id,
+        "closed_issue_number": issue_number,
+    }
+
+
 @app.post("/api/fleet/supervise")
 async def fleet_supervise(request: Request, tenant=Depends(get_current_tenant)):
     """Run the fleet supervisor for this tenant against all repos accessible

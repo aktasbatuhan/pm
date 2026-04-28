@@ -426,6 +426,197 @@ class TestHandleApproved:
         assert any("already merged" in a.detail for a in report.actions)
 
 
+class TestRefileDelegation:
+    def _issue_body(self):
+        return (
+            "<!-- dash-delegation: v1 -->\n"
+            "<!-- dash-task-id: t-123 -->\n"
+            "<!-- dash-agent: claude-code -->\n"
+            "<!-- dash-created-at: 2026-01-01T00:00:00Z -->\n"
+            "\n## Problem\n\nLogin is broken.\n"
+            "\n## Acceptance Criteria\n- [ ] Add tests\n- [ ] Fix bug\n"
+            "\n## Context\nAffects auth module.\n"
+        )
+
+    def test_refile_succeeds(self):
+        from agent_fleet.supervisor import refile_delegation
+        from agent_fleet.workflow import default_workflow
+
+        wf = default_workflow()
+        wf.escalation.fallback_chain = ["claude-code", "codex"]
+
+        recorded = {"posts": [], "patches": [], "comments": []}
+
+        def gh(method, path, token, body=None, timeout=30):
+            if method == "GET" and path.endswith("/issues/5"):
+                return (200, {
+                    "title": "[Dash] Login broken",
+                    "body": self._issue_body(),
+                    "state": "open",
+                    "html_url": "https://github.com/acme/api/issues/5",
+                })
+            if method == "POST" and "/issues" in path and "/comments" not in path:
+                recorded["posts"].append(body)
+                return (201, {
+                    "number": 99,
+                    "html_url": "https://github.com/acme/api/issues/99",
+                })
+            if method == "POST" and "/comments" in path:
+                recorded["comments"].append((path, body))
+                return (201, {})
+            if method == "PATCH" and path.endswith("/issues/5"):
+                recorded["patches"].append(body)
+                return (200, {})
+            return (200, [])
+
+        with patch("agent_fleet.supervisor._gh", gh):
+            rf = refile_delegation(
+                repo="acme/api", issue_number=5, token="tok", workflow=wf,
+            )
+
+        assert rf.ok is True
+        assert rf.new_issue_number == 99
+        assert rf.new_agent_id == "codex"  # next after claude-code in chain
+        assert recorded["posts"], "should have created a new issue"
+        new_body = recorded["posts"][0]["body"]
+        assert "Login is broken" in new_body
+        assert "Add tests" in new_body
+        assert "Refiled from #5" in new_body
+        # old issue gets refile comment + close
+        assert any("Dash Refiled" in c[1]["body"] for c in recorded["comments"])
+        assert any(p.get("state") == "closed" and p.get("state_reason") == "not_planned"
+                   for p in recorded["patches"])
+
+    def test_refile_with_explicit_target(self):
+        from agent_fleet.supervisor import refile_delegation
+        from agent_fleet.workflow import default_workflow
+
+        wf = default_workflow()
+        wf.escalation.fallback_chain = []  # no chain — must use override
+
+        def gh(method, path, token, body=None, timeout=30):
+            if method == "GET" and path.endswith("/issues/5"):
+                return (200, {
+                    "title": "[Dash] T",
+                    "body": self._issue_body(),
+                    "state": "open",
+                    "html_url": "x",
+                })
+            if method == "POST" and "/issues" in path and "/comments" not in path:
+                return (201, {"number": 100, "html_url": "x"})
+            return (200, {})
+
+        with patch("agent_fleet.supervisor._gh", gh):
+            rf = refile_delegation(
+                repo="acme/api", issue_number=5, token="tok",
+                workflow=wf, target_agent_id="devin",
+            )
+        assert rf.ok is True
+        assert rf.new_agent_id == "devin"
+
+    def test_refile_rejects_closed_issue(self):
+        from agent_fleet.supervisor import refile_delegation
+        from agent_fleet.workflow import default_workflow
+
+        with patch("agent_fleet.supervisor._gh", _gh_mock({
+            "/issues/5": (200, {"state": "closed", "body": self._issue_body()}),
+        })):
+            rf = refile_delegation(
+                repo="acme/api", issue_number=5, token="tok",
+                workflow=default_workflow(),
+            )
+        assert rf.ok is False
+        assert "already closed" in (rf.error or "")
+
+    def test_refile_rejects_unknown_agent(self):
+        from agent_fleet.supervisor import refile_delegation
+        from agent_fleet.workflow import default_workflow
+
+        wf = default_workflow()
+
+        with patch("agent_fleet.supervisor._gh", _gh_mock({
+            "/issues/5": (200, {"state": "open", "body": self._issue_body()}),
+        })):
+            rf = refile_delegation(
+                repo="acme/api", issue_number=5, token="tok",
+                workflow=wf, target_agent_id="some-fake-agent",
+            )
+        assert rf.ok is False
+        assert "unknown agent" in (rf.error or "")
+
+    def test_refile_exhausted_chain(self):
+        from agent_fleet.supervisor import refile_delegation
+        from agent_fleet.workflow import default_workflow
+
+        wf = default_workflow()
+        # Current agent is last in the chain → no next
+        wf.escalation.fallback_chain = ["claude-code"]
+
+        with patch("agent_fleet.supervisor._gh", _gh_mock({
+            "/issues/5": (200, {"state": "open", "body": self._issue_body()}),
+        })):
+            rf = refile_delegation(
+                repo="acme/api", issue_number=5, token="tok", workflow=wf,
+            )
+        assert rf.ok is False
+        assert "exhausted" in (rf.error or "")
+
+
+class TestAutoEscalate:
+    """Wire auto_escalate=True in the workflow → handle_delegated triggers refile."""
+
+    def test_auto_escalate_calls_refile(self):
+        from datetime import datetime, timedelta, timezone
+        from agent_fleet.workflow import default_workflow
+
+        wf = default_workflow()
+        wf.escalation.auto_escalate = True
+        wf.escalation.fallback_chain = ["claude-code", "codex"]
+
+        very_old = (datetime.now(timezone.utc) - timedelta(hours=25)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        result = WatchResult(
+            issue_number=5, task_id="t-123", agent_id="claude-code",
+            status=TaskStatus.DELEGATED,
+        )
+
+        issue_body = (
+            "<!-- dash-delegation: v1 -->\n"
+            "<!-- dash-task-id: t-123 -->\n"
+            "<!-- dash-agent: claude-code -->\n"
+            "<!-- dash-created-at: 2026-01-01T00:00:00Z -->\n"
+            "## Problem\nA bug.\n## Acceptance Criteria\n- [ ] Fix it\n"
+        )
+
+        def gh(method, path, token, body=None, timeout=30):
+            if method == "GET" and path.endswith("/issues/5/comments"):
+                return (200, [])
+            if method == "GET" and path.endswith("/issues/5"):
+                return (200, {
+                    "title": "[Dash] T",
+                    "body": issue_body,
+                    "state": "open",
+                    "created_at": very_old,
+                    "html_url": "x",
+                })
+            if method == "POST" and "/issues" in path and "/comments" not in path:
+                return (201, {"number": 88, "html_url": "x"})
+            if method == "PATCH" and path.endswith("/issues/5"):
+                return (200, {})
+            if method == "POST" and "/comments" in path:
+                return (201, {})
+            return (200, [])
+
+        with patch("agent_fleet.supervisor.watch_repo_delegations", return_value=[result]), \
+             patch("agent_fleet.supervisor._gh", gh):
+            report = run_supervisor(
+                tenant_id="t", repos_list=["acme/api"], token="tok", workflow=wf,
+            )
+        assert "auto_refile" in report.by_kind()
+        action = next(a for a in report.actions if a.kind == "auto_refile")
+        assert "#88" in action.detail
+        assert "codex" in action.detail
+
+
 class TestSupervisorReport:
     def test_by_kind_aggregates(self):
         r = SupervisorReport(tenant_id="t", workflow_revision=0)

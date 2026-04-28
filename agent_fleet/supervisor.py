@@ -131,6 +131,148 @@ def _merge_pr(repo: str, pr_number: int, token: str) -> Tuple[bool, str]:
     return False, f"merge failed: HTTP {status}"
 
 
+# ---------------------------------------------------------------------------
+# Refile: move a stalled delegation to the next agent in the fallback chain
+# ---------------------------------------------------------------------------
+
+_DASH_REFILED_MARKER = "## Dash Refiled"
+
+
+def _next_fallback_agent(current_agent: str, fallback_chain: List[str]) -> Optional[str]:
+    """Return the agent immediately after `current_agent` in the chain, or
+    the first agent if `current_agent` isn't in the chain at all."""
+    if not fallback_chain:
+        return None
+    if current_agent in fallback_chain:
+        idx = fallback_chain.index(current_agent)
+        if idx + 1 < len(fallback_chain):
+            return fallback_chain[idx + 1]
+        return None
+    return fallback_chain[0]
+
+
+def _extract_acceptance_criteria(body: str) -> List[str]:
+    """Pull the unchecked acceptance criteria from a Dash issue body."""
+    return re.findall(r"- \[[ xX]?\]\s*(.+?)\s*$", body or "", re.MULTILINE)
+
+
+def _extract_section(body: str, heading: str) -> str:
+    """Return the text under a `## <heading>` section (until the next ## or end)."""
+    pattern = rf"##\s+{re.escape(heading)}\s*\n(.*?)(?=\n##\s|\Z)"
+    m = re.search(pattern, body or "", re.DOTALL | re.IGNORECASE)
+    return m.group(1).strip() if m else ""
+
+
+@dataclass
+class RefileResult:
+    ok: bool
+    new_issue_number: Optional[int] = None
+    new_issue_url: Optional[str] = None
+    new_agent_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+def refile_delegation(
+    *,
+    repo: str,
+    issue_number: int,
+    token: str,
+    workflow: Workflow,
+    target_agent_id: Optional[str] = None,
+) -> RefileResult:
+    """Move a stalled delegation to the next agent in the fallback chain.
+
+    Steps:
+      1. Fetch and parse the existing Dash issue
+      2. Resolve the next fallback agent (or use `target_agent_id` override)
+      3. Build a fresh delegation issue with the same task content
+      4. POST the new issue + dispatch its post-create actions (labels, assignment)
+      5. Comment on the old issue linking the new one
+      6. Close the old issue with state_reason='not_planned'
+    """
+    from agent_fleet.delegation import (
+        DelegationTask, build_delegation_issue, dispatch_post_create_actions,
+    )
+    from agent_fleet.profile import AgentProfile
+    from agent_fleet.registry import lookup as registry_lookup
+
+    status, issue = _gh("GET", f"/repos/{repo}/issues/{issue_number}", token)
+    if status != 200 or not isinstance(issue, dict):
+        return RefileResult(ok=False, error=f"couldn't fetch issue #{issue_number}: HTTP {status}")
+    if issue.get("state") == "closed":
+        return RefileResult(ok=False, error=f"issue #{issue_number} is already closed")
+
+    body = issue.get("body") or ""
+    title = issue.get("title") or ""
+    metadata = parse_dash_metadata(body) or {}
+    if not metadata:
+        return RefileResult(ok=False, error="not a Dash delegation issue (no metadata block)")
+
+    current_agent = metadata.get("agent_id") or "unknown"
+    next_agent = target_agent_id or _next_fallback_agent(
+        current_agent, workflow.escalation.fallback_chain,
+    )
+    if not next_agent:
+        return RefileResult(ok=False, error="fallback chain exhausted; no further agent to try")
+    if next_agent == current_agent:
+        return RefileResult(ok=False, error=f"next agent same as current ({current_agent})")
+    if registry_lookup(next_agent) is None:
+        return RefileResult(ok=False, error=f"unknown agent '{next_agent}' (not in registry)")
+
+    profile = AgentProfile(id=next_agent, enabled=True)
+    clean_title = re.sub(r"^\[Dash\]\s*", "", title).strip()
+    task = DelegationTask(
+        title=clean_title,
+        problem=_extract_section(body, "Problem") or clean_title,
+        acceptance_criteria=_extract_acceptance_criteria(body) or ["Address the original delegation criteria"],
+        context=_extract_section(body, "Context"),
+        constraints=_extract_section(body, "Constraints"),
+        repo=repo,
+        brief_action_id=metadata.get("brief_action_id"),
+    )
+
+    new_title, new_body, post_create_actions = build_delegation_issue(task, profile)
+    # Annotate the new issue body with a refile breadcrumb so a human (or a
+    # future supervisor run) can trace lineage.
+    new_body = f"{new_body}\n\n---\n_Refiled from #{issue_number} (was assigned to `{current_agent}`)_"
+
+    create_status, created = _gh("POST", f"/repos/{repo}/issues", token, body={
+        "title": new_title,
+        "body": new_body,
+    })
+    if create_status not in (200, 201) or not isinstance(created, dict):
+        return RefileResult(ok=False, error=f"create failed: HTTP {create_status}")
+    new_issue_number = created.get("number")
+    new_issue_url = created.get("html_url")
+
+    # Apply labels / assignments learned for the new agent
+    if post_create_actions:
+        try:
+            dispatch_post_create_actions(repo, new_issue_number, post_create_actions, token)
+        except Exception as e:
+            logger.warning("dispatch_post_create_actions failed for %s#%s: %s", repo, new_issue_number, e)
+
+    # Link the old issue to the new one + close
+    _post_comment(
+        repo, issue_number,
+        f"{_DASH_REFILED_MARKER}\n\n"
+        f"Refiled to #{new_issue_number} (assigned to **{next_agent}**). "
+        f"This issue is being closed; the new one carries forward the same criteria.",
+        token,
+    )
+    _gh(
+        "PATCH", f"/repos/{repo}/issues/{issue_number}", token,
+        body={"state": "closed", "state_reason": "not_planned"},
+    )
+
+    return RefileResult(
+        ok=True,
+        new_issue_number=new_issue_number,
+        new_issue_url=new_issue_url,
+        new_agent_id=next_agent,
+    )
+
+
 def _close_issue(repo: str, issue_number: int, token: str) -> Tuple[bool, str]:
     """Close a GitHub issue. Idempotent: closing a closed issue is a no-op for us."""
     status, body = _gh(
@@ -373,9 +515,51 @@ def _handle_delegated(result: WatchResult, repo: str, token: str,
         ))
         return
 
-    # STALLED: don't auto-refile; just record it once, surface to the user.
+    # STALLED: when the workflow opts in (escalation.auto_escalate=true) and
+    # we have a fallback agent, refile autonomously. Otherwise just flag
+    # once so the user can decide.
     if verdict.status == HealthStatus.STALLED:
-        already_marked = _count_marker_comments(repo, result.issue_number, _DASH_STALLED_MARKER, token) > 0
+        if workflow.escalation.auto_escalate and verdict.fallback_agent_id:
+            already_refiled = _count_marker_comments(
+                repo, result.issue_number, _DASH_REFILED_MARKER, token,
+            ) > 0
+            if already_refiled:
+                report.actions.append(SupervisorAction(
+                    repo=repo, issue_number=result.issue_number,
+                    kind="skip", detail="stalled; already auto-refiled on a previous run",
+                ))
+                return
+            try:
+                rf = refile_delegation(
+                    repo=repo, issue_number=result.issue_number,
+                    token=token, workflow=workflow,
+                )
+                if rf.ok:
+                    report.actions.append(SupervisorAction(
+                        repo=repo, issue_number=result.issue_number,
+                        kind="auto_refile",
+                        detail=(
+                            f"refiled to #{rf.new_issue_number} "
+                            f"(agent: {rf.new_agent_id}); old issue closed"
+                        ),
+                    ))
+                else:
+                    report.actions.append(SupervisorAction(
+                        repo=repo, issue_number=result.issue_number,
+                        kind="error", detail=f"auto-refile failed: {rf.error}",
+                        error=rf.error,
+                    ))
+            except Exception as e:
+                logger.exception("auto-refile crashed for %s#%s", repo, result.issue_number)
+                report.actions.append(SupervisorAction(
+                    repo=repo, issue_number=result.issue_number,
+                    kind="error", detail="auto-refile crashed", error=str(e),
+                ))
+            return
+
+        already_marked = _count_marker_comments(
+            repo, result.issue_number, _DASH_STALLED_MARKER, token,
+        ) > 0
         if already_marked:
             report.actions.append(SupervisorAction(
                 repo=repo, issue_number=result.issue_number,
@@ -386,8 +570,9 @@ def _handle_delegated(result: WatchResult, repo: str, token: str,
         comment = (
             f"{_DASH_STALLED_MARKER}\n\n"
             f"This delegation is stalled. {verdict.reason}\n\n"
-            f"Suggested next step: re-file to **{next_agent}** "
-            f"(via `github_delegate_task`) or close manually."
+            f"Suggested next step: re-file to **{next_agent}** via the "
+            f"`fleet_refile_delegation` tool or `POST /api/fleet/refile` "
+            f"(or close manually)."
         )
         _post_comment(repo, result.issue_number, comment, token)
         report.actions.append(SupervisorAction(
