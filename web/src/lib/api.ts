@@ -2,7 +2,7 @@ import type { Brief, WorkspaceStatus, ChatEvent, Session, ChatMessage } from "./
 
 const API = process.env.NEXT_PUBLIC_API_URL || "";
 
-// ── Auth ──────────────────────────────────────────────────────────────
+// ── Auth ──────────────────────────────────────────────────────────────────────
 
 function getToken(): string {
   if (typeof window === "undefined") return "";
@@ -205,7 +205,7 @@ export async function fetchSessionMessages(sessionId: string): Promise<ChatMessa
   }));
 }
 
-// ── Onboarding & Integrations ─────────────────────────────────────────
+// ── Onboarding & Integrations ─────────────────────────────────────────────
 
 export async function getOnboardingProfile(): Promise<Record<string, string>> {
   const res = await apiFetch(`/api/onboarding/profile`);
@@ -261,7 +261,7 @@ export async function completeOnboarding(organization: string): Promise<void> {
   });
 }
 
-// ── Waitlist ──────────────────────────────────────────────────────────
+// ── Waitlist ──────────────────────────────────────────────────────────────────
 
 export async function submitWaitlist(data: {
   name: string;
@@ -304,7 +304,7 @@ export function triggerBackgroundTask(message: string, threadId?: string): void 
   }).catch(() => {});
 }
 
-// ── Changelog ─────────────────────────────────────────────────────────
+// ── Changelog ─────────────────────────────────────────────────────────────────
 
 export interface Changelog {
   id: string;
@@ -331,7 +331,7 @@ export function generateChangelog(): void {
   apiFetch(`/api/changelogs/generate`, { method: "POST" }).catch(() => {});
 }
 
-// ── Goals ─────────────────────────────────────────────────────────────
+// ── Goals ─────────────────────────────────────────────────────────────────────
 
 export interface GoalActionItem {
   title: string;
@@ -408,7 +408,7 @@ export async function deleteGoal(goalId: string): Promise<void> {
   await apiFetch(`/api/goals/${goalId}`, { method: "DELETE" });
 }
 
-// ── Team Pulse ────────────────────────────────────────────────────────
+// ── Team Pulse ──────────────────────────────────────────────────────────────
 
 export interface TeamMember {
   id: string;
@@ -432,7 +432,7 @@ export function generateTeamPulse(): void {
   apiFetch(`/api/team/pulse/generate`, { method: "POST" }).catch(() => {});
 }
 
-// ── Reports ───────────────────────────────────────────────────────────
+// ── Reports ───────────────────────────────────────────────────────────────────
 
 export interface ReportTemplate {
   id: string;
@@ -510,7 +510,7 @@ export async function fetchReports(templateId?: string, limit: number = 20): Pro
   const url = templateId
     ? `/api/reports?template_id=${templateId}&limit=${limit}`
     : `/api/reports?limit=${limit}`;
-  const res = await fetch(url);
+  const res = await apiFetch(url);
   const data = await res.json();
   return data.reports ?? [];
 }
@@ -519,7 +519,7 @@ export async function deleteReport(id: string): Promise<void> {
   await apiFetch(`/api/reports/${id}`, { method: "DELETE" });
 }
 
-// ── Schedules ─────────────────────────────────────────────────────────
+// ── Schedules ───────────────────────────────────────────────────────────────
 
 export interface Schedule {
   id: string;
@@ -612,7 +612,7 @@ export async function fetchCronStatus(): Promise<CronStatus | null> {
   }
 }
 
-// ── Signal Collector ──────────────────────────────────────────────────
+// ── Signal Collector ────────────────────────────────────────────────────────
 
 export interface SignalSource {
   id: string;
@@ -694,7 +694,7 @@ export function triggerSignalFetch(sourceId: string = "all"): void {
   apiFetch(`/api/signals/sources/${sourceId}/fetch`, { method: "POST" }).catch(() => {});
 }
 
-// ── KPIs ──────────────────────────────────────────────────────────────
+// ── KPIs ──────────────────────────────────────────────────────────────────────
 
 export interface KPIValue {
   id: string;
@@ -792,7 +792,7 @@ export async function updateKPIFlag(flagId: string, status: string): Promise<voi
   });
 }
 
-// ── Settings ──────────────────────────────────────────────────────────
+// ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface ModelOption {
   id: string;
@@ -826,7 +826,7 @@ export async function updateModelSetting(model: string): Promise<{ ok: boolean; 
   return { ok: true, current: data?.current };
 }
 
-// ── GitHub App ────────────────────────────────────────────────────────
+// ── GitHub App ──────────────────────────────────────────────────────────────
 
 export interface GithubAppInstallation {
   installation_id: string;
@@ -881,7 +881,7 @@ export async function fetchGithubAppStatus(): Promise<GithubAppStatus> {
   return res.json();
 }
 
-// ── Workflow contract ──────────────────────────────────────────────────
+// ── Workflow contract ────────────────────────────────────────────────────────
 
 export interface WorkflowResponse {
   revision: number;
@@ -948,7 +948,7 @@ export async function disconnectGithubApp(): Promise<{ ok: boolean; uninstall_hi
   return { ok: res.ok, uninstall_hint: data?.uninstall_hint };
 }
 
-// ── MCP Servers ───────────────────────────────────────────────────────
+// ── MCP Servers ─────────────────────────────────────────────────────────────
 
 export interface MCPServer {
   name: string;
@@ -997,7 +997,7 @@ export async function deleteMCPServer(name: string): Promise<{ ok: boolean; erro
   return { ok: true };
 }
 
-// ── Sessions ──────────────────────────────────────────────────────────
+// ── Sessions ──────────────────────────────────────────────────────────────────
 
 export async function deleteSession(sessionId: string): Promise<void> {
   await apiFetch(`/api/sessions/${sessionId}`, { method: "DELETE" });

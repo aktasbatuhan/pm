@@ -42,7 +42,7 @@ export function AuthGate({ children }: Props) {
         else if (result.needs_setup) setState("setup");
         else setState("login-legacy");
       } catch {
-        setState("authenticated"); // API unreachable — let through
+        setState("login-legacy"); // API unreachable — require login, don't bypass
       }
     })();
   }, []);
