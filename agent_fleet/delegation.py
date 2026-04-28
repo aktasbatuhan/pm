@@ -32,11 +32,14 @@ logger = logging.getLogger(__name__)
 DELEGATION_FORMAT_VERSION = "v1"
 
 # Regex to extract the metadata comment block from an issue body.
+# The dash-brief-action line is optional — older issues filed before phase 2
+# don't have it, and not every delegation comes from a brief.
 _META_PATTERN = re.compile(
     r"<!--\s*dash-delegation:\s*(?P<version>\S+)\s*-->\s*"
     r"<!--\s*dash-task-id:\s*(?P<task_id>[^\s>]+)\s*-->\s*"
     r"<!--\s*dash-agent:\s*(?P<agent_id>[^\s>]+)\s*-->\s*"
-    r"<!--\s*dash-created-at:\s*(?P<created_at>[^\s>]+)\s*-->",
+    r"<!--\s*dash-created-at:\s*(?P<created_at>[^\s>]+)\s*-->"
+    r"(?:\s*<!--\s*dash-brief-action:\s*(?P<brief_action_id>[^\s>]+)\s*-->)?",
     re.DOTALL,
 )
 
@@ -56,6 +59,7 @@ class DelegationTask:
     context: str = ""                 # Free text: relevant files, links, related issues
     constraints: str = ""             # Style, perf, API-compat constraints
     repo: str = ""                    # "owner/name" — where to file the issue
+    brief_action_id: Optional[str] = None   # source brief_action (so the supervisor can resolve it on close)
     task_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     created_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
 
@@ -68,6 +72,7 @@ class DelegationTask:
             "context": self.context,
             "constraints": self.constraints,
             "repo": self.repo,
+            "brief_action_id": self.brief_action_id,
             "created_at": self.created_at,
         }
 
@@ -115,12 +120,15 @@ def build_delegation_issue(
     criteria_md = "\n".join(f"- [ ] {c.strip()}" for c in task.acceptance_criteria)
 
     # Metadata comment block
-    meta_block = (
-        f"<!-- dash-delegation: {DELEGATION_FORMAT_VERSION} -->\n"
-        f"<!-- dash-task-id: {task.task_id} -->\n"
-        f"<!-- dash-agent: {profile.id} -->\n"
-        f"<!-- dash-created-at: {task.created_at} -->"
-    )
+    meta_lines = [
+        f"<!-- dash-delegation: {DELEGATION_FORMAT_VERSION} -->",
+        f"<!-- dash-task-id: {task.task_id} -->",
+        f"<!-- dash-agent: {profile.id} -->",
+        f"<!-- dash-created-at: {task.created_at} -->",
+    ]
+    if task.brief_action_id:
+        meta_lines.append(f"<!-- dash-brief-action: {task.brief_action_id} -->")
+    meta_block = "\n".join(meta_lines)
 
     body_parts = [meta_block, ""]
 
@@ -208,20 +216,25 @@ def _build_invocation_line(
 def parse_dash_metadata(body: str) -> Optional[Dict[str, str]]:
     """Extract the machine-readable metadata from a Dash-authored issue body.
 
-    Returns a dict with keys: version, task_id, agent_id, created_at
-    or None if the body doesn't contain Dash metadata.
+    Returns a dict with keys: version, task_id, agent_id, created_at, and
+    optionally brief_action_id when this delegation was filed from a brief
+    action item. Returns None if the body doesn't contain Dash metadata.
     """
     if not body:
         return None
     m = _META_PATTERN.search(body)
     if not m:
         return None
-    return {
+    out = {
         "version": m.group("version"),
         "task_id": m.group("task_id"),
         "agent_id": m.group("agent_id"),
         "created_at": m.group("created_at"),
     }
+    brief_action_id = m.group("brief_action_id")
+    if brief_action_id:
+        out["brief_action_id"] = brief_action_id
+    return out
 
 
 def is_dash_issue(body: str) -> bool:

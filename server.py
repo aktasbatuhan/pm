@@ -2677,6 +2677,95 @@ def delete_session(session_id: str, tenant=Depends(get_current_tenant)):
 
 # ── Workspace endpoint ─────────────────────────────────────────────────
 
+# ── Fleet supervisor (issue lifecycle orchestration) ───────────────────
+
+@app.post("/api/fleet/supervise")
+async def fleet_supervise(request: Request, tenant=Depends(get_current_tenant)):
+    """Run the fleet supervisor for this tenant against all repos accessible
+    to the tenant's GitHub installation. Body (optional):
+        { "repos": ["owner/name", ...] }   # restrict to a subset
+    """
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Supervisor requires Postgres"}, status_code=503)
+
+    body = {}
+    try:
+        body = await request.json()
+    except Exception:
+        pass
+    repos_override = body.get("repos") if isinstance(body, dict) else None
+
+    # Refresh tenant-scoped GitHub token
+    if not _refresh_github_token_env(tenant_id=tenant.tenant_id):
+        return JSONResponse(
+            {"error": "No GitHub installation for this tenant. Connect GitHub first."},
+            status_code=400,
+        )
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        return JSONResponse(
+            {"error": "Failed to mint installation token"}, status_code=500,
+        )
+
+    # Resolve repos list
+    if repos_override and isinstance(repos_override, list):
+        repos_list = [str(r) for r in repos_override if isinstance(r, str) and "/" in r]
+    else:
+        from tools.pm_github_tools import github_list_repos
+        try:
+            data = json.loads(github_list_repos())
+            repos_list = [r["full_name"] for r in data.get("repos", []) if r.get("full_name")]
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Couldn't list repos for installation: {e}"}, status_code=502,
+            )
+
+    if not repos_list:
+        return {"ok": True, "repos_scanned": 0, "delegations_seen": 0,
+                "actions": [], "summary": "No repos accessible to this installation."}
+
+    # Resolve active workflow
+    from agent_fleet import workflow as wf_module
+    from backend import repos as pg_repos
+    active = pg_repos.get_active_workflow(tenant.tenant_id)
+    if active:
+        try:
+            workflow_obj = wf_module.parse_workflow(active["body"])
+            wf_revision = active["revision"]
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Active workflow won't parse: {e}"}, status_code=500,
+            )
+    else:
+        workflow_obj = wf_module.default_workflow()
+        wf_revision = 0
+
+    from agent_fleet.supervisor import run_supervisor
+    report = run_supervisor(
+        tenant_id=tenant.tenant_id,
+        repos_list=repos_list,
+        token=token,
+        workflow=workflow_obj,
+        workflow_revision=wf_revision,
+    )
+
+    return {
+        "ok": True,
+        "tenant_id": report.tenant_id,
+        "workflow_revision": report.workflow_revision,
+        "repos_scanned": report.repos_scanned,
+        "delegations_seen": report.delegations_seen,
+        "by_kind": report.by_kind(),
+        "actions": [
+            {
+                "repo": a.repo, "issue_number": a.issue_number,
+                "kind": a.kind, "detail": a.detail, "error": a.error,
+            }
+            for a in report.actions
+        ],
+    }
+
+
 # ── Workflow contract (issue lifecycle) ────────────────────────────────
 
 @app.get("/api/workflow")
