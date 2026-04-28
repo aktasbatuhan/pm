@@ -5,6 +5,7 @@ Next.js dev server proxies /api/* here.
 """
 
 import asyncio
+import contextvars
 import json
 import logging
 import os
@@ -1871,6 +1872,9 @@ def _resolve_model() -> str:
 def triggerBackgroundTask(message: str, thread_id: str):
     """Internal helper — fires an agent task as a system session."""
     import threading as _threading
+    # Snapshot the calling request's context so tenant_id / user_id propagate
+    # into the agent thread (ContextVars don't auto-cross thread boundaries).
+    caller_ctx = contextvars.copy_context()
     def _run():
         try:
             _refresh_github_token_env()
@@ -1893,7 +1897,7 @@ def triggerBackgroundTask(message: str, thread_id: str):
             agent.run_conversation(message, conversation_history=[])
         except Exception as e:
             logger.exception("Background task %s failed: %s", thread_id, e)
-    _threading.Thread(target=_run, daemon=True).start()
+    _threading.Thread(target=caller_ctx.run, args=(_run,), daemon=True).start()
 
 
 # ── Report Templates endpoints ─────────────────────────────────────────
@@ -3121,6 +3125,11 @@ async def chat(request: Request):
     if not message:
         return JSONResponse({"error": "message required"}, status_code=400)
 
+    # ContextVars don't propagate to manually-spawned threads. Snapshot the
+    # current context (tenant included) so the agent thread sees the same
+    # tenant the middleware resolved for this request.
+    request_ctx = contextvars.copy_context()
+
     event_queue: queue.Queue = queue.Queue()
     _tool_starts: dict = {}  # track tool start times for duration
 
@@ -3228,7 +3237,7 @@ async def chat(request: Request):
             logger.exception("Agent error")
             event_queue.put({"type": "error", "message": str(e)})
 
-    threading.Thread(target=run_agent, daemon=True).start()
+    threading.Thread(target=request_ctx.run, args=(run_agent,), daemon=True).start()
 
     async def event_stream():
         last_data = time.time()
@@ -3365,6 +3374,8 @@ def cron_run_now(job_id: str):
     if not job:
         return JSONResponse({"error": "Job not found"}, status_code=404)
 
+    request_ctx = contextvars.copy_context()
+
     def _run():
         from cron.scheduler import run_job
         from cron.jobs import mark_job_run, save_job_output
@@ -3376,7 +3387,7 @@ def cron_run_now(job_id: str):
             logger.exception("Manual cron run failed")
             mark_job_run(job["id"], False, str(e))
 
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=request_ctx.run, args=(_run,), daemon=True).start()
     return {"ok": True, "message": f"Job '{job.get('name')}' triggered"}
 
 

@@ -110,3 +110,72 @@ def test_x_tenant_id_header_is_passed_through(monkeypatch):
         },
     )
     assert captured["requested"] == "tenant-b"
+
+
+def test_chat_thread_inherits_tenant_context(monkeypatch):
+    """Regression: /api/chat spawns a thread; the agent inside it must see
+    the same tenant the middleware resolved. ContextVars don't auto-propagate
+    to manually-spawned threads — we use contextvars.copy_context() to bridge.
+    """
+    import threading
+
+    _enable_postgres(monkeypatch)
+
+    from backend.tenant_context import TenantContext, get_current_tenant
+
+    def _membership(user_id, requested_tenant_id=None):
+        return TenantContext(user_id=user_id, tenant_id="tenant-z", role="owner")
+
+    monkeypatch.setattr("backend.tenant_auth.resolve_tenant_membership", _membership)
+
+    seen = {}
+    finished = threading.Event()
+
+    class _FakeAgent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_conversation(self, *args, **kwargs):
+            ctx = get_current_tenant()
+            seen["tenant_id"] = ctx.tenant_id if ctx else None
+            finished.set()
+            return {"final_response": "done", "messages": []}
+
+    class _FakeSdb:
+        def get_session(self, *a, **k):
+            return None
+
+        def create_session(self, *a, **k):
+            pass
+
+        def set_session_title(self, *a, **k):
+            pass
+
+        def get_messages_as_conversation(self, *a, **k):
+            return []
+
+    import run_agent as _run_agent_module
+
+    monkeypatch.setattr(_run_agent_module, "AIAgent", _FakeAgent)
+    monkeypatch.setattr(server, "_get_session_db", lambda: _FakeSdb())
+    monkeypatch.setattr(server, "_resolve_model", lambda: "test-model")
+    monkeypatch.setattr(server, "_refresh_github_token_env", lambda: False)
+    monkeypatch.setattr(
+        "workspace_context_bridge.fetch_workspace_status", lambda: None
+    )
+    monkeypatch.setattr("model_tools.ensure_mcp_discovered", lambda: None)
+
+    client = TestClient(server.app)
+    with client.stream(
+        "POST",
+        "/api/chat",
+        json={"message": "hello", "threadId": "test-thread"},
+        headers={"Authorization": f"Bearer {_token('user-a')}"},
+    ) as response:
+        assert response.status_code == 200
+        # Drain just enough events to let the thread finish.
+        for _ in response.iter_lines():
+            if finished.is_set():
+                break
+    finished.wait(timeout=2.0)
+    assert seen.get("tenant_id") == "tenant-z"
