@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-import os
+import logging
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -63,18 +65,17 @@ def resolve_tenant_context(kwargs: Optional[Mapping[str, Any]] = None) -> Option
     if from_ctx:
         return from_ctx
 
-    tenant_id = (
-        os.getenv("KAI_TENANT_ID", "").strip()
-        or os.getenv("HERMES_TENANT_ID", "").strip()
+    # Previously this fell back to os.environ, which was racy under concurrent
+    # requests (the middleware wrote per-request tenant info to process-global
+    # env vars). The ContextVar path above is the correct async-safe mechanism.
+    # If we reach here, no tenant context was propagated — return None so
+    # callers can handle the missing context explicitly.
+    logger.warning(
+        "resolve_tenant_context: no tenant found via kwargs or ContextVar. "
+        "If this is unexpected, ensure the request passes through "
+        "tenant_context_middleware or provides tenant_context in kwargs."
     )
-    if not tenant_id:
-        return None
-
-    return TenantContext(
-        user_id=(os.getenv("KAI_USER_ID", "").strip() or "gateway-user"),
-        tenant_id=tenant_id,
-        role=(os.getenv("KAI_TENANT_ROLE", "").strip() or "member"),
-    )
+    return None
 
 
 def require_tenant_context(*, kwargs: Optional[Mapping[str, Any]] = None, consumer: str) -> TenantContext:

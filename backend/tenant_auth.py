@@ -44,6 +44,10 @@ TENANT_SCOPED_PATH_PREFIXES = (
     "/api/team",
     "/api/workflow",
     "/api/fleet",
+    "/api/mcp",
+    "/api/schedules",
+    "/api/settings",
+    "/api/cron",
 )
 
 # Paths under tenant-scoped prefixes that must NOT require auth (OAuth callbacks
