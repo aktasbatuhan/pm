@@ -36,7 +36,6 @@ def _shape_brief(row: dict) -> dict:
         "action_items": json.dumps(row["action_items"]) if isinstance(row["action_items"], (list, dict)) else (row["action_items"] or "[]"),
         "suggested_prompts": json.dumps(row["suggested_prompts"]) if isinstance(row["suggested_prompts"], (list, dict)) else (row["suggested_prompts"] or "[]"),
         "data_sources": row.get("data_sources") or "",
-        "cover_url": row.get("cover_url") or "",
         "created_at": _ts(row["created_at"]),
     }
 
@@ -136,20 +135,19 @@ def list_brief_actions(tenant_id: str, brief_id: Optional[str] = None,
 
 def insert_brief(tenant_id: str, *, brief_id: str, summary: str, headline: str,
                  action_items: list, data_sources: str = "",
-                 suggested_prompts: Optional[list] = None,
-                 cover_url: str = "") -> None:
+                 suggested_prompts: Optional[list] = None) -> None:
     """Insert a brief and its action items atomically. action_items: list of
     dicts with title/description/category/priority/references."""
     with get_pool().connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 """INSERT INTO briefs (id, tenant_id, summary, headline, action_items,
-                                       suggested_prompts, data_sources, cover_url)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                                       suggested_prompts, data_sources)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                 (brief_id, tenant_id, summary, headline,
                  json.dumps(action_items or []),
                  json.dumps(suggested_prompts or []),
-                 data_sources, cover_url),
+                 data_sources),
             )
             for item in (action_items or []):
                 action_id = item.get("id") or __import__("uuid").uuid4().hex[:8]
@@ -165,16 +163,6 @@ def insert_brief(tenant_id: str, *, brief_id: str, summary: str, headline: str,
                      item.get("priority", "medium"),
                      json.dumps(item.get("references", []))),
                 )
-
-
-def update_brief_cover(tenant_id: str, brief_id: str, cover_url: str) -> bool:
-    with get_pool().connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE briefs SET cover_url = %s WHERE tenant_id = %s AND id = %s",
-                (cover_url, tenant_id, brief_id),
-            )
-            return cur.rowcount > 0
 
 
 def update_brief_action(tenant_id: str, action_id: str, *, status: Optional[str] = None,

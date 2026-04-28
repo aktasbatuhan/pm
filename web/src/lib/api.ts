@@ -151,7 +151,6 @@ export interface BriefSummary {
   headline: string;
   data_sources: string;
   created_at: number;
-  cover_url: string;
   action_count: number;
   pending_count: number;
 }

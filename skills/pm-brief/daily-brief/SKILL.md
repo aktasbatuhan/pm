@@ -287,12 +287,6 @@ If nothing notable happened, the headline should say so directly:
    - `action_items` — structured JSON array with references
    - `suggested_prompts` — JSON array of follow-up questions
    - `data_sources` — comma-separated list of what you queried
-2. After storing, generate a cover image with `brief_generate_cover`:
-   - Write a visual prompt that captures the brief's mood
-   - Calm and productive if sprint is on track
-   - Urgent/intense if there are critical blockers
-   - Celebratory if major milestones were hit
-   - Pass the `brief_id` from the `brief_store` response
 
 ## Rules
 - Be concrete: numbers, names, links. Not "things are going well."

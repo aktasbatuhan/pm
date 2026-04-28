@@ -523,7 +523,6 @@ def _enrich_references(refs, github_ctx=None):
 
 
 def _shape_brief_response(row: dict, items: list[dict]) -> dict:
-    cover_url = row.get("cover_url") or ""
     headline = (row.get("headline") or "").strip()
     if not headline:
         for line in (row.get("summary") or "").split("\n"):
@@ -541,7 +540,6 @@ def _shape_brief_response(row: dict, items: list[dict]) -> dict:
         "summary": row["summary"],
         "data_sources": row.get("data_sources"),
         "created_at": row["created_at"],
-        "cover_url": cover_url,
         "suggested_prompts": suggested_prompts,
         "action_items": items,
     }
@@ -638,7 +636,6 @@ def list_briefs(limit: int = 20, tenant=Depends(get_current_tenant)):
             "headline": headline,
             "data_sources": r.get("data_sources"),
             "created_at": r["created_at"],
-            "cover_url": r.get("cover_url") or "",
             "action_count": r.get("action_count", 0),
             "pending_count": r.get("pending_count", 0),
         })

@@ -52,7 +52,6 @@ CREATE TABLE IF NOT EXISTS briefs (
     action_items        JSONB NOT NULL DEFAULT '[]'::jsonb,
     suggested_prompts   JSONB DEFAULT '[]'::jsonb,
     data_sources        TEXT,
-    cover_url           TEXT,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_briefs_tenant_created ON briefs(tenant_id, created_at DESC);

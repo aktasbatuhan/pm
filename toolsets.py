@@ -52,7 +52,7 @@ _PM_CORE_TOOLS = [
     # Cronjob management (daily briefs, scheduled reports)
     "schedule_cronjob", "list_cronjobs", "remove_cronjob",
     # PM brief tools
-    "brief_store", "brief_get_latest", "brief_get_action_items", "brief_resolve_action", "brief_generate_cover",
+    "brief_store", "brief_get_latest", "brief_get_action_items", "brief_resolve_action",
     "report_save",
     # PM workspace tools (blueprint, learnings, onboarding)
     "workspace_get_blueprint", "workspace_update_blueprint",

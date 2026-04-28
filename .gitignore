@@ -67,3 +67,4 @@ web/.next/
 web/node_modules/
 /tmp/
 backups/
+downloaded_files/

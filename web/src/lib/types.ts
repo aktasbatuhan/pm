@@ -24,7 +24,6 @@ export interface Brief {
   summary: string;
   data_sources: string;
   created_at: number;
-  cover_url: string;
   suggested_prompts: string[];
   action_items: ActionItem[];
 }

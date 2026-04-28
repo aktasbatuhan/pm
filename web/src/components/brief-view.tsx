@@ -471,16 +471,6 @@ export function BriefView({ onNavigateToChat }: Props) {
             </ul>
           )}
 
-          {/* Cover image */}
-          {brief.cover_url && (
-            <div className="mt-6 overflow-hidden rounded-xl">
-              <img
-                src={brief.cover_url}
-                alt=""
-                className="h-40 w-full object-cover"
-              />
-            </div>
-          )}
         </section>
 
         {/* ── Layer 2: Metrics + Actions ─────────────────────────── */}
