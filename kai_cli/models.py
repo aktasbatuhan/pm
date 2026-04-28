@@ -18,6 +18,7 @@ OPENROUTER_MODELS: list[tuple[str, str]] = [
     ("anthropic/claude-opus-4.6",       "recommended"),
     ("anthropic/claude-sonnet-4.5",     ""),
     ("openai/gpt-5.4-pro",              ""),
+    ("openai/gpt-5.5",                  ""),
     ("openai/gpt-5.4",                  ""),
     ("openai/gpt-5.3-codex",            ""),
     ("google/gemini-3-pro-preview",     ""),
