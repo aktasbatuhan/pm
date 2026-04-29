@@ -3125,10 +3125,13 @@ async def chat(request: Request):
     if not message:
         return JSONResponse({"error": "message required"}, status_code=400)
 
-    # ContextVars don't propagate to manually-spawned threads. Snapshot the
-    # current context (tenant included) so the agent thread sees the same
-    # tenant the middleware resolved for this request.
+    # The agent runs in a worker thread. ContextVars don't auto-propagate
+    # across thread boundaries, so we snapshot the *active* context AND
+    # carry the resolved tenant explicitly via request.state — the latter
+    # is the canonical Starlette-safe channel and survives any middleware
+    # quirk that would leave the ContextVar empty in the endpoint context.
     request_ctx = contextvars.copy_context()
+    tenant_for_thread = getattr(request.state, "tenant_context", None)
 
     event_queue: queue.Queue = queue.Queue()
     _tool_starts: dict = {}  # track tool start times for duration
@@ -3166,6 +3169,15 @@ async def chat(request: Request):
         })
 
     def run_agent():
+        # Belt-and-suspenders: explicitly re-set the ContextVar inside the
+        # worker thread, regardless of what copy_context() captured. Some
+        # middleware arrangements leave the ContextVar empty by the time
+        # copy_context() runs in the endpoint, so trust request.state.
+        # ContextVar is per-thread, so concurrent requests don't collide.
+        if tenant_for_thread is not None:
+            from backend.tenant_context import set_current_tenant
+            set_current_tenant(tenant_for_thread)
+
         try:
             from run_agent import AIAgent
             from model_tools import ensure_mcp_discovered
@@ -3366,7 +3378,7 @@ def postgres_health():
 
 
 @app.post("/api/cron/run/{job_id}")
-def cron_run_now(job_id: str):
+def cron_run_now(job_id: str, request: Request):
     """Manually trigger a cron job immediately (bypasses schedule)."""
     from cron.jobs import get_job, update_job
     from kai_time import now as _kai_now
@@ -3374,9 +3386,12 @@ def cron_run_now(job_id: str):
     if not job:
         return JSONResponse({"error": "Job not found"}, status_code=404)
 
-    request_ctx = contextvars.copy_context()
+    tenant_for_thread = getattr(request.state, "tenant_context", None)
 
     def _run():
+        if tenant_for_thread is not None:
+            from backend.tenant_context import set_current_tenant
+            set_current_tenant(tenant_for_thread)
         from cron.scheduler import run_job
         from cron.jobs import mark_job_run, save_job_output
         try:
@@ -3387,7 +3402,7 @@ def cron_run_now(job_id: str):
             logger.exception("Manual cron run failed")
             mark_job_run(job["id"], False, str(e))
 
-    threading.Thread(target=request_ctx.run, args=(_run,), daemon=True).start()
+    threading.Thread(target=_run, daemon=True).start()
     return {"ok": True, "message": f"Job '{job.get('name')}' triggered"}
 
 
