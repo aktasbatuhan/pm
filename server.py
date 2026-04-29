@@ -1869,13 +1869,18 @@ def _resolve_model() -> str:
     )
 
 
-def triggerBackgroundTask(message: str, thread_id: str):
+def triggerBackgroundTask(message: str, thread_id: str, tenant_context=None):
     """Internal helper — fires an agent task as a system session."""
     import threading as _threading
-    # Snapshot the calling request's context so tenant_id / user_id propagate
-    # into the agent thread (ContextVars don't auto-cross thread boundaries).
-    caller_ctx = contextvars.copy_context()
+    # Capture the tenant from the calling request so the spawned agent has
+    # it available even though ContextVars don't cross thread boundaries.
+    if tenant_context is None:
+        from backend.tenant_context import get_current_tenant
+        tenant_context = get_current_tenant()
     def _run():
+        if tenant_context is not None:
+            from backend.tenant_context import set_current_tenant
+            set_current_tenant(tenant_context)
         try:
             _refresh_github_token_env()
             from run_agent import AIAgent
@@ -1894,10 +1899,11 @@ def triggerBackgroundTask(message: str, thread_id: str):
                 max_iterations=25, quiet_mode=True, platform="system",
                 session_id=thread_id, ephemeral_system_prompt=ws_prompt, session_db=sdb,
             )
+            agent.tenant_context = tenant_context
             agent.run_conversation(message, conversation_history=[])
         except Exception as e:
             logger.exception("Background task %s failed: %s", thread_id, e)
-    _threading.Thread(target=caller_ctx.run, args=(_run,), daemon=True).start()
+    _threading.Thread(target=_run, daemon=True).start()
 
 
 # ── Report Templates endpoints ─────────────────────────────────────────
@@ -3230,6 +3236,10 @@ async def chat(request: Request):
                 ephemeral_system_prompt=ws_prompt,
                 session_db=sdb,
             )
+            # Inject tenant explicitly into the agent's tool dispatch — the
+            # ContextVar fallback isn't reliable across the worker-thread
+            # boundary in production, so we plumb it through kwargs.
+            agent.tenant_context = tenant_for_thread
 
             result = agent.run_conversation(message, conversation_history=history)
             final = result.get("final_response", "")

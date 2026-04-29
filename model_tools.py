@@ -285,6 +285,7 @@ def handle_function_call(
     task_id: Optional[str] = None,
     user_task: Optional[str] = None,
     enabled_tools: Optional[List[str]] = None,
+    tenant_context: Optional[Any] = None,
 ) -> str:
     """
     Main function call dispatcher that routes calls to the tool registry.
@@ -324,12 +325,14 @@ def handle_function_call(
                 function_name, function_args,
                 task_id=task_id,
                 enabled_tools=sandbox_enabled,
+                tenant_context=tenant_context,
             )
 
         return registry.dispatch(
             function_name, function_args,
             task_id=task_id,
             user_task=user_task,
+            tenant_context=tenant_context,
         )
 
     except Exception as e:

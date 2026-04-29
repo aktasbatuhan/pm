@@ -318,6 +318,11 @@ class AIAgent:
         self.step_callback = step_callback
         self.state_reporter = state_reporter  # StateReporter for pushing telemetry to backend
         self._last_reported_tool = None  # Track for "new tool" mode
+        # Tenant context for tool dispatch — settable from outside (e.g. server.py
+        # /api/chat sets this for tenant-scoped tools). When set, gets injected
+        # into handle_function_call kwargs so tools find their tenant even if
+        # ContextVars failed to propagate across the worker thread boundary.
+        self.tenant_context = None
         
         # Interrupt mechanism for breaking out of tool loops
         self._interrupt_requested = False
@@ -3055,6 +3060,7 @@ class AIAgent:
                     function_result = handle_function_call(
                         function_name, function_args, effective_task_id,
                         enabled_tools=list(self.valid_tool_names) if self.valid_tool_names else None,
+                        tenant_context=self.tenant_context,
                     )
                     _spinner_result = function_result
                 except Exception as tool_error:
@@ -3069,6 +3075,7 @@ class AIAgent:
                     function_result = handle_function_call(
                         function_name, function_args, effective_task_id,
                         enabled_tools=list(self.valid_tool_names) if self.valid_tool_names else None,
+                        tenant_context=self.tenant_context,
                     )
                 except Exception as tool_error:
                     function_result = f"Error executing tool '{function_name}': {tool_error}"
