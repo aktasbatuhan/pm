@@ -133,11 +133,14 @@ def test_chat_thread_inherits_tenant_context(monkeypatch):
 
     class _FakeAgent:
         def __init__(self, *args, **kwargs):
-            pass
+            self.tenant_context = None
 
         def run_conversation(self, *args, **kwargs):
             ctx = get_current_tenant()
             seen["tenant_id"] = ctx.tenant_id if ctx else None
+            seen["agent_tenant_context"] = (
+                self.tenant_context.tenant_id if self.tenant_context else None
+            )
             finished.set()
             return {"final_response": "done", "messages": []}
 
@@ -179,3 +182,7 @@ def test_chat_thread_inherits_tenant_context(monkeypatch):
                 break
     finished.wait(timeout=2.0)
     assert seen.get("tenant_id") == "tenant-z"
+    assert seen.get("agent_tenant_context") == "tenant-z", (
+        "agent.tenant_context must be set so handle_function_call can pass "
+        "it to tools without relying on ContextVar propagation"
+    )
