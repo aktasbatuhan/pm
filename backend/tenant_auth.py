@@ -55,6 +55,9 @@ TENANT_SCOPED_PATH_PREFIXES = (
 # require auth so we can record which tenant initiated the install.
 _TENANT_AUTH_BYPASS = (
     "/api/integrations/github/callback",
+    # Webhooks authenticate via HMAC against GITHUB_APP_WEBHOOK_SECRET, not JWT;
+    # tenant gets resolved server-side from the installation_id in the payload.
+    "/api/integrations/github/webhook",
 )
 
 

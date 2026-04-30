@@ -830,6 +830,22 @@ def get_github_installation(tenant_id: str) -> Optional[dict]:
     }
 
 
+def get_tenant_for_installation(installation_id: str) -> Optional[str]:
+    """Reverse lookup for the GitHub webhook handler: given the installation_id
+    GitHub signs into every webhook payload, return the tenant Dash should
+    operate as. Returns None if the installation isn't tracked (which can
+    happen if a user installs the App without going through Dash's flow)."""
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT tenant_id FROM integration_github_installations
+                    WHERE installation_id = %s LIMIT 1""",
+                (str(installation_id),),
+            )
+            row = cur.fetchone()
+    return str(row["tenant_id"]) if row else None
+
+
 def upsert_github_installation(tenant_id: str, *, installation_id: str,
                                 account_login: str, account_type: str,
                                 repo_selection: str) -> None:

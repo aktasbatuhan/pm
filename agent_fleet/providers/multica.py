@@ -1,5 +1,21 @@
 """multica — adapter for a user-provisioned Multica instance.
 
+STATUS: DEFERRED (issue #43 items A2/A3/A4)
+===========================================
+This file is a SKELETON. All four DelegationProvider methods raise
+NotImplementedError. The Protocol is satisfied so the registry, supervisor,
+and workflow `provider:` field all keep working — we just don't ship the
+concrete REST / WebSocket / Settings UI until a user actually runs a Multica
+instance and asks Dash to point at it.
+
+When that happens, the work is mechanical:
+  - A2: REST methods (delegate/status/cancel) — endpoints documented below
+  - A3: WebSocket stream_events — wss://<host>/ws subscription
+  - A4: Settings → Integrations → Multica UI for URL + PAT entry
+
+The audit comments below are the implementation roadmap; the dispatch state
+table at _EVENT_TO_STATE is the contract this adapter has to honor.
+
 LICENSE NOTE
 ============
 Multica is licensed under "modified Apache 2.0" with embedding restrictions:

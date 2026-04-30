@@ -1414,6 +1414,173 @@ def github_app_install_callback(
     return response
 
 
+# ---------------------------------------------------------------------------
+# GitHub webhook ingest (B3a)
+# ---------------------------------------------------------------------------
+#
+# GitHub posts events here when something changes on a repo the App is
+# installed on. We HMAC-verify against GITHUB_APP_WEBHOOK_SECRET, look up
+# which tenant owns the installation, then run the targeted supervisor
+# (supervise_one) for issues we care about.
+#
+# Setup: in GitHub App settings, set webhook URL to
+#   https://<your-railway-host>/api/integrations/github/webhook
+# and copy the secret into GITHUB_APP_WEBHOOK_SECRET on the server. Subscribe
+# to: Issues, Issue comment, Pull request, Pull request review.
+#
+# Cron + webhooks coexist: the supervisor's handlers are idempotent (comment
+# markers prevent duplicate reviews/refiles), and the cron acts as a safety
+# net for events GitHub drops or that arrived while the server was down.
+
+_WEBHOOK_RELEVANT_EVENTS = {
+    "issues",                  # opened / closed / edited / labeled / assigned
+    "issue_comment",           # comment_mention invocations land here
+    "pull_request",            # PR opened / synchronized / closed / merged
+    "pull_request_review",     # human reviews can flip our state
+}
+
+
+def _verify_github_webhook_signature(secret: str, body: bytes, signature_header: str) -> bool:
+    """Constant-time HMAC-SHA256 verify of GitHub's X-Hub-Signature-256.
+
+    The header arrives as 'sha256=<hex digest>'. We never raise here — bad
+    signatures must produce a clean 401 without leaking why."""
+    import hmac
+    import hashlib
+    if not secret or not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(secret.encode("utf-8"), body, hashlib.sha256).hexdigest()
+    provided = signature_header.split("=", 1)[1].strip()
+    return hmac.compare_digest(expected, provided)
+
+
+def _extract_issue_number_for_event(event: str, payload: dict) -> Optional[int]:
+    """Pull the issue number this event is about. Some events (pull_request,
+    pull_request_review) only carry it under .pull_request.number; we treat
+    PR numbers and issue numbers as interchangeable since GitHub does."""
+    if event == "issues":
+        n = (payload.get("issue") or {}).get("number")
+        return int(n) if n else None
+    if event == "issue_comment":
+        # PR comments and issue comments both arrive here; the issue object
+        # is present in either case.
+        n = (payload.get("issue") or {}).get("number")
+        return int(n) if n else None
+    if event == "pull_request":
+        n = (payload.get("pull_request") or {}).get("number")
+        return int(n) if n else None
+    if event == "pull_request_review":
+        n = (payload.get("pull_request") or {}).get("number")
+        return int(n) if n else None
+    return None
+
+
+@app.post("/api/integrations/github/webhook")
+async def github_webhook(request: Request):
+    """Receive GitHub webhook events. Returns quickly so GitHub's 10s budget
+    isn't an issue; supervisor work runs in a background thread."""
+    secret = os.environ.get("GITHUB_APP_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        # No secret configured = webhooks aren't part of this deployment.
+        # Return 503 so GitHub keeps retrying once we're configured.
+        return JSONResponse({"error": "webhook secret not configured"}, status_code=503)
+
+    body = await request.body()
+    signature = request.headers.get("X-Hub-Signature-256", "")
+    if not _verify_github_webhook_signature(secret, body, signature):
+        logger.warning("github webhook: bad signature (delivery=%s event=%s)",
+                       request.headers.get("X-GitHub-Delivery", "?"),
+                       request.headers.get("X-GitHub-Event", "?"))
+        return JSONResponse({"error": "bad signature"}, status_code=401)
+
+    event = request.headers.get("X-GitHub-Event", "")
+    delivery = request.headers.get("X-GitHub-Delivery", "")
+
+    # Ping events are how GitHub verifies the webhook on save — answer 200 so
+    # the App settings page shows green.
+    if event == "ping":
+        return {"ok": True, "pong": True}
+
+    if event not in _WEBHOOK_RELEVANT_EVENTS:
+        # Acknowledge unknown/uninteresting events so GitHub doesn't retry.
+        return {"ok": True, "ignored": event}
+
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+
+    installation = (payload.get("installation") or {})
+    installation_id = installation.get("id")
+    if not installation_id:
+        return JSONResponse({"error": "missing installation.id"}, status_code=400)
+
+    if not is_postgres_enabled():
+        # Single-tenant SQLite mode has no installation→tenant map. Defer to
+        # cron in that case.
+        return {"ok": True, "ignored": "single-tenant mode"}
+
+    from backend import repos
+    tenant_id = repos.get_tenant_for_installation(str(installation_id))
+    if not tenant_id:
+        logger.info("github webhook: installation %s not tracked (delivery=%s)",
+                    installation_id, delivery)
+        return {"ok": True, "ignored": "untracked installation"}
+
+    repo_full = (payload.get("repository") or {}).get("full_name")
+    issue_number = _extract_issue_number_for_event(event, payload)
+    if not repo_full or not issue_number:
+        return {"ok": True, "ignored": f"missing repo or issue ({event})"}
+
+    # Run the targeted supervisor in a background thread — GitHub gives us
+    # ~10s before retrying. Threading.Thread + a captured tenant context so
+    # downstream tenant-aware code paths see the right tenant.
+    request_ctx = contextvars.copy_context()
+    from backend.tenant_context import TenantContext, set_current_tenant
+
+    def _run():
+        # Re-set tenant in this thread regardless of what copy_context grabbed
+        # (mirrors the /api/chat fix from earlier in the project).
+        set_current_tenant(TenantContext(
+            user_id="dash-webhook", tenant_id=tenant_id, role="owner",
+        ))
+        try:
+            from github_app_auth import refresh_github_token_env
+            if not refresh_github_token_env(tenant_id=tenant_id):
+                logger.warning("webhook %s: no GH token for tenant %s",
+                               delivery, tenant_id)
+                return
+            token = os.environ.get("GITHUB_TOKEN", "")
+            from agent_fleet.supervisor import supervise_one
+            from agent_fleet import workflow as wf_module
+            from backend import repos as pg_repos
+            active = pg_repos.get_active_workflow(tenant_id)
+            workflow_obj = wf_module.default_workflow()
+            if active:
+                try:
+                    workflow_obj = wf_module.parse_workflow(active["body"])
+                except Exception:
+                    pass
+            report = supervise_one(
+                tenant_id=tenant_id,
+                repo=repo_full,
+                issue_number=issue_number,
+                token=token,
+                workflow=workflow_obj,
+            )
+            logger.info(
+                "webhook %s: tenant=%s event=%s %s#%s actions=%s",
+                delivery, tenant_id, event, repo_full, issue_number,
+                dict(report.by_kind()),
+            )
+        except Exception:
+            logger.exception("webhook %s: supervise_one crashed", delivery)
+
+    threading.Thread(target=request_ctx.run, args=(_run,), daemon=True).start()
+    return {"ok": True, "queued": True, "event": event,
+            "repo": repo_full, "issue": issue_number}
+
+
 @app.get("/api/integrations/github/repos")
 def github_list_repos_endpoint(tenant=Depends(get_current_tenant)):
     """Proxy /installation/repositories for the frontend repo picker."""

@@ -991,3 +991,76 @@ def run_supervisor(
                 ))
 
     return report
+
+
+def supervise_one(
+    *,
+    tenant_id: str,
+    repo: str,
+    issue_number: int,
+    token: str,
+    workflow: Optional[Workflow] = None,
+    workflow_revision: int = 0,
+) -> SupervisorReport:
+    """Advance a single delegation through the supervisor state machine.
+
+    Used by the GitHub webhook handler (B3a): when GitHub fires an
+    issue_comment / pull_request / pull_request_review event, we know
+    exactly which delegation it touches, so re-walking every repo is
+    wasteful. Falls back to a no-op if the issue isn't a Dash delegation.
+
+    Idempotent: the underlying handlers already use comment-marker
+    deduplication (`## Dash Review`, `## Dash Refiled`, etc.), so calling
+    supervise_one repeatedly for the same event is safe and matches the
+    cron's behavior.
+    """
+    if workflow is None:
+        workflow = default_workflow()
+
+    report = SupervisorReport(tenant_id=tenant_id, workflow_revision=workflow_revision)
+    report.repos_scanned = 1
+
+    handle = DelegationHandle(
+        provider="github_default",
+        data={"repo": repo, "issue_number": issue_number},
+    )
+    provider = _github_default_provider(tenant_id=tenant_id, token=token)
+    try:
+        status = provider.status(handle)
+    except Exception as e:
+        logger.exception("supervise_one: provider.status failed")
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=issue_number,
+            kind="error", detail="provider status failed", error=str(e),
+        ))
+        return report
+
+    _persist_snapshot(tenant_id, status)
+    issue_dict = (status.raw or {}).get("issue") or {}
+    metadata = (status.raw or {}).get("metadata") or {}
+
+    # Webhooks fire on every issue, not just Dash delegations. If the issue
+    # has no Dash metadata, we walked it for nothing — skip silently.
+    if not metadata and not (status.raw or {}).get("task_id"):
+        return report
+
+    result = _watch_result_from_provider_status(status)
+    report.delegations_seen += 1
+
+    if result.status == TaskStatus.PR_OPENED:
+        _handle_pr_opened(result, repo, token, workflow, report)
+    elif result.status == TaskStatus.RESOLVED:
+        _handle_resolved(result, repo, token, tenant_id, workflow, report, metadata)
+    elif result.status == TaskStatus.DELEGATED:
+        _handle_delegated(result, repo, token, workflow, report, issue_dict)
+    elif result.status == TaskStatus.CHANGES_REQUESTED:
+        _handle_changes_requested(result, repo, token, workflow, report)
+    elif result.status == TaskStatus.APPROVED:
+        _handle_approved(result, repo, token, workflow, report)
+    else:
+        report.actions.append(SupervisorAction(
+            repo=repo, issue_number=result.issue_number,
+            kind="skip", detail=f"status={result.status} not handled",
+        ))
+
+    return report
