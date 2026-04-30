@@ -264,35 +264,54 @@ def create_job(
     name: Optional[str] = None,
     repeat: Optional[int] = None,
     deliver: Optional[str] = None,
-    origin: Optional[Dict[str, Any]] = None
+    origin: Optional[Dict[str, Any]] = None,
+    *,
+    kind: str = "agent",
+    handler: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    handler_args: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Create a new cron job.
-    
+
     Args:
-        prompt: The prompt to run (must be self-contained)
+        prompt: The prompt to run (must be self-contained). For kind="direct"
+            this is just a human-readable description; the handler runs the work.
         schedule: Schedule string (see parse_schedule)
         name: Optional friendly name
         repeat: How many times to run (None = forever, 1 = once)
         deliver: Where to deliver output ("origin", "local", "telegram", etc.)
         origin: Source info where job was created (for "origin" delivery)
-    
+        kind: "agent" (default) runs the prompt through the LLM agent.
+            "direct" calls a registered Python handler with the tenant_id —
+            cheaper and deterministic, used for ops jobs (supervisor, observer).
+        handler: When kind="direct", the registered handler name to invoke.
+            See cron.direct_handlers.
+        tenant_id: When kind="direct", the tenant the handler runs against.
+        handler_args: Optional kwargs forwarded to the handler.
+
     Returns:
         The created job dict
     """
     parsed_schedule = parse_schedule(schedule)
-    
+
     # Auto-set repeat=1 for one-shot schedules if not specified
     if parsed_schedule["kind"] == "once" and repeat is None:
         repeat = 1
-    
+
     # Default delivery to origin if available, otherwise local
     if deliver is None:
         deliver = "origin" if origin else "local"
-    
+
+    if kind == "direct":
+        if not handler:
+            raise ValueError("create_job: kind='direct' requires a handler name")
+        if not tenant_id:
+            raise ValueError("create_job: kind='direct' requires a tenant_id")
+
     job_id = uuid.uuid4().hex[:12]
     now = _kai_now().isoformat()
-    
+
     job = {
         "id": job_id,
         "name": name or prompt[:50].strip(),
@@ -312,13 +331,63 @@ def create_job(
         # Delivery configuration
         "deliver": deliver,
         "origin": origin,  # Tracks where job was created for "origin" delivery
+        # Direct-call dispatch
+        "kind": kind,
+        "handler": handler,
+        "tenant_id": tenant_id,
+        "handler_args": handler_args or {},
     }
-    
+
     jobs = load_jobs()
     jobs.append(job)
     save_jobs(jobs)
-    
+
     return job
+
+
+def upsert_direct_job(
+    *,
+    tenant_id: str,
+    handler: str,
+    schedule: str,
+    name: str,
+    handler_args: Optional[Dict[str, Any]] = None,
+    description: str = "",
+) -> Dict[str, Any]:
+    """Create or update a direct-call cron for this tenant.
+
+    Idempotent on (tenant_id, name): re-calling with the same name updates
+    the schedule/args in place rather than registering a duplicate. This is
+    what GitHub-connect hooks call so reinstalling the App doesn't dupe
+    fleet crons.
+    """
+    existing = next(
+        (j for j in load_jobs()
+         if j.get("kind") == "direct"
+         and j.get("tenant_id") == tenant_id
+         and j.get("name") == name),
+        None,
+    )
+    if existing:
+        parsed_schedule = parse_schedule(schedule)
+        return update_job(existing["id"], {
+            "schedule": parsed_schedule,
+            "schedule_display": parsed_schedule.get("display", schedule),
+            "next_run_at": compute_next_run(parsed_schedule, last_run_at=existing.get("last_run_at")),
+            "handler": handler,
+            "handler_args": handler_args or {},
+            "enabled": True,
+        }) or existing
+    return create_job(
+        prompt=description or f"{handler} for tenant {tenant_id}",
+        schedule=schedule,
+        name=name,
+        deliver="local",
+        kind="direct",
+        handler=handler,
+        tenant_id=tenant_id,
+        handler_args=handler_args or {},
+    )
 
 
 def get_job(job_id: str) -> Optional[Dict[str, Any]]:

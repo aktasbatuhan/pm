@@ -1236,6 +1236,34 @@ def github_app_install_redirect(tenant=Depends(get_current_tenant)):
     return response
 
 
+def _ensure_fleet_crons(tenant_id: str) -> None:
+    """Register supervisor + observer crons for this tenant. Idempotent.
+
+    Called from the GitHub install callback (so newly-connected tenants get
+    crons immediately) and from the startup backfill loop (so tenants who
+    were already connected pre-cron-feature don't have to reinstall).
+    """
+    if not tenant_id:
+        return
+    from cron.jobs import upsert_direct_job
+
+    upsert_direct_job(
+        tenant_id=tenant_id,
+        handler="fleet_supervise",
+        schedule="every 12 minutes",
+        name=f"fleet-supervise:{tenant_id}",
+        description=f"Walk repos and advance Dash delegations for tenant {tenant_id}",
+    )
+    upsert_direct_job(
+        tenant_id=tenant_id,
+        handler="fleet_observe",
+        schedule="every 7 days",
+        name=f"fleet-observe:{tenant_id}",
+        description=f"Run observer + evolver for tenant {tenant_id}",
+    )
+    logger.info("Fleet crons ensured for tenant %s", tenant_id)
+
+
 @app.get("/api/integrations/github/callback")
 def github_app_install_callback(
     request: Request,
@@ -1316,6 +1344,12 @@ def github_app_install_callback(
             display_name=account_login or "github",
         )
         _refresh_github_token_env(tenant_id=initiating_tenant_id)
+        # Spin up the per-tenant fleet crons. Idempotent: re-installing the
+        # GitHub App for the same tenant just updates the existing rows.
+        try:
+            _ensure_fleet_crons(initiating_tenant_id)
+        except Exception as e:
+            logger.warning("ensure_fleet_crons failed for %s: %s", initiating_tenant_id, e)
     else:
         db = _get_integrations_db()
         db.execute(
@@ -3504,7 +3538,39 @@ def on_startup():
             logger.info("GitHub App token refreshed on startup")
     except Exception as e:
         logger.warning("GitHub App token refresh on startup failed: %s", e)
+    # Backfill fleet crons for tenants already connected before this feature
+    # shipped. Idempotent — re-running only updates existing rows.
+    try:
+        _backfill_fleet_crons()
+    except Exception as e:
+        logger.warning("Fleet cron backfill on startup failed: %s", e)
     _start_cron_ticker()
+
+
+def _backfill_fleet_crons() -> None:
+    """Ensure every tenant with an active GitHub installation has its
+    supervisor + observer crons registered. Safe to run on every startup."""
+    if not is_postgres_enabled():
+        return
+    try:
+        with get_pool().connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT DISTINCT tenant_id::text AS tenant_id
+                         FROM integration_github_installations"""
+                )
+                tenant_ids = [r["tenant_id"] for r in cur.fetchall() if r.get("tenant_id")]
+    except Exception as e:
+        logger.warning("backfill: couldn't enumerate GH installations: %s", e)
+        return
+
+    for tid in tenant_ids:
+        try:
+            _ensure_fleet_crons(tid)
+        except Exception as e:
+            logger.warning("backfill: ensure_fleet_crons failed for %s: %s", tid, e)
+    if tenant_ids:
+        logger.info("Fleet cron backfill: ensured crons for %d tenant(s)", len(tenant_ids))
 
 
 @app.get("/api/cron/status")

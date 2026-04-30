@@ -148,17 +148,60 @@ def _deliver_result(job: dict, content: str) -> None:
             logger.warning("Job '%s': mirror_to_session failed: %s", job["id"], e)
 
 
+def _direct_output(job: dict, response: str, error: Optional[str]) -> str:
+    """Render the saved-output document for a direct cron run."""
+    suffix = " (FAILED)" if error else ""
+    body = (
+        f"# Cron Job: {job['name']}{suffix}\n\n"
+        f"**Job ID:** {job['id']}\n"
+        f"**Run Time:** {_kai_now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"**Schedule:** {job.get('schedule_display', 'N/A')}\n"
+        f"**Handler:** {job.get('handler')}\n"
+        f"**Tenant:** {job.get('tenant_id')}\n\n"
+    )
+    if error:
+        body += f"## Error\n\n```\n{error}\n```\n"
+    else:
+        body += f"## Result\n\n{response}\n"
+    return body
+
+
 def run_job(job: dict) -> tuple[bool, str, str, Optional[str]]:
     """
     Execute a single cron job.
-    
+
+    Dispatches by ``job["kind"]``:
+      - "direct" (or job has handler+tenant_id): invoke a registered Python
+        handler — used for ops jobs like fleet_supervise / fleet_observe.
+      - "agent" (default): run the prompt through the LLM agent loop.
+
     Returns:
         Tuple of (success, full_output_doc, final_response, error_message)
     """
-    from run_agent import AIAgent
-    
     job_id = job["id"]
     job_name = job["name"]
+
+    # Direct-call dispatch — short-circuit before the agent setup runs.
+    if job.get("kind") == "direct":
+        handler = job.get("handler")
+        tenant_id = job.get("tenant_id")
+        handler_args = job.get("handler_args") or {}
+        if not handler or not tenant_id:
+            err = "direct cron missing handler or tenant_id"
+            return False, _direct_output(job, "", err), "", err
+        try:
+            from cron.direct_handlers import run_handler
+            logger.info("Running direct cron '%s' (handler=%s tenant=%s)",
+                        job_name, handler, tenant_id)
+            response = run_handler(handler, tenant_id, **handler_args) or "(no message)"
+            return True, _direct_output(job, response, None), response, None
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            logger.exception("Direct cron '%s' failed", job_name)
+            return False, _direct_output(job, "", err), "", err
+
+    from run_agent import AIAgent
+
     prompt = job["prompt"]
     origin = _resolve_origin(job)
     
