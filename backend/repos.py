@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from typing import Any, Optional
+import uuid
 
 from backend.db.postgres_client import get_pool
 
@@ -58,6 +59,47 @@ def _shape_action(row: dict) -> dict:
         "status": row["status"],
         "chat_session_id": row.get("chat_session_id"),
         "references": refs,
+        "created_at": _ts(row["created_at"]),
+        "updated_at": _ts(row["updated_at"]),
+    }
+
+
+def _jsonish(value: Any, default: Any) -> Any:
+    if value is None:
+        return default
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return default
+    return value
+
+
+def _dt(value: Optional[float]) -> Optional[datetime]:
+    if value is None:
+        return None
+    return datetime.fromtimestamp(value, tz=timezone.utc)
+
+
+def _shape_fleet_delegation(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "tenant_id": str(row["tenant_id"]),
+        "provider": row["provider"],
+        "provider_handle_key": row["provider_handle_key"],
+        "handle": _jsonish(row.get("handle_json"), {}),
+        "state": row["state"],
+        "state_detail": row.get("state_detail") or "",
+        "summary": row.get("summary") or "",
+        "repo": row.get("repo"),
+        "issue_number": row.get("issue_number"),
+        "task_id": row.get("task_id"),
+        "agent_id": row.get("agent_id"),
+        "pr_number": row.get("pr_number"),
+        "artifacts": _jsonish(row.get("artifacts_json"), []),
+        "raw": _jsonish(row.get("raw_json"), {}),
+        "last_activity_at": _ts(row.get("last_activity_at")),
+        "terminal_at": _ts(row.get("terminal_at")),
         "created_at": _ts(row["created_at"]),
         "updated_at": _ts(row["updated_at"]),
     }
@@ -918,6 +960,213 @@ def save_workflow_revision(tenant_id: str, *, name: str, body: str, author: str,
                 (tenant_id, next_rev, name, body, rationale, author, signals),
             )
     return next_rev
+
+
+# ---------------------------------------------------------------------------
+# Fleet delegations
+# ---------------------------------------------------------------------------
+
+_TERMINAL_FLEET_STATES = {"done", "failed", "cancelled"}
+
+
+def upsert_fleet_delegation(
+    tenant_id: str,
+    *,
+    provider: str,
+    provider_handle_key: str,
+    handle: dict,
+    state: str,
+    state_detail: str = "",
+    summary: str = "",
+    repo: Optional[str] = None,
+    issue_number: Optional[int] = None,
+    task_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    pr_number: Optional[int] = None,
+    artifacts: Optional[list] = None,
+    raw: Optional[dict] = None,
+    last_activity_at: Optional[float] = None,
+) -> dict:
+    """Insert/update the latest normalized snapshot for one provider handle."""
+    row_id = uuid.uuid4().hex
+    terminal = state in _TERMINAL_FLEET_STATES
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO fleet_delegations
+                       (id, tenant_id, provider, provider_handle_key, handle_json,
+                        state, state_detail, summary, repo, issue_number, task_id,
+                        agent_id, pr_number, artifacts_json, raw_json,
+                        last_activity_at, terminal_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,
+                           CASE WHEN %s THEN NOW() ELSE NULL END)
+                   ON CONFLICT (tenant_id, provider, provider_handle_key) DO UPDATE SET
+                        handle_json = EXCLUDED.handle_json,
+                        state = EXCLUDED.state,
+                        state_detail = EXCLUDED.state_detail,
+                        summary = EXCLUDED.summary,
+                        repo = EXCLUDED.repo,
+                        issue_number = EXCLUDED.issue_number,
+                        task_id = EXCLUDED.task_id,
+                        agent_id = EXCLUDED.agent_id,
+                        pr_number = EXCLUDED.pr_number,
+                        artifacts_json = EXCLUDED.artifacts_json,
+                        raw_json = EXCLUDED.raw_json,
+                        last_activity_at = EXCLUDED.last_activity_at,
+                        terminal_at = CASE
+                            WHEN EXCLUDED.state IN ('done', 'failed', 'cancelled')
+                                THEN COALESCE(fleet_delegations.terminal_at, NOW())
+                            ELSE NULL
+                        END,
+                        updated_at = NOW()
+                   RETURNING *""",
+                (
+                    row_id,
+                    tenant_id,
+                    provider,
+                    provider_handle_key,
+                    json.dumps(handle or {}),
+                    state,
+                    state_detail,
+                    summary,
+                    repo,
+                    issue_number,
+                    task_id,
+                    agent_id,
+                    pr_number,
+                    json.dumps(artifacts or []),
+                    json.dumps(raw or {}),
+                    _dt(last_activity_at),
+                    terminal,
+                ),
+            )
+            row = cur.fetchone()
+    return _shape_fleet_delegation(row)
+
+
+def list_fleet_delegations(
+    tenant_id: str,
+    *,
+    include_terminal: bool = False,
+    provider: Optional[str] = None,
+    limit: int = 200,
+) -> list[dict]:
+    sql = "SELECT * FROM fleet_delegations WHERE tenant_id = %s"
+    args: list[Any] = [tenant_id]
+    if provider:
+        sql += " AND provider = %s"
+        args.append(provider)
+    if not include_terminal:
+        sql += " AND state NOT IN ('done', 'failed', 'cancelled')"
+    sql += " ORDER BY COALESCE(last_activity_at, updated_at, created_at) DESC LIMIT %s"
+    args.append(limit)
+
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            rows = cur.fetchall()
+    return [_shape_fleet_delegation(r) for r in rows]
+
+
+def get_fleet_delegation(
+    tenant_id: str,
+    *,
+    provider: str,
+    provider_handle_key: str,
+) -> Optional[dict]:
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM fleet_delegations
+                    WHERE tenant_id = %s AND provider = %s AND provider_handle_key = %s""",
+                (tenant_id, provider, provider_handle_key),
+            )
+            row = cur.fetchone()
+    return _shape_fleet_delegation(row) if row else None
+
+
+def fleet_activity_summary(tenant_id: str, *, since_ts: Optional[float] = None) -> dict:
+    """Compact summary of fleet state for the daily brief.
+
+    Returns:
+        {
+            "by_state": {pending: N, running: N, review: N},  # open buckets only
+            "open_total": int,
+            "new_since": int,         # delegations created after since_ts
+            "completions": [{repo, issue_number, summary, terminal_at}, ...],
+            "failures":    [...],
+            "cancellations": [...],
+        }
+
+    `since_ts` should be the previous brief's created_at. When None, defaults
+    to "last 24h" so a first-time brief still has something useful to show.
+
+    The brief skill omits the section entirely when everything is zero.
+    """
+    if since_ts is None:
+        since_ts = datetime.now(timezone.utc).timestamp() - 24 * 3600
+    cutoff = _dt(since_ts)
+
+    out = {
+        "by_state": {"pending": 0, "running": 0, "review": 0},
+        "open_total": 0,
+        "new_since": 0,
+        "completions": [],
+        "failures": [],
+        "cancellations": [],
+    }
+
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            # Open buckets: count current non-terminal state
+            cur.execute(
+                """SELECT state, COUNT(*) AS c
+                     FROM fleet_delegations
+                    WHERE tenant_id = %s AND state IN ('pending', 'running', 'review')
+                    GROUP BY state""",
+                (tenant_id,),
+            )
+            for row in cur.fetchall():
+                state = row["state"]
+                out["by_state"][state] = int(row["c"])
+                out["open_total"] += int(row["c"])
+
+            # New since cutoff
+            cur.execute(
+                """SELECT COUNT(*) AS c
+                     FROM fleet_delegations
+                    WHERE tenant_id = %s AND created_at >= %s""",
+                (tenant_id, cutoff),
+            )
+            row = cur.fetchone()
+            out["new_since"] = int(row["c"]) if row else 0
+
+            # Terminal events since cutoff, bucketed by final state
+            cur.execute(
+                """SELECT state, repo, issue_number, summary, terminal_at, pr_number
+                     FROM fleet_delegations
+                    WHERE tenant_id = %s
+                      AND state IN ('done', 'failed', 'cancelled')
+                      AND terminal_at >= %s
+                    ORDER BY terminal_at DESC
+                    LIMIT 50""",
+                (tenant_id, cutoff),
+            )
+            for row in cur.fetchall():
+                bucket = {
+                    "done": "completions",
+                    "failed": "failures",
+                    "cancelled": "cancellations",
+                }[row["state"]]
+                out[bucket].append({
+                    "repo": row.get("repo"),
+                    "issue_number": row.get("issue_number"),
+                    "pr_number": row.get("pr_number"),
+                    "summary": row.get("summary") or "",
+                    "terminal_at": _ts(row.get("terminal_at")),
+                })
+
+    return out
 
 
 def store_oauth_state(state: str, *, tenant_id: Optional[str], purpose: str) -> None:

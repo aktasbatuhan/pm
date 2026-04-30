@@ -2722,7 +2722,12 @@ async def fleet_observe(request: Request, tenant=Depends(get_current_tenant)):
 
     # Gather signals
     from agent_fleet.observer import gather_signals
-    signals = gather_signals(workflow=workflow_obj, repos_list=repos_list, token=token)
+    signals = gather_signals(
+        workflow=workflow_obj,
+        repos_list=repos_list,
+        token=token,
+        tenant_id=tenant.tenant_id,
+    )
 
     # Build evolver context with persistence injection
     def _save_revision(*, tenant_id, name, body, author, rationale, based_on_signals):
@@ -2800,18 +2805,22 @@ def fleet_list_delegations(tenant=Depends(get_current_tenant)):
 
     from agent_fleet.supervisor import (
         _DASH_REFILED_MARKER, _DASH_STALLED_MARKER, _DASH_REVIEW_MARKER,
-        _list_issue_comments,
+        _list_issue_comments, scan_github_default_delegations,
     )
-    from agent_fleet.watcher import watch_repo_delegations
 
     delegations = []
     for repo in repos_list:
         try:
-            results = watch_repo_delegations(repo, token)
+            snapshots = scan_github_default_delegations(
+                tenant_id=tenant.tenant_id,
+                repos_list=[repo],
+                token=token,
+            )
         except Exception as e:
-            logger.warning("watch_repo_delegations failed for %s: %s", repo, e)
+            logger.warning("provider status scan failed for %s: %s", repo, e)
             continue
-        for r in results:
+        for snapshot in snapshots:
+            r = snapshot.result
             # Refile-eligible = stalled marker present AND no refile yet.
             issue_comments = _list_issue_comments(repo, r.issue_number, token)
             has_stalled = any(_DASH_STALLED_MARKER in (c.get("body") or "") for c in issue_comments)

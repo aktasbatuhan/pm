@@ -20,6 +20,8 @@ class TestParse:
         assert wf.routing.default == "claude-code"
         assert wf.routing.rules[0].label == "bug"
         assert wf.routing.rules[0].agent == "codex"
+        assert wf.provider == "github_default"
+        assert wf.fallback is None
         assert wf.review.auto is True
         assert wf.review.max_retries == 2
         assert wf.escalation.fallback_chain == ["codex", "claude-code"]
@@ -37,6 +39,19 @@ just a prompt
         assert wf.routing.default == "claude-code"  # falls back to defaults
         assert wf.review.auto is True
         assert wf.prompt_template.strip() == "just a prompt"
+
+    def test_provider_fields_parse(self):
+        text = """---
+name: multica workflow
+provider: multica
+fallback: github_default
+---
+
+prompt
+"""
+        wf = parse_workflow(text)
+        assert wf.provider == "multica"
+        assert wf.fallback == "github_default"
 
     def test_routing_rule_picks_correct_agent(self):
         wf = default_workflow()
@@ -76,4 +91,5 @@ class TestSerialization:
         d = wf.to_dict()
         assert "prompt_template" not in d
         assert d["name"] == "Dash default"
+        assert d["provider"] == "github_default"
         assert d["routing"]["rules"][0]["label"] == "bug"

@@ -195,15 +195,18 @@ def gather_signals(
     workflow: Workflow,
     repos_list: List[str],
     token: str,
+    tenant_id: Optional[str] = None,
 ) -> List[Signal]:
     """Walk the tenant's repos, collect delegation state, run every signal
     generator, return the non-None signals."""
-    delegations: List[WatchResult] = []
-    for repo in repos_list:
-        try:
-            delegations.extend(watch_repo_delegations(repo, token))
-        except Exception as e:
-            logger.warning("watch_repo_delegations failed for %s during observe: %s", repo, e)
+    delegations = _delegations_from_inventory(tenant_id=tenant_id, token=token)
+    if not delegations:
+        delegations = []
+        for repo in repos_list:
+            try:
+                delegations.extend(watch_repo_delegations(repo, token))
+            except Exception as e:
+                logger.warning("watch_repo_delegations failed for %s during observe: %s", repo, e)
 
     out: List[Signal] = []
     for gen in _SIGNAL_GENERATORS:
@@ -214,3 +217,24 @@ def gather_signals(
         except Exception:
             logger.exception("signal generator %s crashed; skipping", gen.__name__)
     return out
+
+
+def _delegations_from_inventory(*, tenant_id: Optional[str], token: str) -> List[WatchResult]:
+    if not tenant_id:
+        return []
+    try:
+        from backend.db.postgres_client import is_postgres_enabled
+        if not is_postgres_enabled():
+            return []
+        from agent_fleet.supervisor import scan_persisted_delegations
+        return [
+            snapshot.result
+            for snapshot in scan_persisted_delegations(
+                tenant_id=tenant_id,
+                token=token,
+                include_terminal=False,
+            )
+        ]
+    except Exception as e:
+        logger.warning("fleet inventory scan failed during observe: %s", e)
+        return []

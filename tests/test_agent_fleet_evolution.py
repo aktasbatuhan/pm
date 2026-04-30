@@ -104,6 +104,22 @@ class TestGatherSignals:
             signals = gather_signals(workflow=wf, repos_list=["acme/api"], token="tok")
         assert any(s.kind == "missing_fallback_chain" for s in signals)
 
+    def test_uses_inventory_when_tenant_id_present(self):
+        wf = default_workflow()
+        wf.escalation.fallback_chain = []
+        wf.evolution.min_evidence = 3
+        dels = [WatchResult(i, f"t{i}", "claude-code", TaskStatus.DELEGATED) for i in range(5)]
+        with patch("agent_fleet.observer._delegations_from_inventory", return_value=dels), \
+             patch("agent_fleet.observer.watch_repo_delegations") as watch:
+            signals = gather_signals(
+                workflow=wf,
+                repos_list=["acme/api"],
+                token="tok",
+                tenant_id="tenant",
+            )
+        watch.assert_not_called()
+        assert any(s.kind == "missing_fallback_chain" for s in signals)
+
 
 # ---------------------------------------------------------------------------
 # Evolver

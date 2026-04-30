@@ -66,6 +66,8 @@ _PM_CORE_TOOLS = [
     "kpi_list", "kpi_get", "kpi_set_measurement_plan", "kpi_record_value", "kpi_flag",
     # PM GitHub writes — create issues + comments via installation token
     "github_list_repos", "github_create_issue", "github_add_comment",
+    # PM Fleet — delegated coding-agent activity summary for the brief
+    "fleet_activity_summary", "fleet_refile_delegation",
     # Cross-platform messaging (gated on gateway running via check_fn)
     "send_message",
 ]

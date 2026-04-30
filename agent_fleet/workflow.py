@@ -144,6 +144,8 @@ class Workflow:
     """The full per-tenant (or per-repo) workflow contract."""
     name: str
     description: str = ""
+    provider: str = "github_default"          # execution backend for new delegations
+    fallback: Optional[str] = None            # provider fallback, e.g. "github_default"
     triggers: TriggerConfig = field(default_factory=TriggerConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
     workspace: WorkspaceConfig = field(default_factory=WorkspaceConfig)
@@ -238,6 +240,8 @@ def _from_dict(data: Dict[str, Any], prompt_template: str) -> Workflow:
     return Workflow(
         name=data.get("name", "default"),
         description=data.get("description", ""),
+        provider=str(data.get("provider") or "github_default"),
+        fallback=(str(data.get("fallback")) if data.get("fallback") else None),
         triggers=triggers,
         routing=routing,
         workspace=workspace,
@@ -258,6 +262,8 @@ def _from_dict(data: Dict[str, Any], prompt_template: str) -> Workflow:
 DEFAULT_WORKFLOW_TEXT = """---
 name: "Dash default"
 description: "Default issue-lifecycle workflow that ships with Dash"
+provider: github_default
+fallback:
 
 triggers:
   labels:

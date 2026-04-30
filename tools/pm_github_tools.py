@@ -15,6 +15,7 @@ import logging
 import os
 import urllib.request
 import urllib.error
+from typing import Optional
 
 from tools.registry import registry
 
@@ -819,6 +820,86 @@ registry.register(
         repo=args.get("repo", ""),
         issue_number=args.get("issue_number", 0),
         agent_id=args.get("agent_id", ""),
+    ),
+)
+
+
+# =============================================================================
+# Tool: fleet_activity_summary
+# =============================================================================
+
+def fleet_activity_summary(since_ts: float = 0.0, **kwargs) -> str:
+    """Return a compact summary of fleet delegation activity for the brief.
+
+    `since_ts` defaults to 24h ago when zero/missing — the brief skill
+    should pass the previous brief's created_at so the section reflects
+    "what changed since last brief."
+    """
+    from backend.tenant_context import require_tenant_context
+    from backend.db.postgres_client import is_postgres_enabled
+
+    tenant = require_tenant_context(kwargs=kwargs, consumer="fleet_activity_summary")
+
+    if not is_postgres_enabled():
+        return json.dumps({
+            "available": False,
+            "reason": "Fleet inventory is only persisted in Postgres mode.",
+        })
+
+    from backend import repos as pg_repos
+    try:
+        ts_arg: Optional[float] = float(since_ts) if since_ts else None
+    except (TypeError, ValueError):
+        ts_arg = None
+    if ts_arg is not None and ts_arg <= 0:
+        ts_arg = None
+
+    summary = pg_repos.fleet_activity_summary(tenant.tenant_id, since_ts=ts_arg)
+    summary["available"] = True
+
+    # Convenience flag so the brief skill can decide whether to render the section.
+    has_activity = (
+        summary["open_total"] > 0
+        or summary["new_since"] > 0
+        or summary["completions"]
+        or summary["failures"]
+        or summary["cancellations"]
+    )
+    summary["has_activity"] = bool(has_activity)
+    return json.dumps(summary)
+
+
+FLEET_ACTIVITY_SUMMARY_SCHEMA = {
+    "name": "fleet_activity_summary",
+    "description": (
+        "Summary of Dash's fleet of delegated coding tasks: open work by state, "
+        "what completed/failed/was cancelled since the last brief. Use this in "
+        "the daily brief AFTER you have the previous brief's timestamp via "
+        "brief_get_latest, then pass that timestamp as since_ts. If has_activity "
+        "is false, omit the Fleet Activity section from the brief entirely."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "since_ts": {
+                "type": "number",
+                "description": (
+                    "Unix timestamp cutoff. Pass the previous brief's "
+                    "created_at to scope to 'since last brief'. Omit or pass 0 "
+                    "for a 24-hour default."
+                ),
+            },
+        },
+    },
+}
+
+registry.register(
+    name="fleet_activity_summary",
+    toolset="pm-github",
+    schema=FLEET_ACTIVITY_SUMMARY_SCHEMA,
+    handler=lambda args, **kw: fleet_activity_summary(
+        since_ts=args.get("since_ts", 0.0),
+        **kw,
     ),
 )
 

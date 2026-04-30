@@ -1,11 +1,11 @@
 ---
 name: pm-brief/daily-brief
-description: Produce a structured daily brief with updates, metrics, charts, goal progress, KPI risks/opportunities, and prioritized action items from all connected data sources
-version: 1.3.0
+description: Produce a structured daily brief with updates, metrics, charts, goal progress, KPI risks/opportunities, fleet activity, and prioritized action items from all connected data sources
+version: 1.4.0
 metadata:
   hermes:
     tags: [pm, brief, proactive, daily]
-    requires_toolsets: [pm-brief, pm-goals, pm-kpis, memory, cronjob]
+    requires_toolsets: [pm-brief, pm-goals, pm-kpis, pm-github, memory, cronjob]
 ---
 
 # Daily Brief
@@ -71,6 +71,19 @@ If a call returns 404, the repo is outside the installation scope — note it an
 - Call `kpi_list` to get all active KPIs and their recent values
 - For each, note the `current_value`, `previous_value`, `target_value`, and the last 3-5 `recent_values`
 - You will use this in Step 2.6 to decide whether any KPI deserves a flag in this brief
+
+### Fleet Activity
+Dash maintains a fleet of delegated coding tasks (issues filed to Claude Code,
+Codex, etc. — see the Fleet supervisor architecture). After fetching the
+previous brief, call:
+
+  `fleet_activity_summary(since_ts=<previous_brief.created_at>)`
+
+If `available` is false (Postgres-disabled deployment), skip this step and
+also skip the Fleet Activity section in Step 3. If `has_activity` is false,
+also skip the section — the user doesn't need a "no activity" line every day.
+
+Hold the result; you'll render it in Step 2.7 / Step 3.
 
 ### Workspace Context
 - Read your blueprint and recent learnings
@@ -214,6 +227,28 @@ Include this section ONLY if at least one KPI deserved a flag this run
   - {short description + what to do}
 
 If no KPI was flagged, omit this section entirely.
+
+## Fleet Activity
+Include this section ONLY when `fleet_activity_summary.has_activity` is true.
+Render the open buckets first, then itemize what closed since last brief.
+
+- **Open**: {by_state.pending} pending, {by_state.running} running, {by_state.review} in review ({open_total} total)
+- **New since last brief**: {new_since}
+
+Then for each non-empty bucket, list up to 5 entries:
+
+### Completed
+- {repo}#{issue_number} — {summary}{ ' → PR #' + pr_number if pr_number}
+
+### Failed
+- {repo}#{issue_number} — {summary}
+
+### Cancelled
+- {repo}#{issue_number} — {summary}
+
+Skip whichever sub-headings are empty. If multiple delegations failed,
+that's signal — consider filing a `risk` action item to investigate the
+failure pattern.
 
 ## Action Items
 

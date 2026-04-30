@@ -28,7 +28,9 @@ from __future__ import annotations
 
 import logging
 import re
+import dataclasses
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import List, Optional, Tuple
 
 from agent_fleet.delegation import parse_dash_metadata
@@ -38,10 +40,10 @@ from agent_fleet.watcher import (
     post_review_comment,
     review_pr_against_criteria,
     update_issue_checkboxes,
-    watch_repo_delegations,
     _gh,
 )
 from agent_fleet.workflow import Workflow, default_workflow
+from agent_fleet.providers import DelegationHandle, DelegationStatus
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +75,199 @@ class SupervisorReport:
         for a in self.actions:
             counts[a.kind] = counts.get(a.kind, 0) + 1
         return counts
+
+
+@dataclass
+class DelegationSnapshot:
+    """Provider status plus the legacy WatchResult shape used by handlers."""
+    repo: str
+    status: DelegationStatus
+    result: WatchResult
+
+
+def _github_default_provider(*, tenant_id: str, token: str):
+    from agent_fleet.providers import registry as provider_registry
+
+    provider = provider_registry.get("github_default", tenant_id=tenant_id)
+    if hasattr(provider, "set_token"):
+        provider.set_token(token)
+    return provider
+
+
+def _handle_from_dash_issue(repo: str, issue: dict) -> DelegationHandle:
+    return DelegationHandle(
+        provider="github_default",
+        data={
+            "repo": repo,
+            "issue_number": issue.get("number"),
+            "issue_url": issue.get("url") or issue.get("html_url") or "",
+            "task_id": issue.get("task_id") or "",
+            "agent_id": issue.get("agent_id") or "",
+        },
+    )
+
+
+def _watch_result_from_provider_status(status: DelegationStatus) -> WatchResult:
+    raw = status.raw or {}
+    return WatchResult(
+        issue_number=int(raw.get("issue_number") or 0),
+        task_id=str(raw.get("task_id") or ""),
+        agent_id=str(raw.get("agent_id") or ""),
+        status=str(raw.get("task_status") or status.state.value),
+        pr_number=raw.get("pr_number"),
+        review=raw.get("review"),
+        error=raw.get("error"),
+    )
+
+
+def _provider_handle_key(handle: DelegationHandle) -> str:
+    if handle.provider == "github_default":
+        repo = str(handle.data.get("repo") or "")
+        issue_number = str(handle.data.get("issue_number") or "")
+        return f"{repo}#{issue_number}"
+    for key in ("issue_id", "task_id", "id"):
+        value = handle.data.get(key)
+        if value:
+            return str(value)
+    return repr(sorted(handle.data.items()))
+
+
+def _json_safe(value):
+    if dataclasses.is_dataclass(value):
+        return _json_safe(dataclasses.asdict(value))
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def _persist_snapshot(tenant_id: str, status: DelegationStatus) -> None:
+    try:
+        from backend.db.postgres_client import is_postgres_enabled
+        if not is_postgres_enabled():
+            return
+        from backend import repos as pg_repos
+    except Exception:
+        return
+
+    try:
+        raw = status.raw or {}
+        artifacts = [_json_safe(a) for a in (status.artifacts or [])]
+        pg_repos.upsert_fleet_delegation(
+            tenant_id,
+            provider=status.handle.provider,
+            provider_handle_key=_provider_handle_key(status.handle),
+            handle=status.handle.data,
+            state=status.state.value if hasattr(status.state, "value") else str(status.state),
+            state_detail=status.state_detail,
+            summary=status.summary,
+            repo=raw.get("repo") or status.handle.data.get("repo"),
+            issue_number=raw.get("issue_number") or status.handle.data.get("issue_number"),
+            task_id=raw.get("task_id") or status.handle.data.get("task_id"),
+            agent_id=raw.get("agent_id") or status.handle.data.get("agent_id"),
+            pr_number=raw.get("pr_number"),
+            artifacts=artifacts,
+            raw=_json_safe(raw),
+            last_activity_at=status.last_activity_at,
+        )
+    except Exception as e:
+        # Never raise: the supervisor must keep iterating even if persistence
+        # is broken (Postgres blip, schema drift, etc.). Log enough to
+        # diagnose: the handle key + state + tenant_id pinpoint which
+        # delegation failed to write without dumping the full raw payload.
+        try:
+            handle_key = _provider_handle_key(status.handle)
+            state_value = status.state.value if hasattr(status.state, "value") else str(status.state)
+        except Exception:
+            handle_key = "?"
+            state_value = "?"
+        logger.warning(
+            "fleet snapshot persist failed: tenant=%s provider=%s handle=%s state=%s err=%s",
+            tenant_id, status.handle.provider, handle_key, state_value, e,
+        )
+
+
+def scan_github_default_delegations(
+    *,
+    tenant_id: str,
+    repos_list: List[str],
+    token: str,
+) -> List[DelegationSnapshot]:
+    """Discover GitHub Dash issues, then get side-effect-free provider status."""
+    from agent_fleet.delegation import find_dash_issues
+
+    provider = _github_default_provider(tenant_id=tenant_id, token=token)
+    snapshots: List[DelegationSnapshot] = []
+    for repo in repos_list:
+        for issue in find_dash_issues(repo, token, state="open"):
+            handle = _handle_from_dash_issue(repo, issue)
+            status = provider.status(handle)
+            _persist_snapshot(tenant_id, status)
+            snapshots.append(
+                DelegationSnapshot(
+                    repo=repo,
+                    status=status,
+                    result=_watch_result_from_provider_status(status),
+                )
+            )
+    return snapshots
+
+
+def watch_repo_delegations(repo: str, token: str, *, tenant_id: str) -> List[DelegationSnapshot]:
+    """Compatibility entry point, now backed by provider status snapshots.
+
+    `tenant_id` is required: every snapshot is persisted to fleet_delegations
+    keyed by tenant. Allowing a silent "default" fallback would let stray
+    callers write rows under the wrong tenant.
+    """
+    if not tenant_id:
+        raise ValueError("watch_repo_delegations: tenant_id is required")
+    return scan_github_default_delegations(
+        tenant_id=tenant_id,
+        repos_list=[repo],
+        token=token,
+    )
+
+
+def scan_persisted_delegations(
+    *,
+    tenant_id: str,
+    token: str,
+    include_terminal: bool = False,
+) -> List[DelegationSnapshot]:
+    """Refresh provider statuses from persisted handles."""
+    from agent_fleet.providers import registry as provider_registry
+    from agent_fleet.providers.base import DelegationHandle
+    from backend import repos as pg_repos
+
+    rows = pg_repos.list_fleet_delegations(
+        tenant_id,
+        include_terminal=include_terminal,
+    )
+    snapshots: List[DelegationSnapshot] = []
+    for row in rows:
+        handle = DelegationHandle(
+            provider=row["provider"],
+            data=row.get("handle") or {},
+        )
+        provider = provider_registry.get(handle.provider, tenant_id=tenant_id)
+        if handle.provider == "github_default" and hasattr(provider, "set_token"):
+            provider.set_token(token)
+        status = provider.status(handle)
+        _persist_snapshot(tenant_id, status)
+        snapshots.append(
+            DelegationSnapshot(
+                repo=(status.raw or {}).get("repo") or row.get("repo") or "",
+                status=status,
+                result=_watch_result_from_provider_status(status),
+            )
+        )
+    return snapshots
 
 
 # ---------------------------------------------------------------------------
@@ -752,25 +947,32 @@ def run_supervisor(
     for repo in repos_list:
         report.repos_scanned += 1
         try:
-            results = watch_repo_delegations(repo, token)
+            scanned = watch_repo_delegations(repo, token, tenant_id=tenant_id)
         except Exception as e:
-            logger.exception("watch_repo_delegations failed for %s", repo)
+            logger.exception("provider status scan failed for %s", repo)
             report.actions.append(SupervisorAction(
                 repo=repo, issue_number=0,
-                kind="error", detail="watch failed", error=str(e),
+                kind="error", detail="provider status scan failed", error=str(e),
             ))
             continue
 
-        for result in results:
+        for item in scanned:
+            if isinstance(item, DelegationSnapshot):
+                snapshot = item
+                result = snapshot.result
+                issue_dict = (snapshot.status.raw or {}).get("issue") or {}
+                metadata = (snapshot.status.raw or {}).get("metadata") or {}
+            else:
+                snapshot = None
+                result = item
+                status, issue = _gh("GET", f"/repos/{repo}/issues/{result.issue_number}", token)
+                issue_dict = issue if status == 200 and isinstance(issue, dict) else {}
+                metadata = parse_dash_metadata(issue_dict.get("body") or "") or {}
+
             report.delegations_seen += 1
 
-            # Pull metadata once so handlers can use brief_action_id etc.
-            status, issue = _gh("GET", f"/repos/{repo}/issues/{result.issue_number}", token)
-            metadata = {}
-            if status == 200 and isinstance(issue, dict):
-                metadata = parse_dash_metadata(issue.get("body") or "") or {}
-
-            issue_dict = issue if isinstance(issue, dict) else {}
+            if not metadata and issue_dict:
+                metadata = parse_dash_metadata(issue_dict.get("body") or "") or {}
 
             if result.status == TaskStatus.PR_OPENED:
                 _handle_pr_opened(result, repo, token, workflow, report)

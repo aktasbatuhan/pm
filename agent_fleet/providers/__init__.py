@@ -22,6 +22,11 @@ from agent_fleet.providers.base import (
     ProviderUnavailable,
 )
 
+# Import built-ins for registry side effects. The registry intentionally stays
+# lazy per tenant, but provider names must be present after `import agent_fleet.providers`.
+from . import github_default as _github_default  # noqa: F401
+from . import multica as _multica  # noqa: F401
+
 __all__ = [
     "DelegationProvider",
     "DelegationHandle",
