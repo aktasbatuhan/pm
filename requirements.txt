@@ -25,6 +25,7 @@ tenacity==9.1.2
 PyJWT==2.10.1
 bcrypt==4.3.0
 cryptography>=42.0.0
+argon2-cffi>=23.1.0
 
 # LLM / AI
 openai==1.102.0
