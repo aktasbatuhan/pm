@@ -114,11 +114,50 @@ def _mutator_rotate_fallback_chain(text: str, change: Dict[str, Any]) -> str:
     return _rejoin(new_yaml, body)
 
 
-_AUTONOMOUS_MUTATORS: Dict[str, WorkflowMutator] = {
+def _mutator_add_remove_agents(text: str, change: Dict[str, Any]) -> str:
+    """Generic shape: write change['to'] into change['section'].change['field'].
+
+    Used by signals like missing_fallback_chain (escalation.fallback_chain)
+    and default_agent_unreliable (routing.default). Intentionally permissive
+    so observer can introduce new section/field combos without an evolver
+    code change as long as parse_workflow accepts the shape afterwards.
+    """
+    section = str(change.get("section") or "").strip()
+    field = str(change.get("field") or "").strip()
+    if not section or not field:
+        raise ValueError("add_remove_agents requires 'section' and 'field' in suggested_change")
+    yaml_text, body = _split_front_matter(text)
+    new_yaml = _mutate_yaml_field(yaml_text, [section, field], change.get("to"))
+    return _rejoin(new_yaml, body)
+
+
+# Mutator catalog. The autonomy gate decides whether each runs automatically;
+# user-accepted proposals dispatch through this same dict.
+_MUTATORS: Dict[str, WorkflowMutator] = {
     "adjust_stall_timeout": _mutator_adjust_stall_timeout,
     "tighten_retries": _mutator_tighten_retries,
     "rotate_fallback_chain": _mutator_rotate_fallback_chain,
+    "add_remove_agents": _mutator_add_remove_agents,
 }
+
+# Backward-compat alias for tests/external imports that read the autonomous set.
+_AUTONOMOUS_MUTATORS = _MUTATORS
+
+
+def apply_proposal(workflow_text: str, suggested_change: Dict[str, Any]) -> str:
+    """Apply a proposal's suggested_change to the workflow body.
+
+    Returns the new body. Validates that it still parses; raises on mutator
+    crash or post-mutation parse failure so the caller can surface the error
+    instead of saving a broken revision.
+    """
+    handler = (suggested_change or {}).get("handler") or ""
+    mutator = _MUTATORS.get(handler)
+    if mutator is None:
+        raise ValueError(f"No mutator for handler '{handler}'")
+    new_text = mutator(workflow_text, suggested_change)
+    parse_workflow(new_text)  # raises if the result is malformed
+    return new_text
 
 
 # ---------------------------------------------------------------------------
@@ -156,9 +195,9 @@ def evolve(*, ctx: EvolverContext, signals: List[Signal]) -> List[EvolutionDecis
             ))
             continue
 
-        if handler in autonomy.autonomous and handler in _AUTONOMOUS_MUTATORS:
+        if handler in autonomy.autonomous and handler in _MUTATORS:
             try:
-                new_text = _AUTONOMOUS_MUTATORS[handler](new_text, sig.suggested_change)
+                new_text = _MUTATORS[handler](new_text, sig.suggested_change)
                 # Validate the result still parses
                 parse_workflow(new_text)
                 autonomous_signals.append(sig)

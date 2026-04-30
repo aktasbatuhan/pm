@@ -157,7 +157,8 @@ def get_latest_brief(tenant_id: str) -> Optional[dict]:
 
 
 def list_brief_actions(tenant_id: str, brief_id: Optional[str] = None,
-                       status: Optional[str] = None) -> list[dict]:
+                       status: Optional[str] = None,
+                       category: Optional[str] = None) -> list[dict]:
     sql = "SELECT * FROM brief_actions WHERE tenant_id = %s"
     args: list[Any] = [tenant_id]
     if brief_id:
@@ -166,6 +167,9 @@ def list_brief_actions(tenant_id: str, brief_id: Optional[str] = None,
     if status:
         sql += " AND status = %s"
         args.append(status)
+    if category:
+        sql += " AND category = %s"
+        args.append(category)
     sql += " ORDER BY CASE status WHEN 'pending' THEN 0 WHEN 'in-progress' THEN 1 ELSE 2 END, created_at"
 
     with get_pool().connection() as conn:
@@ -173,6 +177,19 @@ def list_brief_actions(tenant_id: str, brief_id: Optional[str] = None,
             cur.execute(sql, args)
             rows = cur.fetchall()
     return [_shape_action(r) for r in rows]
+
+
+def get_brief_action(tenant_id: str, action_id: str) -> Optional[dict]:
+    """Fetch a single brief_action by id, scoped to tenant. Returns None if
+    the action doesn't exist or belongs to another tenant."""
+    with get_pool().connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM brief_actions WHERE tenant_id = %s AND id = %s",
+                (tenant_id, action_id),
+            )
+            row = cur.fetchone()
+    return _shape_action(row) if row else None
 
 
 def insert_brief(tenant_id: str, *, brief_id: str, summary: str, headline: str,

@@ -996,6 +996,60 @@ export async function fetchWorkflowRevisions(): Promise<WorkflowRevision[]> {
   return data.revisions ?? [];
 }
 
+// ── Workflow proposals (evolver-authored, accept/dismiss) ──────────────────
+
+export interface WorkflowProposalChange {
+  handler?: string;
+  section?: string;
+  field?: string;
+  from?: unknown;
+  to?: unknown;
+}
+
+export interface WorkflowProposal {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  created_at: number | null;
+  updated_at: number | null;
+  signal_kind: string | null;
+  severity: string | null;
+  rationale: string | null;
+  suggested_change: WorkflowProposalChange | null;
+  evidence: Record<string, unknown> | null;
+  applicable: boolean;
+}
+
+export async function fetchWorkflowProposals(): Promise<WorkflowProposal[]> {
+  const res = await apiFetch(`/api/workflow/proposals`);
+  if (!res.ok) return [];
+  const data = await res.json();
+  return data.proposals ?? [];
+}
+
+export async function acceptWorkflowProposal(
+  actionId: string,
+): Promise<{ ok: boolean; revision?: number; error?: string }> {
+  const res = await apiFetch(`/api/workflow/proposals/${actionId}/accept`, {
+    method: "POST",
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  return { ok: true, revision: data.revision };
+}
+
+export async function dismissWorkflowProposal(
+  actionId: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`/api/workflow/proposals/${actionId}/dismiss`, {
+    method: "POST",
+  });
+  const data = await res.json();
+  if (!res.ok) return { ok: false, error: data?.error || `HTTP ${res.status}` };
+  return { ok: true };
+}
+
 /**
  * Fetch the GitHub App install URL.
  *

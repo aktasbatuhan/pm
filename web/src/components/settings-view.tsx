@@ -17,6 +17,9 @@ import {
   fetchActiveWorkflow,
   saveWorkflow,
   fetchWorkflowRevisions,
+  fetchWorkflowProposals,
+  acceptWorkflowProposal,
+  dismissWorkflowProposal,
   fetchDelegations,
   runSupervisor,
   refileDelegation,
@@ -25,6 +28,7 @@ import {
   type GithubAppStatus,
   type WorkflowResponse,
   type WorkflowRevision,
+  type WorkflowProposal,
   type Delegation,
   type SupervisorReportResponse,
 } from "@/lib/api";
@@ -795,6 +799,7 @@ function AddMCPServerForm({
 function WorkflowSection() {
   const [workflow, setWorkflow] = useState<WorkflowResponse | null>(null);
   const [revisions, setRevisions] = useState<WorkflowRevision[]>([]);
+  const [proposals, setProposals] = useState<WorkflowProposal[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -805,9 +810,14 @@ function WorkflowSection() {
 
   const load = useCallback(async () => {
     setLoading(true);
-    const [w, h] = await Promise.all([fetchActiveWorkflow(), fetchWorkflowRevisions()]);
+    const [w, h, p] = await Promise.all([
+      fetchActiveWorkflow(),
+      fetchWorkflowRevisions(),
+      fetchWorkflowProposals(),
+    ]);
     setWorkflow(w);
     setRevisions(h);
+    setProposals(p);
     setLoading(false);
   }, []);
 
@@ -935,6 +945,8 @@ function WorkflowSection() {
           </CardContent>
         </Card>
 
+        <ProposalsPanel proposals={proposals} onChanged={load} />
+
         {showHistory && revisions.length > 0 && (
           <Card className="mt-3">
             <CardContent className="space-y-2 p-4">
@@ -970,6 +982,152 @@ function WorkflowSection() {
         )}
       </div>
     </div>
+  );
+}
+
+
+// ── Workflow proposals panel ────────────────────────────────────────────
+
+function formatChangeValue(v: unknown): string {
+  if (v === null || v === undefined) return "—";
+  if (Array.isArray(v)) return v.length === 0 ? "[]" : `[${v.join(", ")}]`;
+  if (typeof v === "object") {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+  return String(v);
+}
+
+function ProposalsPanel({
+  proposals,
+  onChanged,
+}: {
+  proposals: WorkflowProposal[];
+  onChanged: () => void | Promise<void>;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (proposals.length === 0) return null;
+
+  async function handleAccept(id: string) {
+    setBusyId(id);
+    setError(null);
+    const result = await acceptWorkflowProposal(id);
+    setBusyId(null);
+    if (!result.ok) {
+      setError(result.error ?? "Accept failed");
+      return;
+    }
+    await onChanged();
+  }
+
+  async function handleDismiss(id: string) {
+    setBusyId(id);
+    setError(null);
+    const result = await dismissWorkflowProposal(id);
+    setBusyId(null);
+    if (!result.ok) {
+      setError(result.error ?? "Dismiss failed");
+      return;
+    }
+    await onChanged();
+  }
+
+  return (
+    <Card className="mt-3 border-amber-200/60 dark:border-amber-900/40">
+      <CardContent className="space-y-3 p-4">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            Workflow proposals from Dash ({proposals.length})
+          </h3>
+          <span className="text-[10px] text-muted-foreground">
+            Accept applies the change as a new revision authored by you.
+          </span>
+        </div>
+
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/40 dark:bg-red-950/40 dark:text-red-300">
+            {error}
+          </div>
+        )}
+
+        <div className="space-y-2">
+          {proposals.map((p) => {
+            const change = p.suggested_change;
+            const fieldPath = change?.section && change?.field
+              ? `${change.section}.${change.field}`
+              : "—";
+            const busy = busyId === p.id;
+            return (
+              <div
+                key={p.id}
+                className="rounded-md border border-border bg-muted/30 p-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold">{p.signal_kind ?? p.title}</span>
+                      {p.severity && (
+                        <Badge
+                          variant={p.severity === "warn" ? "destructive" : "secondary"}
+                          className="text-[9px]"
+                        >
+                          {p.severity}
+                        </Badge>
+                      )}
+                    </div>
+                    {p.rationale && (
+                      <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                        {p.rationale}
+                      </p>
+                    )}
+                    {change && (
+                      <div className="mt-2 rounded border border-border bg-background px-2.5 py-1.5 font-mono text-[11px]">
+                        <span className="text-muted-foreground">{fieldPath}:</span>{" "}
+                        <span className="text-red-600 dark:text-red-400 line-through">
+                          {formatChangeValue(change.from)}
+                        </span>{" "}
+                        →{" "}
+                        <span className="text-green-700 dark:text-green-400">
+                          {formatChangeValue(change.to)}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <button
+                      onClick={() => handleAccept(p.id)}
+                      disabled={!p.applicable || busy}
+                      title={p.applicable ? "Apply as a new revision" : "Proposal payload is incomplete"}
+                      className="inline-flex items-center gap-1 rounded-md bg-primary px-2.5 py-1 text-[11px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+                    >
+                      {busy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Check className="h-3 w-3" />
+                      )}
+                      Accept
+                    </button>
+                    <button
+                      onClick={() => handleDismiss(p.id)}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
+                    >
+                      <X className="h-3 w-3" />
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

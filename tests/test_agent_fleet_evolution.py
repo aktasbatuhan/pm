@@ -234,3 +234,66 @@ class TestEvolver:
         decisions = evolve(ctx=ctx, signals=[sig])
         assert decisions[0].outcome == "skipped"
         assert "no handler" in decisions[0].reason
+
+
+# ---------------------------------------------------------------------------
+# apply_proposal — used by the /api/workflow/proposals/{id}/accept endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestApplyProposal:
+    def test_applies_adjust_stall_timeout(self):
+        from agent_fleet.evolver import apply_proposal
+        new_text = apply_proposal(
+            DEFAULT_WORKFLOW_TEXT,
+            {"handler": "adjust_stall_timeout", "to": 8},
+        )
+        assert parse_workflow(new_text).escalation.stall_timeout_hours == 8
+
+    def test_applies_add_remove_agents_to_routing_default(self):
+        """The generic mutator handles arbitrary section/field combos. Used
+        for the default_agent_unreliable signal which rewrites routing.default."""
+        from agent_fleet.evolver import apply_proposal
+        new_text = apply_proposal(
+            DEFAULT_WORKFLOW_TEXT,
+            {
+                "handler": "add_remove_agents",
+                "section": "routing",
+                "field": "default",
+                "from": "claude-code",
+                "to": "codex",
+            },
+        )
+        assert parse_workflow(new_text).routing.default == "codex"
+
+    def test_applies_add_remove_agents_to_fallback_chain(self):
+        from agent_fleet.evolver import apply_proposal
+        new_text = apply_proposal(
+            DEFAULT_WORKFLOW_TEXT,
+            {
+                "handler": "add_remove_agents",
+                "section": "escalation",
+                "field": "fallback_chain",
+                "from": [],
+                "to": ["codex", "claude-code"],
+            },
+        )
+        assert parse_workflow(new_text).escalation.fallback_chain == ["codex", "claude-code"]
+
+    def test_unknown_handler_raises(self):
+        from agent_fleet.evolver import apply_proposal
+        try:
+            apply_proposal(DEFAULT_WORKFLOW_TEXT, {"handler": "fly_to_the_moon"})
+        except ValueError as e:
+            assert "fly_to_the_moon" in str(e)
+        else:
+            raise AssertionError("expected ValueError")
+
+    def test_add_remove_agents_requires_section_and_field(self):
+        from agent_fleet.evolver import apply_proposal
+        try:
+            apply_proposal(DEFAULT_WORKFLOW_TEXT, {"handler": "add_remove_agents", "to": "x"})
+        except ValueError as e:
+            assert "section" in str(e) and "field" in str(e)
+        else:
+            raise AssertionError("expected ValueError")

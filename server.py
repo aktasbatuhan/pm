@@ -2737,7 +2737,10 @@ async def fleet_observe(request: Request, tenant=Depends(get_current_tenant)):
         )
 
     def _file_proposal(tenant_id: str, signal) -> Optional[str]:
-        # File the proposal as a pending brief_action so it shows up in the brief.
+        # File the proposal as a pending brief_action so it shows up in the brief
+        # AND persists the structured suggested_change in references_json so the
+        # accept endpoint can call evolver.apply_proposal without parsing the
+        # description text.
         action_id = uuid.uuid4().hex[:8]
         change = signal.suggested_change or {}
         title = f"Workflow proposal: {signal.kind}"
@@ -2746,6 +2749,14 @@ async def fleet_observe(request: Request, tenant=Depends(get_current_tenant)):
             f"Suggested change: `{change.get('section')}.{change.get('field')}`: "
             f"`{change.get('from')}` → `{change.get('to')}`"
         )
+        proposal_payload = [{
+            "type": "workflow_proposal",
+            "signal_kind": signal.kind,
+            "severity": signal.severity,
+            "rationale": signal.rationale,
+            "suggested_change": change,
+            "evidence": signal.evidence,
+        }]
         try:
             with pg_repos.get_pool().connection() as conn:
                 with conn.cursor() as cur:
@@ -2755,7 +2766,7 @@ async def fleet_observe(request: Request, tenant=Depends(get_current_tenant)):
                                 priority, status, references_json)
                            VALUES (%s, %s, NULL, 'workflow-proposal', %s, %s, 'medium',
                                    'pending', %s)""",
-                        (action_id, tenant_id, title, description, json.dumps([])),
+                        (action_id, tenant_id, title, description, json.dumps(proposal_payload)),
                     )
             return action_id
         except Exception:
@@ -3086,6 +3097,148 @@ def workflow_get_revision(revision: int, tenant=Depends(get_current_tenant)):
     if not rev:
         return JSONResponse({"error": "Revision not found"}, status_code=404)
     return rev
+
+
+# ── Workflow proposals (evolver-authored brief_actions surfaced to UI) ─────
+
+def _shape_workflow_proposal(action: dict) -> dict:
+    """Pull the structured proposal payload out of references_json, falling
+    back gracefully for legacy proposals filed before the payload was stored."""
+    refs = action.get("references") or []
+    payload = next(
+        (r for r in refs if isinstance(r, dict) and r.get("type") == "workflow_proposal"),
+        None,
+    )
+    return {
+        "id": action["id"],
+        "title": action.get("title") or "",
+        "description": action.get("description") or "",
+        "status": action.get("status") or "pending",
+        "created_at": action.get("created_at"),
+        "updated_at": action.get("updated_at"),
+        "signal_kind": (payload or {}).get("signal_kind"),
+        "severity": (payload or {}).get("severity"),
+        "rationale": (payload or {}).get("rationale"),
+        "suggested_change": (payload or {}).get("suggested_change"),
+        "evidence": (payload or {}).get("evidence"),
+        "applicable": bool(payload and (payload.get("suggested_change") or {}).get("handler")),
+    }
+
+
+@app.get("/api/workflow/proposals")
+def workflow_list_proposals(tenant=Depends(get_current_tenant)):
+    """List pending workflow proposals filed by the evolver.
+
+    These are brief_actions with category='workflow-proposal'. The structured
+    suggested_change is recovered from references_json so the UI can render a
+    real diff and the accept endpoint can dispatch to evolver mutators.
+    """
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflow proposals require Postgres"}, status_code=503)
+    from backend import repos
+    actions = repos.list_brief_actions(
+        tenant.tenant_id, status="pending", category="workflow-proposal",
+    )
+    proposals = [_shape_workflow_proposal(a) for a in actions]
+    return {"proposals": proposals}
+
+
+@app.post("/api/workflow/proposals/{action_id}/accept")
+def workflow_accept_proposal(action_id: str, tenant=Depends(get_current_tenant)):
+    """Apply the proposal's suggested change to the active workflow, save a
+    new revision authored by the current user, and resolve the brief_action.
+
+    Failure modes (each surfaces a distinct status code):
+      - proposal not found / wrong category    -> 404
+      - proposal payload missing or unhandled  -> 422
+      - mutator crashes / result won't parse   -> 500
+    """
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflow proposals require Postgres"}, status_code=503)
+
+    from agent_fleet.evolver import apply_proposal
+    from agent_fleet.workflow import (
+        DEFAULT_WORKFLOW_TEXT, WorkflowParseError, parse_workflow,
+    )
+    from backend import repos
+
+    action = repos.get_brief_action(tenant.tenant_id, action_id)
+    if not action or action.get("category") != "workflow-proposal":
+        return JSONResponse({"error": "Proposal not found"}, status_code=404)
+    if action.get("status") != "pending":
+        return JSONResponse(
+            {"error": f"Proposal already {action.get('status')}"},
+            status_code=409,
+        )
+
+    proposal = _shape_workflow_proposal(action)
+    suggested = proposal.get("suggested_change") or {}
+    if not suggested.get("handler"):
+        return JSONResponse(
+            {"error": "Proposal payload missing or has no handler — can't auto-apply."},
+            status_code=422,
+        )
+
+    active = repos.get_active_workflow(tenant.tenant_id)
+    current_text = active["body"] if active else DEFAULT_WORKFLOW_TEXT
+
+    try:
+        new_text = apply_proposal(current_text, suggested)
+        wf = parse_workflow(new_text)
+    except WorkflowParseError as e:
+        return JSONResponse(
+            {"error": f"Mutation produced an invalid workflow: {e}"},
+            status_code=500,
+        )
+    except (KeyError, TypeError, ValueError) as e:
+        return JSONResponse(
+            {"error": f"Couldn't apply proposal: {e}"},
+            status_code=500,
+        )
+
+    rationale = (
+        f"Accepted workflow proposal: {proposal.get('signal_kind') or 'unknown'}. "
+        f"{(proposal.get('rationale') or '').strip()}"
+    ).strip()
+
+    rev = repos.save_workflow_revision(
+        tenant.tenant_id,
+        name=wf.name,
+        body=new_text,
+        author=tenant.user_id,
+        rationale=rationale,
+        based_on_signals=[{
+            "signal_kind": proposal.get("signal_kind"),
+            "severity": proposal.get("severity"),
+            "evidence": proposal.get("evidence"),
+            "suggested_change": suggested,
+            "accepted_via": "ui",
+            "proposal_action_id": action_id,
+        }],
+    )
+    repos.update_brief_action(tenant.tenant_id, action_id, status="resolved")
+    return {"ok": True, "revision": rev, "name": wf.name}
+
+
+@app.post("/api/workflow/proposals/{action_id}/dismiss")
+def workflow_dismiss_proposal(action_id: str, tenant=Depends(get_current_tenant)):
+    """Resolve the proposal action without applying. Same effect as the
+    user clicking 'resolve' on any other brief action — dismissed proposals
+    stay in the brief_actions table for audit but no longer surface."""
+    if not is_postgres_enabled():
+        return JSONResponse({"error": "Workflow proposals require Postgres"}, status_code=503)
+    from backend import repos
+
+    action = repos.get_brief_action(tenant.tenant_id, action_id)
+    if not action or action.get("category") != "workflow-proposal":
+        return JSONResponse({"error": "Proposal not found"}, status_code=404)
+    if action.get("status") != "pending":
+        return JSONResponse(
+            {"error": f"Proposal already {action.get('status')}"},
+            status_code=409,
+        )
+    repos.update_brief_action(tenant.tenant_id, action_id, status="dismissed")
+    return {"ok": True}
 
 
 @app.get("/api/workspace/status")
