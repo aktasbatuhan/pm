@@ -6,7 +6,9 @@ import { ChatView } from "@/components/chat-view";
 import { OnboardingView } from "@/components/onboarding-view";
 import { SessionSidebar } from "@/components/session-sidebar";
 import { cn } from "@/lib/utils";
-import { fetchSessions, fetchWorkspace, logout } from "@/lib/api";
+import {
+  fetchSessions, fetchWorkspace, logout, fetchWorkflowProposals,
+} from "@/lib/api";
 import type { Session, WorkspaceStatus } from "@/lib/types";
 import { FileText, FileCode, MessageSquare, Lightbulb, Radar, Timer, Plus, Loader2, LogOut, Target, Settings } from "lucide-react";
 import { InsightsView } from "@/components/insights-view";
@@ -29,6 +31,7 @@ export default function Home() {
   const [workspace, setWorkspace] = useState<WorkspaceStatus | null>(null);
   const [wsLoading, setWsLoading] = useState(true);
   const [onboarding, setOnboarding] = useState(false);
+  const [pendingProposalCount, setPendingProposalCount] = useState(0);
 
   const loadWorkspace = useCallback(async () => {
     try {
@@ -51,10 +54,24 @@ export default function Home() {
     }
   }, []);
 
+  const loadProposalCount = useCallback(async () => {
+    try {
+      const proposals = await fetchWorkflowProposals();
+      setPendingProposalCount(proposals.length);
+    } catch {
+      // Endpoint requires Postgres; legacy mode silently returns 503 → 0.
+      setPendingProposalCount(0);
+    }
+  }, []);
+
   useEffect(() => {
     loadWorkspace();
     loadSessions();
-  }, [loadWorkspace, loadSessions]);
+    loadProposalCount();
+    // Re-poll every 5 minutes so the badge stays fresh between cron ticks.
+    const t = setInterval(loadProposalCount, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [loadWorkspace, loadSessions, loadProposalCount]);
 
   // Only show onboarding when we have a confirmed not_started status from
   // the API. A null workspace (transient error, 401, etc.) is NOT enough —
@@ -242,14 +259,22 @@ export default function Home() {
             <button
               onClick={() => setView("settings")}
               className={cn(
-                "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-all",
+                "relative flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[13px] font-medium transition-all",
                 view === "settings"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground hover:text-foreground"
               )}
+              title={pendingProposalCount > 0
+                ? `${pendingProposalCount} pending workflow proposal${pendingProposalCount === 1 ? "" : "s"}`
+                : undefined}
             >
               <Settings className="h-3.5 w-3.5" />
               Settings
+              {pendingProposalCount > 0 && (
+                <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                  {pendingProposalCount}
+                </span>
+              )}
             </button>
           </div>
 
@@ -306,7 +331,7 @@ export default function Home() {
             <RoutinesView />
           )}
           {view === "settings" && (
-            <SettingsView />
+            <SettingsView pendingProposalCount={pendingProposalCount} />
           )}
         </main>
       </div>

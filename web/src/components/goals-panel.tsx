@@ -165,8 +165,27 @@ export function GoalsPanel({ onNavigateToChat }: Props) {
         ) : goals.length === 0 && !creating ? (
           <div className="py-8 text-center">
             <Target className="mx-auto h-8 w-8 text-muted-foreground/30" />
-            <p className="mt-2 text-sm text-muted-foreground">No goals yet</p>
-            <p className="mt-1 text-xs text-muted-foreground">Set goals and Dash will track progress + action items in every brief</p>
+            <p className="mt-2 text-sm font-medium">No goals yet</p>
+            <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">
+              Add a goal like &ldquo;ship onboarding v2 by end of May&rdquo; or
+              &ldquo;double signup conversion by Q3.&rdquo; Dash re-evaluates every brief —
+              estimating progress, setting trajectory, and proposing weekly action items.
+            </p>
+            <div className="mt-4 flex flex-wrap items-center justify-center gap-2">
+              <button
+                onClick={() => setCreating(true)}
+                className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+              >
+                <Plus className="h-3 w-3" /> Add your first goal
+              </button>
+              <span className="text-[10px] text-muted-foreground">or</span>
+              <button
+                onClick={() => onNavigateToChat("What goals should I be tracking based on what we're working on?")}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                Ask Dash to suggest some
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-3">

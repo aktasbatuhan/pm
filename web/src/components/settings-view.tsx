@@ -80,8 +80,15 @@ function timeAgo(ts: number | null): string {
   return new Date(ts * 1000).toLocaleDateString();
 }
 
-export function SettingsView() {
-  const [tab, setTab] = useState<"integrations" | "mcp" | "workflow" | "fleet">("integrations");
+interface SettingsViewProps {
+  pendingProposalCount?: number;
+}
+
+export function SettingsView({ pendingProposalCount = 0 }: SettingsViewProps = {}) {
+  // Auto-open the Workflow tab on first render when there are pending
+  // proposals — the user came here to review them, not to scroll for them.
+  const initialTab = pendingProposalCount > 0 ? "workflow" : "integrations";
+  const [tab, setTab] = useState<"integrations" | "mcp" | "workflow" | "fleet">(initialTab);
 
   return (
     <ScrollArea className="h-full">
@@ -129,6 +136,11 @@ export function SettingsView() {
           >
             <GitBranch className="h-3.5 w-3.5" />
             Workflow
+            {pendingProposalCount > 0 && (
+              <span className="ml-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-500 px-1 text-[10px] font-semibold text-white">
+                {pendingProposalCount}
+              </span>
+            )}
           </button>
           <button
             onClick={() => setTab("fleet")}
@@ -262,6 +274,66 @@ function GithubAppCard({
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
         </button>
       </div>
+
+      {/* Webhook setup nudge — visible right after the App is connected. */}
+      <WebhookSetupRow installSlug={install.account_login} />
+    </div>
+  );
+}
+
+
+function WebhookSetupRow({ installSlug }: { installSlug: string }) {
+  const [open, setOpen] = useState(false);
+  // Best-effort: backend hostname is whatever served this page request via the
+  // configured API URL; surface it so the user can copy without guessing.
+  const apiBase = (typeof window !== "undefined" && process.env.NEXT_PUBLIC_API_URL)
+    ? process.env.NEXT_PUBLIC_API_URL.replace(/\/$/, "")
+    : "https://your-dash-host";
+  const webhookUrl = `${apiBase}/api/integrations/github/webhook`;
+  return (
+    <div className="mt-3 rounded-lg border border-dashed border-border bg-muted/20 px-3 py-2.5 text-[11px]">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between text-left text-muted-foreground hover:text-foreground"
+      >
+        <span className="flex items-center gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+          <span className="font-medium">Webhooks: configure for real-time supervision</span>
+        </span>
+        <span className="text-[10px]">{open ? "Hide" : "Show steps"}</span>
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2 border-t border-border pt-2 text-foreground/80">
+          <p>
+            Without webhooks, Dash supervises every 12 minutes via cron. With them, it reacts to
+            PR / comment / review events in seconds.
+          </p>
+          <ol className="list-decimal space-y-1 pl-4">
+            <li>
+              In your GitHub App settings ({installSlug}) → Webhooks, set the URL to:
+              <div className="mt-1 select-all rounded bg-background px-2 py-1 font-mono text-[10px]">
+                {webhookUrl}
+              </div>
+            </li>
+            <li>
+              Generate a strong secret (
+              <code className="rounded bg-background px-1">
+                python3 -c &quot;import secrets; print(secrets.token_urlsafe(48))&quot;
+              </code>
+              ), paste into both the GitHub App secret field AND the
+              <code className="rounded bg-background px-1">GITHUB_APP_WEBHOOK_SECRET</code> env var
+              on your Dash server.
+            </li>
+            <li>
+              Subscribe to events: <span className="font-mono">Issues, Issue comment, Pull request, Pull request review</span>.
+            </li>
+            <li>
+              Save. GitHub fires a <span className="font-mono">ping</span> — Dash should respond
+              <span className="font-mono"> &#123;ok:true, pong:true&#125;</span> in Recent Deliveries.
+            </li>
+          </ol>
+        </div>
+      )}
     </div>
   );
 }
@@ -1145,6 +1217,19 @@ function formatStatus(status: string): string {
   return status.replace(/_/g, " ");
 }
 
+function FleetStateChip({ color, label, desc }: { color: string; label: string; desc: string }) {
+  return (
+    <span
+      title={desc}
+      className="inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 font-mono text-[10px] text-foreground"
+    >
+      <span className={cn("h-1.5 w-1.5 rounded-full", color)} />
+      {label}
+    </span>
+  );
+}
+
+
 function FleetSection() {
   const [delegations, setDelegations] = useState<Delegation[]>([]);
   const [summary, setSummary] = useState<string>("");
@@ -1217,11 +1302,42 @@ function FleetSection() {
 
   return (
     <div className="space-y-6">
+      {/* ── Explainer ─────────────────────────────────────────── */}
+      <Card className="border-dashed">
+        <CardContent className="space-y-3 p-4 text-xs leading-relaxed text-muted-foreground">
+          <p>
+            <span className="font-semibold text-foreground">Fleet</span> is Dash's pool of coding
+            agents — Claude Code, Codex, Cursor, anything that listens on GitHub. When you delegate
+            an issue to one (via comment-mention, label, or assignment), Dash files a structured
+            task, watches the resulting PR, and supervises the lifecycle below.
+          </p>
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <FleetStateChip color="bg-slate-400" label="pending" desc="filed, agent hasn't picked it up yet" />
+            <span className="text-muted-foreground/50">→</span>
+            <FleetStateChip color="bg-blue-500" label="running" desc="agent is working, PR opened" />
+            <span className="text-muted-foreground/50">→</span>
+            <FleetStateChip color="bg-amber-500" label="review" desc="Dash reviewed against your acceptance criteria" />
+            <span className="text-muted-foreground/50">→</span>
+            <FleetStateChip color="bg-emerald-500" label="done" desc="PR merged" />
+            <span className="text-muted-foreground/30">|</span>
+            <FleetStateChip color="bg-rose-500" label="failed" desc="PR closed without merge or agent gave up" />
+            <FleetStateChip color="bg-zinc-400" label="cancelled" desc="you closed the issue" />
+          </div>
+          <p className="pt-1">
+            The supervisor reconciles every 12 minutes per tenant, plus reacts in real time to
+            GitHub webhooks if you've configured them. Stalled work gets refiled to the next agent
+            in your workflow's fallback chain. See{" "}
+            <span className="font-mono text-foreground">Settings → Workflow</span> to customize the
+            policy.
+          </p>
+        </CardContent>
+      </Card>
+
       <div>
         <div className="mb-3 flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Fleet supervisor
+              Active delegations
             </h2>
             <p className="mt-1 text-xs text-muted-foreground">{summary}</p>
           </div>

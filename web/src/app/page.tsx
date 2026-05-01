@@ -17,6 +17,7 @@ import {
   MessageSquare,
   Lightbulb,
   CheckCircle2,
+  Bot,
 } from "lucide-react";
 
 export default function LandingPage() {
@@ -134,7 +135,7 @@ export default function LandingPage() {
           <div className="mx-auto max-w-3xl text-center">
             <p className="text-sm font-semibold text-primary">Everything a PM needs</p>
             <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
-              Six surfaces, one agent
+              Seven surfaces, one agent
             </h2>
             <p className="mt-4 text-base leading-relaxed text-muted-foreground">
               Dash isn't a dashboard. It's an autonomous PM that reads your tools, connects signals,
@@ -178,6 +179,12 @@ export default function LandingPage() {
               title="Routines"
               body="Schedule any agent task on a cron: daily briefs, weekly risk assessments, team pulse checks, signal digests, report generation. One-click presets or custom prompts."
               badge="Automation"
+            />
+            <FeatureCard
+              icon={Bot}
+              title="Fleet of coding agents"
+              body="Hand off issues to Claude Code, Codex, or any coding agent. Dash files structured tasks, watches PRs in real time via webhooks, reviews against acceptance criteria, refiles stalled work, and learns your team's workflow over time."
+              badge="Delegation"
             />
           </div>
         </div>

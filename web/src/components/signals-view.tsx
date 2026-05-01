@@ -275,8 +275,10 @@ export function SignalsView({ onNavigateToChat }: Props) {
               <CardContent className="py-12 text-center">
                 <Radar className="mx-auto h-8 w-8 text-muted-foreground/30" />
                 <p className="mt-3 text-sm font-medium text-muted-foreground">No signals yet</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {sources.length === 0 ? "Add a source to start collecting signals" : "Click Fetch all to pull fresh signals"}
+                <p className="mt-1 text-xs text-muted-foreground max-w-md mx-auto">
+                  {sources.length === 0
+                    ? "Add a source — Twitter handle, Hacker News query, or web search — and Dash starts collecting matching items every 6 hours. Star, dismiss, or discuss any signal in chat."
+                    : "Sources are configured. Click Fetch all to pull fresh signals now, or wait for the next scheduled fetch."}
                 </p>
               </CardContent>
             </Card>

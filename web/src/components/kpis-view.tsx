@@ -183,8 +183,24 @@ export function KPIsView({ onNavigateToChat }: Props) {
               <p className="mt-3 text-sm font-medium">No KPIs yet</p>
               <p className="mt-1 text-xs text-muted-foreground max-w-sm mx-auto">
                 Add a KPI like &ldquo;weekly active users&rdquo; or &ldquo;signup conversion rate&rdquo;.
-                Dash will figure out how to measure it from your connected platforms.
+                Dash will figure out how to measure it from your connected platforms,
+                refresh values daily, and flag risks/opportunities in your daily brief.
               </p>
+              <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+                <button
+                  onClick={() => setCreating(true)}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  <Plus className="h-3 w-3" /> Add your first KPI
+                </button>
+                <span className="text-[10px] text-muted-foreground">or</span>
+                <button
+                  onClick={() => onNavigateToChat("Suggest 3 KPIs we should track based on my workspace.")}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  Ask Dash to suggest some
+                </button>
+              </div>
             </CardContent>
           </Card>
         ) : (
