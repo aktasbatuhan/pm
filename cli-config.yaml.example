@@ -577,11 +577,10 @@ mcp_servers:
 
   # PostHog (funnels, retention, feature flags, experiments)
   # posthog:
-  #   command: npx
-  #   args: ["-y", "@posthog/mcp-server"]
-  #   env:
-  #     POSTHOG_API_KEY: "${POSTHOG_API_KEY}"
-  #     POSTHOG_HOST: "${POSTHOG_HOST}"
+  #   url: "https://mcp.posthog.com/mcp"
+  #   headers:
+  #     Authorization: "Bearer ${POSTHOG_API_KEY}"
+  #   timeout: 120
 
   # ── Monitoring ─────────────────────────────────────────────────────
 
