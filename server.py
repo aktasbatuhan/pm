@@ -887,10 +887,29 @@ def disconnect_integration(platform: str, tenant=Depends(get_current_tenant)):
     if is_postgres_enabled():
         from backend import repos
         repos.delete_integration(tenant.tenant_id, platform)
-        return {"ok": True}
-    db = _get_integrations_db()
-    db.execute("DELETE FROM integrations WHERE platform = ?", (platform,))
-    db.commit()
+    else:
+        db = _get_integrations_db()
+        db.execute("DELETE FROM integrations WHERE platform = ?", (platform,))
+        db.commit()
+
+    # Tear down MCP server and clear env var for MCP-backed integrations.
+    _MCP_PLATFORMS = {"linear"}
+    if platform in _MCP_PLATFORMS:
+        env_map = {
+            "linear": "LINEAR_API_KEY",
+        }
+        env_var = env_map.get(platform)
+        if env_var:
+            os.environ.pop(env_var, None)
+        try:
+            from tools.mcp_tool import disconnect_mcp_server
+            disconnect_mcp_server(platform)
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "MCP disconnect for %s failed: %s", platform, exc
+            )
+
     return {"ok": True}
 
 
@@ -1027,6 +1046,19 @@ def _inject_credential(platform: str, credentials: str):
     env_var = env_map.get(platform)
     if env_var:
         os.environ[env_var] = credentials
+
+    # For MCP-backed integrations, trigger discovery so the server connects
+    # immediately rather than waiting for the next agent run.
+    _MCP_PLATFORMS = {"linear"}
+    if platform in _MCP_PLATFORMS:
+        try:
+            from model_tools import ensure_mcp_discovered
+            ensure_mcp_discovered()
+        except Exception as exc:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "MCP rediscovery after %s credential inject failed: %s", platform, exc
+            )
 
 
 # ── GitHub App integration ─────────────────────────────────────────────
