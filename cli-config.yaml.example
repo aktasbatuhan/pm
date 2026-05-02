@@ -560,11 +560,11 @@ mcp_servers:
   # ── Issue Tracking ──────────────────────────────────────────────────
 
   # Linear (sprints, cycles, issues, team workload)
-  # linear:
-  #   url: "https://mcp.linear.app/sse"
-  #   headers:
-  #     Authorization: "Bearer ${LINEAR_API_KEY}"
-  #   timeout: 120
+  linear:
+    url: "https://mcp.linear.app/sse"
+    headers:
+      Authorization: "Bearer ${LINEAR_API_KEY}"
+    timeout: 120
 
   # Jira (enterprise issue tracking via Atlassian Rovo)
   # jira:
