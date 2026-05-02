@@ -941,10 +941,21 @@ def _validate_integration(platform: str, auth_type: str, credentials: str) -> tu
             return False, f"Linear auth failed: {e}"
 
     if platform == "posthog":
-        # PostHog personal API keys start with phx_
-        if credentials.startswith("phx_") or credentials.startswith("phc_"):
-            return True, "API key format looks valid"
-        return False, "Expected PostHog API key (phx_... or phc_...)"
+        try:
+            req = urllib.request.Request(
+                "https://app.posthog.com/api/users/@me/",
+                headers={"Authorization": f"Bearer {credentials}"},
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read())
+                name = data.get("first_name") or data.get("email", "unknown")
+                return True, f"Connected as {name}"
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                return False, "PostHog auth failed: invalid API key"
+            return False, f"PostHog auth failed: HTTP {e.code}"
+        except Exception as e:
+            return False, f"PostHog connection error: {e}"
 
     if platform == "sentry":
         try:
