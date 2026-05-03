@@ -21,7 +21,7 @@ from tools.interrupt import is_interrupted
 
 logger = logging.getLogger(__name__)
 
-_SNAPSHOT_STORE = Path.home() / ".hermes" / "singularity_snapshots.json"
+_SNAPSHOT_STORE = Path.home() / ".kai-agent" / "singularity_snapshots.json"
 
 
 def _load_snapshots() -> Dict[str, str]:
@@ -38,6 +38,34 @@ def _save_snapshots(data: Dict[str, str]) -> None:
     _SNAPSHOT_STORE.write_text(json.dumps(data, indent=2))
 
 
+def _validate_task_id(task_id: str) -> str:
+    """Validate task_id to prevent path traversal attacks.
+
+    Rejects task_ids that contain path separators, '..' segments, or are
+    absolute paths. Returns the task_id unchanged if valid.
+
+    Raises:
+        ValueError: If task_id could escape the sandbox directory.
+    """
+    if ".." in task_id:
+        raise ValueError(
+            f"Invalid task_id: contains '..' segment: {task_id!r}"
+        )
+    if os.sep in task_id:
+        raise ValueError(
+            f"Invalid task_id: contains path separator {os.sep!r}: {task_id!r}"
+        )
+    if os.altsep and os.altsep in task_id:
+        raise ValueError(
+            f"Invalid task_id: contains path separator {os.altsep!r}: {task_id!r}"
+        )
+    if Path(task_id).is_absolute():
+        raise ValueError(
+            f"Invalid task_id: is an absolute path: {task_id!r}"
+        )
+    return task_id
+
+
 # -------------------------------------------------------------------------
 # Singularity helpers (scratch dir, SIF cache, SIF building)
 # -------------------------------------------------------------------------
@@ -49,7 +77,7 @@ def _get_scratch_dir() -> Path:
       1. TERMINAL_SCRATCH_DIR (explicit override)
       2. TERMINAL_SANDBOX_DIR / singularity (shared sandbox root)
       3. /scratch (common on HPC clusters)
-      4. ~/.hermes/sandboxes/singularity (fallback)
+      4. ~/.kai-agent/sandboxes/singularity (fallback)
     """
     custom_scratch = os.getenv("TERMINAL_SCRATCH_DIR")
     if custom_scratch:
@@ -173,7 +201,7 @@ class SingularityEnvironment(BaseEnvironment):
         self.instance_id = f"hermes_{uuid.uuid4().hex[:12]}"
         self._instance_started = False
         self._persistent = persistent_filesystem
-        self._task_id = task_id
+        self._task_id = _validate_task_id(task_id)
         self._overlay_dir: Optional[Path] = None
 
         # Resource limits
@@ -184,7 +212,7 @@ class SingularityEnvironment(BaseEnvironment):
         if self._persistent:
             overlay_base = _get_scratch_dir() / "hermes-overlays"
             overlay_base.mkdir(parents=True, exist_ok=True)
-            self._overlay_dir = overlay_base / f"overlay-{task_id}"
+            self._overlay_dir = overlay_base / f"overlay-{self._task_id}"
             self._overlay_dir.mkdir(parents=True, exist_ok=True)
 
         self._start_instance()

@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 from tools.environments.base import BaseEnvironment
@@ -30,6 +31,34 @@ _DOCKER_SEARCH_PATHS = [
 ]
 
 _docker_executable: Optional[str] = None  # resolved once, cached
+
+
+def _validate_task_id(task_id: str) -> str:
+    """Validate task_id to prevent path traversal attacks.
+
+    Rejects task_ids that contain path separators, '..' segments, or are
+    absolute paths. Returns the task_id unchanged if valid.
+
+    Raises:
+        ValueError: If task_id could escape the sandbox directory.
+    """
+    if ".." in task_id:
+        raise ValueError(
+            f"Invalid task_id: contains '..' segment: {task_id!r}"
+        )
+    if os.sep in task_id:
+        raise ValueError(
+            f"Invalid task_id: contains path separator {os.sep!r}: {task_id!r}"
+        )
+    if os.altsep and os.altsep in task_id:
+        raise ValueError(
+            f"Invalid task_id: contains path separator {os.altsep!r}: {task_id!r}"
+        )
+    if Path(task_id).is_absolute():
+        raise ValueError(
+            f"Invalid task_id: is an absolute path: {task_id!r}"
+        )
+    return task_id
 
 
 def find_docker() -> Optional[str]:
@@ -112,7 +141,7 @@ class DockerEnvironment(BaseEnvironment):
         super().__init__(cwd=cwd, timeout=timeout)
         self._base_image = image
         self._persistent = persistent_filesystem
-        self._task_id = task_id
+        self._task_id = _validate_task_id(task_id)
         self._container_id: Optional[str] = None
         logger.info(f"DockerEnvironment volumes: {volumes}")
         # Ensure volumes is a list (config.yaml could be malformed)
@@ -140,14 +169,14 @@ class DockerEnvironment(BaseEnvironment):
             resource_args.append("--network=none")
 
         # Persistent workspace via bind mounts from a configurable host directory
-        # (TERMINAL_SANDBOX_DIR, default ~/.hermes/sandboxes/). Non-persistent
+        # (TERMINAL_SANDBOX_DIR, default ~/.kai-agent/sandboxes/). Non-persistent
         # mode uses tmpfs (ephemeral, fast, gone on cleanup).
         from tools.environments.base import get_sandbox_dir
 
         self._workspace_dir: Optional[str] = None
         self._home_dir: Optional[str] = None
         if self._persistent:
-            sandbox = get_sandbox_dir() / "docker" / task_id
+            sandbox = get_sandbox_dir() / "docker" / self._task_id
             self._workspace_dir = str(sandbox / "workspace")
             self._home_dir = str(sandbox / "home")
             os.makedirs(self._workspace_dir, exist_ok=True)
