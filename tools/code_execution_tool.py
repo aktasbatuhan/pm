@@ -15,12 +15,18 @@ Architecture:
      results never enter the context window
 
 Platform: Linux / macOS only (Unix domain sockets). Disabled on Windows.
+
+Security layers (defense-in-depth):
+  LAYER 1 - OS-level resource limits via rlimit in the child preexec_fn
+  LAYER 2 - Pre-execution code safety screening (regex-based blocklist)
+  LAYER 3 - Strict tools fallback: empty intersection = error, not all-tools
 """
 
 import json
 import logging
 import os
 import platform
+import re
 import signal
 import socket
 import subprocess
@@ -57,6 +63,173 @@ DEFAULT_TIMEOUT = 300        # 5 minutes
 DEFAULT_MAX_TOOL_CALLS = 50
 MAX_STDOUT_BYTES = 50_000    # 50 KB
 MAX_STDERR_BYTES = 10_000    # 10 KB
+
+# ---------------------------------------------------------------------------
+# LAYER 1: OS-level resource limits via rlimit
+# ---------------------------------------------------------------------------
+# These limits are applied in the child process via preexec_fn BEFORE the
+# Python interpreter loads the user's script. They are enforced by the kernel
+# and cannot be bypassed from userspace.
+
+_RLIMIT_CPU_SECONDS = 30           # Hard CPU time limit
+_RLIMIT_AS_BYTES = 512 * 1024 * 1024  # 512 MB virtual memory
+_RLIMIT_NOFILE = 64                # Max open file descriptors
+_RLIMIT_NPROC = 0                  # No child process forking
+
+try:
+    import resource as _resource
+    _HAS_RESOURCE = True
+except ImportError:
+    # Windows does not have the resource module; rlimits are skipped there
+    # (the sandbox is already disabled on Windows via SANDBOX_AVAILABLE).
+    _HAS_RESOURCE = False
+
+
+def _make_sandbox_preexec(sock_fd: int):
+    """
+    Factory that returns a preexec_fn callable for Popen.
+
+    The returned function runs in the child process after fork() but before
+    exec(), so it can set up the sandbox environment:
+      1. Create a new session (os.setsid) to isolate the process group
+      2. Set resource limits (CPU, memory, file descriptors, no-fork)
+      3. Close inherited file descriptors except stdin/stdout/stderr and
+         the RPC socket fd so the child cannot access parent resources
+
+    Args:
+        sock_fd: The file descriptor number of the RPC Unix domain socket
+                 that the child needs to keep open for tool calls.
+    """
+    def _preexec():
+        # 1. New session (isolate process group for clean kill)
+        os.setsid()
+
+        # 2. Set resource limits (kernel-enforced, cannot be bypassed)
+        if _HAS_RESOURCE:
+            # CPU time: soft = hard = 30s. After 30s of CPU time the kernel
+            # sends SIGKILL (hard limit).
+            _resource.setrlimit(
+                _resource.RLIMIT_CPU,
+                (_RLIMIT_CPU_SECONDS, _RLIMIT_CPU_SECONDS),
+            )
+            # Virtual address space: 512 MB. Prevents memory bombs.
+            _resource.setrlimit(
+                _resource.RLIMIT_AS,
+                (_RLIMIT_AS_BYTES, _RLIMIT_AS_BYTES),
+            )
+            # File descriptors: 64. Limits file/socket open abuse.
+            _resource.setrlimit(
+                _resource.RLIMIT_NOFILE,
+                (_RLIMIT_NOFILE, _RLIMIT_NOFILE),
+            )
+            # No child processes: prevents fork bombs and subprocess spawning.
+            _resource.setrlimit(
+                _resource.RLIMIT_NPROC,
+                (_RLIMIT_NPROC, _RLIMIT_NPROC),
+            )
+
+        # 3. Close inherited file descriptors except the ones we need.
+        # Keep: 0 (stdin), 1 (stdout), 2 (stderr), and the RPC socket fd.
+        keep_fds = {0, 1, 2, sock_fd}
+        try:
+            # Try /proc/self/fd first (Linux) for accuracy
+            if os.path.isdir("/proc/self/fd"):
+                open_fds = [int(fd) for fd in os.listdir("/proc/self/fd")]
+            else:
+                # Fallback: scan a reasonable range
+                try:
+                    max_fd = _resource.getrlimit(_resource.RLIMIT_NOFILE)[1] if _HAS_RESOURCE else 1024
+                except Exception:
+                    max_fd = 1024
+                max_fd = min(max_fd, 4096)  # Don't scan too many
+                open_fds = range(3, max_fd)
+
+            for fd in open_fds:
+                if fd not in keep_fds:
+                    try:
+                        os.close(fd)
+                    except OSError:
+                        pass  # Already closed or not open
+        except Exception:
+            # If fd enumeration fails entirely, don't block execution —
+            # the other layers (code screening, rlimits) still protect.
+            pass
+
+    return _preexec
+
+
+# ---------------------------------------------------------------------------
+# LAYER 2: Pre-execution code safety screening
+# ---------------------------------------------------------------------------
+# NOTE: This is defense-in-depth, NOT a complete sandbox. A determined
+# attacker can bypass regex-based screening (e.g., string concatenation,
+# getattr tricks, encoded payloads). The primary sandbox is the rlimit
+# layer above, which is kernel-enforced. This screening catches the common
+# cases and raises the bar significantly for LLM-generated code.
+
+_DANGEROUS_PATTERNS = [
+    # 1. os.system() — shell command execution
+    (re.compile(r'os\.system\s*\(', re.IGNORECASE), "os.system() — shell command execution"),
+    # 2. os.popen() — shell command execution via pipe
+    (re.compile(r'os\.popen\s*\(', re.IGNORECASE), "os.popen() — shell command via pipe"),
+    # 3. os.exec* — covers execl, execle, execlp, execv, execve, execvp, etc.
+    (re.compile(r'os\.exec', re.IGNORECASE), "os.exec*() — direct process execution"),
+    # 4. subprocess.* — any subprocess usage
+    (re.compile(r'subprocess\.', re.IGNORECASE), "subprocess module — direct process spawning"),
+    # 5. __import__() — dynamic imports bypass static analysis
+    (re.compile(r'__import__\s*\('), "__import__() — dynamic import"),
+    # 6. importlib — runtime module loading
+    (re.compile(r'importlib', re.IGNORECASE), "importlib — dynamic module loading"),
+    # 7. ctypes — foreign function interface, raw memory access
+    (re.compile(r'ctypes', re.IGNORECASE), "ctypes — foreign function interface"),
+    # 8. socket.socket() — raw socket creation (NOT the RPC socket in dash_tools)
+    (re.compile(r'socket\.socket\s*\('), "socket.socket() — raw socket creation"),
+    # 9. shutil.rmtree — recursive directory deletion
+    (re.compile(r'shutil\.rmtree', re.IGNORECASE), "shutil.rmtree() — recursive deletion"),
+    # 10. os.remove / os.unlink — file deletion
+    (re.compile(r'os\.(?:remove|unlink)\s*\(', re.IGNORECASE), "os.remove/unlink() — file deletion"),
+    # 11. eval() — arbitrary code evaluation
+    (re.compile(r'(?<!\w)eval\s*\('), "eval() — arbitrary code evaluation"),
+    # 12. exec() — arbitrary code execution
+    (re.compile(r'(?<!\w)exec\s*\('), "exec() — arbitrary code execution"),
+    # 13. compile() — code compilation (often paired with eval/exec)
+    (re.compile(r'(?<!\w)compile\s*\('), "compile() — code compilation"),
+    # 14. open() accessing sensitive paths
+    (re.compile(r'open\s*\(.*(?:/etc|/proc|/sys|\.ssh|\.aws|\.env)', re.IGNORECASE),
+     "open() accessing sensitive system paths (/etc, /proc, /sys, .ssh, .aws, .env)"),
+]
+
+
+def _screen_code(code: str) -> Optional[str]:
+    """
+    Screen LLM-generated code for dangerous patterns before execution.
+
+    This is a defense-in-depth measure — not a complete sandbox. It catches
+    the most common dangerous patterns to prevent accidental or naive
+    exploitation. Sophisticated attacks may bypass regex screening, which
+    is why LAYER 1 (rlimits) provides the kernel-enforced safety net.
+
+    Args:
+        code: The raw Python source code to screen.
+
+    Returns:
+        None if the code passes screening, or an error message string
+        describing what was blocked.
+    """
+    blocked = []
+    for pattern, description in _DANGEROUS_PATTERNS:
+        if pattern.search(code):
+            blocked.append(description)
+
+    if blocked:
+        violations = "; ".join(blocked)
+        return (
+            f"Code blocked by safety screening: {violations}. "
+            "Use the available dash_tools functions (web_search, terminal, etc.) "
+            "instead of direct system access. If you need shell commands, use "
+            "terminal() from dash_tools."
+        )
+    return None
 
 
 def check_sandbox_requirements() -> bool:
@@ -354,6 +527,11 @@ def execute_code(
     Run a Python script in a sandboxed child process with RPC access
     to a subset of Hermes tools.
 
+    Security layers applied:
+      1. Code screening (LAYER 2) rejects scripts with dangerous patterns
+      2. OS rlimits (LAYER 1) constrain CPU, memory, fds, and forking
+      3. Strict tool intersection (LAYER 3) prevents tools fallback
+
     Args:
         code:          Python source code to execute.
         task_id:       Session task ID for tool isolation (terminal env, etc.).
@@ -371,6 +549,21 @@ def execute_code(
     if not code or not code.strip():
         return json.dumps({"error": "No code provided."})
 
+    # -----------------------------------------------------------------------
+    # LAYER 2: Pre-execution code safety screening
+    # -----------------------------------------------------------------------
+    # Screen the code BEFORE writing it to disk or spawning any process.
+    # This catches the most common dangerous patterns at zero cost.
+    screening_result = _screen_code(code)
+    if screening_result is not None:
+        return json.dumps({
+            "status": "error",
+            "error": screening_result,
+            "output": "",
+            "tool_calls_made": 0,
+            "duration_seconds": 0,
+        }, ensure_ascii=False)
+
     # Import interrupt event from terminal_tool (cooperative cancellation)
     from tools.terminal_tool import _interrupt_event
 
@@ -379,12 +572,33 @@ def execute_code(
     timeout = _cfg.get("timeout", DEFAULT_TIMEOUT)
     max_tool_calls = _cfg.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS)
 
-    # Determine which tools the sandbox can call
-    session_tools = set(enabled_tools) if enabled_tools else set()
-    sandbox_tools = frozenset(SANDBOX_ALLOWED_TOOLS & session_tools)
-
-    if not sandbox_tools:
+    # -----------------------------------------------------------------------
+    # LAYER 3: Strict tools intersection (no unsafe fallback)
+    # -----------------------------------------------------------------------
+    # If enabled_tools is None (not provided), fall back to all sandbox tools.
+    # If enabled_tools is explicitly provided but the intersection with
+    # SANDBOX_ALLOWED_TOOLS is empty, return an error — do NOT silently
+    # grant access to all tools.
+    if enabled_tools is None:
+        # No tool list provided at all — use the full sandbox set
         sandbox_tools = SANDBOX_ALLOWED_TOOLS
+    else:
+        session_tools = set(enabled_tools)
+        sandbox_tools = frozenset(SANDBOX_ALLOWED_TOOLS & session_tools)
+        if not sandbox_tools:
+            available = ", ".join(sorted(SANDBOX_ALLOWED_TOOLS))
+            requested = ", ".join(sorted(session_tools)) if session_tools else "(empty)"
+            return json.dumps({
+                "status": "error",
+                "error": (
+                    f"No sandbox tools available. The enabled tools ({requested}) "
+                    f"have no overlap with sandbox-allowed tools ({available}). "
+                    "Cannot execute code without at least one available tool."
+                ),
+                "output": "",
+                "tool_calls_made": 0,
+                "duration_seconds": 0,
+            }, ensure_ascii=False)
 
     # --- Set up temp directory with dash_tools.py and script.py ---
     tmpdir = tempfile.mkdtemp(prefix="hermes_sandbox_")
@@ -432,7 +646,7 @@ def execute_code(
         _SAFE_ENV_PREFIXES = ("PATH", "HOME", "USER", "LANG", "LC_", "TERM",
                               "TMPDIR", "TMP", "TEMP", "SHELL", "LOGNAME",
                               "XDG_", "PYTHONPATH", "VIRTUAL_ENV", "CONDA")
-        _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
+        _SECRET_SUBSTRINGS = ("KEY", "API", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL",
                               "PASSWD", "AUTH")
         child_env = {}
         for k, v in os.environ.items():
@@ -448,6 +662,24 @@ def execute_code(
         if _tz_name:
             child_env["TZ"] = _tz_name
 
+        # -------------------------------------------------------------------
+        # LAYER 1: Apply OS-level sandbox via preexec_fn
+        # -------------------------------------------------------------------
+        # Get the server socket fd so the child can keep it open for RPC.
+        # The child connects to the socket via the path in HERMES_RPC_SOCKET,
+        # but we pass the server socket fd to _make_sandbox_preexec so it
+        # is NOT closed during fd cleanup. Note: the child actually creates
+        # its OWN socket in dash_tools._connect(), so we mainly need to
+        # ensure the preexec_fn doesn't interfere. We pass -1 as the sock_fd
+        # since the child will create its own connection after exec.
+        if _IS_WINDOWS:
+            preexec = None
+        else:
+            # Pass server_sock.fileno() through so the preexec_fn knows
+            # which fds to preserve. The child process will create its own
+            # socket connection via dash_tools._connect().
+            preexec = _make_sandbox_preexec(server_sock.fileno())
+
         proc = subprocess.Popen(
             [sys.executable, "script.py"],
             cwd=tmpdir,
@@ -455,7 +687,7 @@ def execute_code(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
-            preexec_fn=None if _IS_WINDOWS else os.setsid,
+            preexec_fn=preexec,
         )
 
         # --- Poll loop: watch for exit, timeout, and interrupt ---
