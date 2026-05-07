@@ -189,7 +189,7 @@ def prompt_dangerous_approval(command: str, description: str,
         is_truncated = len(command) > 80
         while True:
             print()
-            print(f"  ⚠️  DANGEROUS COMMAND: {description}")
+            print(f"  \u26a0\ufe0f  DANGEROUS COMMAND: {description}")
             print(f"      {command[:80]}{'...' if is_truncated else ''}")
             print()
             view_hint = "  |  [v]iew full" if is_truncated else ""
@@ -210,7 +210,7 @@ def prompt_dangerous_approval(command: str, description: str,
             thread.join(timeout=timeout_seconds)
 
             if thread.is_alive():
-                print("\n      ⏱ Timeout - denying command")
+                print("\n      \u23f1 Timeout - denying command")
                 return "deny"
 
             choice = result["choice"]
@@ -221,20 +221,20 @@ def prompt_dangerous_approval(command: str, description: str,
                 is_truncated = False  # show full on next loop iteration too
                 continue
             if choice in ('o', 'once'):
-                print("      ✓ Allowed once")
+                print("      \u2713 Allowed once")
                 return "once"
             elif choice in ('s', 'session'):
-                print("      ✓ Allowed for this session")
+                print("      \u2713 Allowed for this session")
                 return "session"
             elif choice in ('a', 'always'):
-                print("      ✓ Added to permanent allowlist")
+                print("      \u2713 Added to permanent allowlist")
                 return "always"
             else:
-                print("      ✗ Denied")
+                print("      \u2717 Denied")
                 return "deny"
 
     except (EOFError, KeyboardInterrupt):
-        print("\n      ✗ Cancelled")
+        print("\n      \u2717 Cancelled")
         return "deny"
     finally:
         if "HERMES_SPINNER_PAUSE" in os.environ:
@@ -276,8 +276,25 @@ def check_dangerous_command(command: str, env_type: str,
     is_cli = os.getenv("KAI_INTERACTIVE") or os.getenv("HERMES_INTERACTIVE")
     is_gateway = os.getenv("KAI_GATEWAY_SESSION") or os.getenv("HERMES_GATEWAY_SESSION")
 
+    # SECURITY: Default-deny when environment is ambiguous.
+    # If neither CLI nor gateway session is detected, block the command.
+    # This prevents silent auto-approval in misconfigured or headless environments.
     if not is_cli and not is_gateway:
-        return {"approved": True, "message": None}
+        logger.warning(
+            "Dangerous command blocked: no interactive or gateway session detected (default-deny). "
+            "Command: %s (pattern: %s)", description, pattern_key
+        )
+        return {
+            "approved": False,
+            "message": (
+                "BLOCKED: Dangerous command detected in non-interactive environment. "
+                "No approval mechanism available (neither KAI_INTERACTIVE/HERMES_INTERACTIVE "
+                "nor KAI_GATEWAY_SESSION/HERMES_GATEWAY_SESSION is set). "
+                "Set KAI_INTERACTIVE=1 for CLI or configure a gateway session to enable approval prompts."
+            ),
+            "pattern_key": pattern_key,
+            "description": description,
+        }
 
     if is_gateway or os.getenv("KAI_EXEC_ASK") or os.getenv("HERMES_EXEC_ASK"):
         submit_pending(session_key, {
@@ -291,7 +308,7 @@ def check_dangerous_command(command: str, env_type: str,
             "status": "approval_required",
             "command": command,
             "description": description,
-            "message": f"⚠️ This command is potentially dangerous ({description}). Asking the user for approval...",
+            "message": f"\u26a0\ufe0f This command is potentially dangerous ({description}). Asking the user for approval...",
         }
 
     choice = prompt_dangerous_approval(command, description,
