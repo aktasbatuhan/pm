@@ -13,6 +13,8 @@ import queue
 import sys
 import threading
 import time
+import hmac
+import re
 import uuid
 from pathlib import Path
 from typing import Optional
@@ -25,6 +27,12 @@ if _project_env.exists():
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import StreamingResponse, JSONResponse, RedirectResponse, HTMLResponse
 from starlette.middleware.cors import CORSMiddleware
+
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 import sqlite3
 from kai_env import kai_home
@@ -84,7 +92,18 @@ import httpx
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Dash PM API")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+# ── CORS allow-list (env: DASH_ALLOWED_ORIGINS comma-separated) ──────
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("DASH_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
+] or ["http://localhost:3000", "http://localhost:3001", "http://127.0.0.1:3000", "http://127.0.0.1:3001"]
+app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_methods=["*"], allow_headers=["*"])
+
+# ── Rate limiting ────────────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 @app.middleware("http")
@@ -134,17 +153,44 @@ def _get_auth_db():
     return db
 
 
+_ph = PasswordHasher()
+
+
 def _hash_password(password: str) -> str:
+    """Hash a password with argon2id (preferred) for new storage."""
+    return _ph.hash(password)
+
+
+def _legacy_sha256(password: str) -> str:
+    """Legacy SHA-256 hash — used only for migration verification."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 
+def _verify_password_against_hash(stored_hash: str, plaintext: str) -> bool:
+    """Verify a plaintext password against a stored hash.
+    Supports argon2id hashes and legacy 64-char hex SHA-256 hashes."""
+    if not stored_hash or not plaintext:
+        return False
+    # Legacy SHA-256: exactly 64 hex characters
+    if re.fullmatch(r'[0-9a-f]{64}', stored_hash):
+        return hmac.compare_digest(_legacy_sha256(plaintext), stored_hash)
+    # Modern argon2id hash
+    try:
+        return _ph.verify(stored_hash, plaintext)
+    except VerifyMismatchError:
+        return False
+    except Exception:
+        return False
+
+
 @app.post("/api/auth/setup")
+@limiter.limit("5/minute")
 async def auth_setup(request: Request):
     """First-time password setup. Only works if no password exists yet."""
     body = await request.json()
     password = body.get("password", "")
-    if not password or len(password) < 4:
-        return JSONResponse({"error": "Password must be at least 4 characters"}, status_code=400)
+    if not password or len(password) < 12:
+        return JSONResponse({"error": "Password must be at least 12 characters"}, status_code=400)
 
     db = _get_auth_db()
     existing = db.execute("SELECT value FROM auth WHERE key = 'password_hash'").fetchone()
@@ -159,6 +205,7 @@ async def auth_setup(request: Request):
 
 
 @app.post("/api/auth/login")
+@limiter.limit("5/minute")
 async def auth_login(request: Request):
     """Login with password, returns session token."""
     body = await request.json()
@@ -169,8 +216,14 @@ async def auth_login(request: Request):
     if not row:
         return JSONResponse({"error": "No password set. Use /api/auth/setup first."}, status_code=404)
 
-    if _hash_password(password) != row["value"]:
+    stored_hash = row["value"]
+    if not _verify_password_against_hash(stored_hash, password):
         return JSONResponse({"error": "Wrong password"}, status_code=401)
+
+    # Auto-upgrade legacy SHA-256 hashes to argon2id
+    if re.fullmatch(r'[0-9a-f]{64}', stored_hash):
+        db.execute("UPDATE auth SET value = ? WHERE key = 'password_hash'", (_hash_password(password),))
+        db.commit()
 
     token = secrets.token_hex(32)
     db.execute("INSERT OR REPLACE INTO auth (key, value) VALUES ('session_token', ?)", (token,))
@@ -194,7 +247,7 @@ def auth_check(request: Request):
         return {"authenticated": False, "needs_setup": False}
 
     stored = db.execute("SELECT value FROM auth WHERE key = 'session_token'").fetchone()
-    valid = stored and stored["value"] == token
+    valid = stored and hmac.compare_digest(stored["value"], token)
     return {"authenticated": valid, "needs_setup": False}
 
 _sessions: dict = {}
@@ -791,7 +844,7 @@ def waitlist_list(request: Request):
     auth_header = request.headers.get("authorization", "")
     token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
     stored = db.execute("SELECT value FROM auth WHERE key = 'session_token'").fetchone()
-    if not stored or stored["value"] != token:
+    if not stored or not hmac.compare_digest(stored["value"], token):
         return JSONResponse({"error": "Unauthorized"}, status_code=401)
 
     rows = db.execute("SELECT * FROM waitlist ORDER BY submitted_at DESC").fetchall()
@@ -1051,8 +1104,15 @@ from github_app_auth import (
 
 
 @app.get("/api/integrations/github/debug")
-def github_app_debug():
-    """Diagnostic: shows whether the server process has a live GitHub token."""
+def github_app_debug(request: Request):
+    """Diagnostic: shows whether the server process has a live GitHub token.
+    Requires authentication — same session-token check as other admin endpoints."""
+    db = _get_auth_db()
+    auth_header = request.headers.get("Authorization", "")
+    token = auth_header.replace("Bearer ", "") if auth_header.startswith("Bearer ") else ""
+    stored = db.execute("SELECT value FROM auth WHERE key = 'session_token'").fetchone()
+    if not stored or not hmac.compare_digest(stored["value"], token):
+        return JSONResponse({"error": "Unauthorized"}, status_code=401)
     cfg = _github_app_config()
     db = _get_integrations_db()
     row = db.execute(
