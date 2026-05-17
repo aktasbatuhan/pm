@@ -1678,6 +1678,56 @@ def shutdown_mcp_servers():
     _stop_mcp_loop()
 
 
+def disconnect_mcp_server(name: str) -> bool:
+    """Shut down a single named MCP server and deregister all its tools.
+
+    Returns True if the server was found and torn down, False if unknown.
+    """
+    with _lock:
+        server = _servers.pop(name, None)
+
+    if server is None:
+        return False
+
+    # Tear down the server task on the MCP event loop.
+    with _lock:
+        loop = _mcp_loop
+    if loop is not None and loop.is_running():
+        try:
+            future = asyncio.run_coroutine_threadsafe(server.shutdown(), loop)
+            future.result(timeout=15)
+        except Exception as exc:
+            logger.debug("Error shutting down MCP server '%s': %s", name, exc)
+
+    # Remove the server's tools from the registry and its toolset.
+    toolset_name = "kai" if name == "kai" else f"mcp-{name}"
+    removed_names: set = set()
+    try:
+        from tools.registry import registry
+        removed_names = {n for n, e in registry._tools.items() if e.toolset == toolset_name}
+        for tool_name in removed_names:
+            del registry._tools[tool_name]
+        registry._toolset_checks.pop(toolset_name, None)
+    except Exception as exc:
+        logger.debug("Error removing MCP tools for '%s': %s", name, exc)
+
+    # Remove the toolset entry so it no longer appears in discovery.
+    try:
+        from toolsets import TOOLSETS
+        TOOLSETS.pop(toolset_name, None)
+        # Also remove the tool names from any kai-*/hermes-* toolsets that were
+        # injected during discover_mcp_tools().
+        if removed_names:
+            for ts_name, ts in TOOLSETS.items():
+                if ts_name.startswith(("kai-", "hermes-")):
+                    ts["tools"] = [t for t in ts["tools"] if t not in removed_names]
+    except Exception as exc:
+        logger.debug("Error removing toolset for MCP server '%s': %s", name, exc)
+
+    logger.info("MCP server '%s' disconnected and tools deregistered", name)
+    return True
+
+
 def _stop_mcp_loop():
     """Stop the background event loop and join its thread."""
     global _mcp_loop, _mcp_thread
